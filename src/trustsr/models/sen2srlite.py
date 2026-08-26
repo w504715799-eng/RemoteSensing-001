@@ -99,6 +99,8 @@ class SEN2SRLiteX4:
             "sen2sr_version": version("sen2sr"),
             "device": self.device,
             "output_policy": "clip_to_[0,1]",
+            "torch_version": torch.__version__,
+            "implementation_schema_version": 1,
         }
         result.update(
             {f"asset_sha256:{name}": digest for name, digest in MODEL_ASSET_SHA256.items()}

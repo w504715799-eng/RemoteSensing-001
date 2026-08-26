@@ -17,6 +17,8 @@ class BicubicX4:
             "align_corners": False,
             "antialias": True,
             "output_policy": "clip_to_[0,1]",
+            "torch_version": torch.__version__,
+            "implementation_schema_version": 1,
         }
 
     @torch.inference_mode()

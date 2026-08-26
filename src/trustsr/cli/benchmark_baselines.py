@@ -233,7 +233,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    pairs = load_opensr_pairs("spot", args.dataset_cache_dir, "v3", limit=9)
+    pairs = load_opensr_pairs(
+        "spot", args.dataset_cache_dir, "v3", limit=9, expected_count=9
+    )
     _require_expected_spot_v3_identities(pairs)
     result = run_benchmark(
         pairs=pairs,

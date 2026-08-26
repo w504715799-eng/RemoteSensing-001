@@ -49,7 +49,7 @@ class PredictionIdentity:
     model_provenance: Mapping[str, Any]
     source: str
     sample_id: str
-    lr_shape: tuple[int, ...]
+    lr_shape: tuple[int, int, int]
     lr_dtype: str
     lr_sha256: str
 
@@ -58,9 +58,20 @@ class PredictionIdentity:
         # as build_identity; callers cannot smuggle in mutable nested mappings.
         frozen_provenance = MappingProxyType(_validate_provenance(self.model_provenance))
         object.__setattr__(self, "model_provenance", frozen_provenance)
-        if not isinstance(self.source, str) or not isinstance(self.sample_id, str):
+        if type(self.source) is not str or type(self.sample_id) is not str:
             raise TypeError("source and sample_id must be strings")
-        object.__setattr__(self, "lr_shape", tuple(int(x) for x in self.lr_shape))
+        if type(self.lr_dtype) is not str or type(self.lr_sha256) is not str:
+            raise TypeError("lr_dtype and lr_sha256 must be strings")
+        if len(self.lr_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in self.lr_sha256
+        ):
+            raise ValueError("lr_sha256 must be a 64-character lowercase hexadecimal digest")
+        if type(self.lr_shape) is not tuple or len(self.lr_shape) != 3:
+            raise TypeError("lr_shape must be an immutable 3-tuple")
+        if any(type(dimension) is not int for dimension in self.lr_shape):
+            raise TypeError("lr_shape dimensions must be integers")
+        if self.lr_shape[0] != 4 or any(dimension <= 0 for dimension in self.lr_shape):
+            raise ValueError("lr_shape must have four channels and positive dimensions")
 
     def as_dict(self) -> dict[str, Any]:
         return {

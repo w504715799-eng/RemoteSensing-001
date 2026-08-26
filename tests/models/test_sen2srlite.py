@@ -88,8 +88,23 @@ def test_provenance_contains_required_scalar_values():
     assert provenance["sen2sr_version"] == "0.8.5"
     assert provenance["device"] == "cpu"
     assert provenance["output_policy"] == "clip_to_[0,1]"
+    assert provenance["torch_version"] == torch.__version__
+    assert provenance["implementation_schema_version"] == 1
     for name, digest in MODEL_ASSET_SHA256.items():
         assert provenance[f"asset_sha256:{name}"] == digest
+
+
+def test_sen2srlite_runtime_and_adapter_versions_affect_cache_identity():
+    from trustsr.artifacts.predictions import build_identity
+
+    lr = torch.zeros((4, 128, 128), dtype=torch.float32)
+    provenance = SEN2SRLiteX4(FakeBackend()).provenance()
+    assert build_identity(provenance, "source", "id", lr).key != build_identity(
+        dict(provenance, torch_version="different"), "source", "id", lr
+    ).key
+    assert build_identity(provenance, "source", "id", lr).key != build_identity(
+        dict(provenance, implementation_schema_version=2), "source", "id", lr
+    ).key
 
 
 def test_verification_failure_prevents_mlm_load(monkeypatch, tmp_path):

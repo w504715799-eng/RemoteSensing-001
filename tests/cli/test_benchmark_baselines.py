@@ -1,10 +1,13 @@
 import json
 import math
+import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
+import trustsr.cli.benchmark_baselines as benchmark
 from trustsr.contracts import SRPair
 
 METRICS = {
@@ -167,3 +170,27 @@ def test_invalid_model_output_fails_before_metric_computation(tmp_path: Path, mo
     with pytest.raises(ValueError, match="prediction"):
         _run(tmp_path, PAIRS, [BadModel("bad"), FakeModel("second")])
     assert not called
+
+
+@pytest.mark.parametrize("upstream_count", [8, 9, 10])
+def test_production_main_requires_exact_raw_upstream_spot_count(
+    tmp_path: Path, monkeypatch, upstream_count: int
+):
+    raw = {
+        "L2A": np.zeros((upstream_count, 8, 2, 3), dtype=np.uint16),
+        "HRharm": np.zeros((upstream_count, 4, 8, 12), dtype=np.uint16),
+    }
+    monkeypatch.setattr("trustsr.data.opensr.opensr_test.load", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr(benchmark, "run_benchmark", lambda **_kwargs: {"models": {}})
+    monkeypatch.setattr(
+        benchmark.SEN2SRLiteX4,
+        "from_pretrained",
+        lambda *_args, **_kwargs: FakeModel("sen2srlite-x4"),
+    )
+    monkeypatch.setattr(sys, "argv", ["trustsr-benchmark", "--dataset-cache-dir", str(tmp_path)])
+
+    if upstream_count == 9:
+        benchmark.main()
+    else:
+        with pytest.raises(ValueError, match="exactly 9 raw SPOT v3 samples"):
+            benchmark.main()

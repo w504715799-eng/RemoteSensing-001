@@ -21,6 +21,7 @@ def load_opensr_pairs(
     cache_dir: Path,
     version: str = "v3",
     limit: int = 2,
+    expected_count: int | None = None,
 ) -> list[SRPair]:
     if dataset_name != "spot":
         raise ValueError("Phase 0 allows the SPOT development dataset only")
@@ -29,7 +30,13 @@ def load_opensr_pairs(
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     raw = opensr_test.load(dataset_name, model_dir=str(cache_dir), version=version)
-    count = min(limit, len(raw["L2A"]))
+    raw_count = len(raw["L2A"])
+    if expected_count is not None and raw_count != expected_count:
+        raise ValueError(
+            f"expected exactly {expected_count} raw {dataset_name.upper()} {version} samples, "
+            f"got {raw_count}"
+        )
+    count = min(limit, raw_count)
     pairs: list[SRPair] = []
     for index in range(count):
         pair = SRPair(

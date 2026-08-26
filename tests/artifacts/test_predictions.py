@@ -123,6 +123,36 @@ def test_public_identity_constructor_enforces_immutable_scalar_provenance():
         PredictionIdentity({"nested": {"x": 1}}, "s", "id", (4, 2, 3), "torch.float32", "a" * 64)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("source", 1, TypeError),
+        ("sample_id", None, TypeError),
+        ("lr_dtype", 32, TypeError),
+        ("lr_sha256", "A" * 64, ValueError),
+        ("lr_sha256", "a" * 63, ValueError),
+        ("lr_shape", [4, 2, 3], TypeError),
+        ("lr_shape", (4, True, 3), TypeError),
+        ("lr_shape", (3, 2, 3), ValueError),
+        ("lr_shape", (4, 0, 3), ValueError),
+    ],
+)
+def test_public_identity_constructor_rejects_mutable_or_invalid_identity_fields(
+    field, value, error
+):
+    values = {
+        "model_provenance": {"name": "demo"},
+        "source": "source",
+        "sample_id": "sample",
+        "lr_shape": (4, 2, 3),
+        "lr_dtype": "torch.float32",
+        "lr_sha256": "a" * 64,
+    }
+    values[field] = value
+    with pytest.raises(error):
+        PredictionIdentity(**values)
+
+
 def test_metadata_has_no_paths_timestamps_pickle_or_temporary_files(tmp_path):
     cache = PredictionCache(tmp_path)
     identity = _identity()
