@@ -1,0 +1,85 @@
+import hashlib
+
+import pytest
+import torch
+
+import trustsr.models.sen2srlite as sen2srlite
+from trustsr.models.sen2srlite import (
+    MODEL_ASSET_SHA256,
+    SEN2SRLiteX4,
+    verify_model_assets,
+)
+
+
+class FakeBackend:
+    def __init__(self, output=None):
+        self.seen = None
+        self.output = output
+
+    def __call__(self, value):
+        self.seen = value
+        return self.output if self.output is not None else torch.zeros(1, 4, 512, 512)
+
+
+def test_contract_and_backend_batch():
+    backend = FakeBackend(torch.full((1, 4, 512, 512), 2.0))
+    model = SEN2SRLiteX4(backend)
+    result = model.predict(torch.ones(4, 128, 128))
+    assert backend.seen.shape == (1, 4, 128, 128)
+    assert result.shape == (4, 512, 512)
+    assert result.dtype == torch.float32 and result.device.type == "cpu"
+    assert result.is_contiguous() and result.max() == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        torch.ones(3, 128, 128),
+        torch.ones(4, 127, 128),
+        torch.full((4, 128, 128), 2.0),
+        torch.full((4, 128, 128), float("nan")),
+    ],
+)
+def test_rejects_invalid_input(value):
+    with pytest.raises(ValueError):
+        SEN2SRLiteX4(FakeBackend()).predict(value)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [torch.ones(4, 512, 512), torch.full((1, 4, 512, 512), float("nan"))],
+)
+def test_rejects_invalid_output(output):
+    with pytest.raises(ValueError):
+        SEN2SRLiteX4(FakeBackend(output)).predict(torch.zeros(4, 128, 128))
+
+
+def test_verifies_named_assets(tmp_path):
+    expected = {}
+    for name in MODEL_ASSET_SHA256:
+        path = tmp_path / name
+        path.write_bytes(name.encode())
+        expected[name] = hashlib.sha256(name.encode()).hexdigest()
+    verify_model_assets(tmp_path, expected)
+    (tmp_path / "load.py").write_bytes(b"modified")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        verify_model_assets(tmp_path, expected)
+
+
+def test_pretrained_verifies_before_loader(monkeypatch, tmp_path):
+    events = []
+
+    class Loader:
+        source = str(tmp_path)
+
+        def compiled_model(self, **kwargs):
+            events.append("compiled")
+            return FakeBackend()
+
+    monkeypatch.setattr(
+        sen2srlite.mlstac, "download", lambda *_: events.append("download") or Loader()
+    )
+    monkeypatch.setattr(sen2srlite, "verify_model_assets", lambda root: events.append("verify"))
+    monkeypatch.setattr(sen2srlite.mlstac, "load", lambda *_: events.append("load") or Loader())
+    SEN2SRLiteX4.from_pretrained(tmp_path)
+    assert events == ["download", "verify", "load", "compiled"]
