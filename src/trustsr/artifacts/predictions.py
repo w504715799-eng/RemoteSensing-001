@@ -53,6 +53,15 @@ class PredictionIdentity:
     lr_dtype: str
     lr_sha256: str
 
+    def __post_init__(self) -> None:
+        # Keep the public constructor subject to the same scalar/copy invariant
+        # as build_identity; callers cannot smuggle in mutable nested mappings.
+        frozen_provenance = MappingProxyType(_validate_provenance(self.model_provenance))
+        object.__setattr__(self, "model_provenance", frozen_provenance)
+        if not isinstance(self.source, str) or not isinstance(self.sample_id, str):
+            raise TypeError("source and sample_id must be strings")
+        object.__setattr__(self, "lr_shape", tuple(int(x) for x in self.lr_shape))
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "model_provenance": dict(self.model_provenance),

@@ -6,6 +6,7 @@ import torch
 from trustsr.artifacts.predictions import (
     CacheIntegrityError,
     PredictionCache,
+    PredictionIdentity,
     build_identity,
 )
 
@@ -108,6 +109,18 @@ def test_identity_defensively_copies_and_rejects_non_scalar_provenance():
     assert identity.model_provenance["name"] == "demo"
     with pytest.raises(TypeError):
         build_identity({"nested": {"x": 1}}, "s", "id", torch.zeros((4, 2, 3)))
+
+
+def test_public_identity_constructor_enforces_immutable_scalar_provenance():
+    provenance = {"name": "demo"}
+    identity = PredictionIdentity(provenance, "s", "id", (4, 2, 3), "torch.float32", "a" * 64)
+    provenance["name"] = "changed"
+    assert identity.model_provenance["name"] == "demo"
+    assert identity.key == PredictionIdentity(
+        {"name": "demo"}, "s", "id", (4, 2, 3), "torch.float32", "a" * 64
+    ).key
+    with pytest.raises(TypeError):
+        PredictionIdentity({"nested": {"x": 1}}, "s", "id", (4, 2, 3), "torch.float32", "a" * 64)
 
 
 def test_metadata_has_no_paths_timestamps_pickle_or_temporary_files(tmp_path):

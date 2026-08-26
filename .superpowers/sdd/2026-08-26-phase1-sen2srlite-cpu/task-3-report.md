@@ -49,3 +49,21 @@ $ uv run pytest -q
 $ uv run ruff check .
 All checks passed!
 ```
+
+## Fix round 2
+
+`PredictionIdentity.__post_init__` now routes every public construction through provenance scalar validation and a defensive immutable copy. Added `test_public_identity_constructor_enforces_immutable_scalar_provenance`, covering direct mutable and nested provenance construction, stable keys, and defensive copying.
+
+Exact verification:
+
+```text
+$ uv run pytest tests/artifacts/test_predictions.py -q
+..............                                                           [100%]
+
+$ uv run pytest -q
+................................................                         [100%]
+43 warnings (torch.jit deprecation)
+
+$ uv run ruff check .
+All checks passed!
+```
