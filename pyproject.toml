@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 trustsr-smoke = "trustsr.cli.smoke_baseline:main"
+trustsr-benchmark = "trustsr.cli.benchmark_baselines:main"
 
 [dependency-groups]
 dev = [
