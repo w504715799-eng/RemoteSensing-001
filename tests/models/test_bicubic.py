@@ -17,3 +17,7 @@ def test_bicubic_predicts_rgbn_x4_deterministically() -> None:
     assert first.min() >= 0 and first.max() <= 1
     assert torch.equal(first, second)
     assert not first.requires_grad
+
+
+def test_bicubic_name_preserves_phase0_cli_identifier() -> None:
+    assert BicubicX4.name == "bicubic-x4"

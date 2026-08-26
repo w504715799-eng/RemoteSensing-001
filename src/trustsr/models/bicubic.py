@@ -5,7 +5,7 @@ from trustsr.models.protocols import JsonScalar
 
 
 class BicubicX4:
-    name = "bicubic_x4"
+    name = "bicubic-x4"
     scale = 4
 
     def provenance(self) -> dict[str, JsonScalar]:

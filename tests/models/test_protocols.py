@@ -14,7 +14,7 @@ def test_bicubic_implements_sr_model_protocol() -> None:
 def test_bicubic_provenance_is_stable_json_scalars() -> None:
     provenance = BicubicX4().provenance()
     assert provenance == {
-        "name": "bicubic_x4",
+        "name": "bicubic-x4",
         "scale": 4,
         "implementation": "torch.nn.functional.interpolate",
         "mode": "bicubic",
