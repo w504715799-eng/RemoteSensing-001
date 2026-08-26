@@ -12,6 +12,8 @@ def test_bicubic_predicts_rgbn_x4_deterministically() -> None:
 
     assert first.shape == (4, 32, 36)
     assert first.dtype == torch.float32
+    assert first.device.type == "cpu"
+    assert first.is_contiguous()
     assert first.min() >= 0 and first.max() <= 1
     assert torch.equal(first, second)
     assert not first.requires_grad
