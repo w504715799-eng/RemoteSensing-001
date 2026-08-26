@@ -9,6 +9,7 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import torch
@@ -45,7 +46,7 @@ def tensor_sha256(tensor: torch.Tensor) -> str:
 
 @dataclass(frozen=True)
 class PredictionIdentity:
-    model_provenance: dict[str, Any]
+    model_provenance: Mapping[str, Any]
     source: str
     sample_id: str
     lr_shape: tuple[int, ...]
@@ -54,7 +55,7 @@ class PredictionIdentity:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "model_provenance": self.model_provenance,
+            "model_provenance": dict(self.model_provenance),
             "source": self.source,
             "sample_id": self.sample_id,
             "lr": {
@@ -97,7 +98,7 @@ def build_identity(
     if not isinstance(lr, torch.Tensor) or lr.ndim != 3:
         raise ValueError("lr must be a 3-D tensor")
     return PredictionIdentity(
-        _validate_provenance(model_provenance),
+        MappingProxyType(_validate_provenance(model_provenance)),
         source,
         sample_id,
         tuple(int(x) for x in lr.shape),
@@ -168,16 +169,34 @@ class PredictionCache:
             ) as f:
                 metadata_tmp = Path(f.name)
             save_file({"prediction": prediction}, str(tensor_tmp))
-            metadata_tmp.write_bytes(canonical_json(metadata))
+            with tensor_tmp.open("rb") as stream:
+                os.fsync(stream.fileno())
+            with metadata_tmp.open("wb") as stream:
+                stream.write(canonical_json(metadata))
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(tensor_tmp, tensor_path)
             tensor_tmp = None
+            self._fsync_directory()
             os.replace(metadata_tmp, metadata_path)
             metadata_tmp = None
+            self._fsync_directory()
         finally:
             for path in (tensor_tmp, metadata_tmp):
                 if path is not None:
                     path.unlink(missing_ok=True)
         return identity.key
+
+    def _fsync_directory(self) -> None:
+        """Persist directory entries when the platform supports it."""
+        try:
+            fd = os.open(self.root, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     store = put
     save = put

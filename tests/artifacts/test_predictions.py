@@ -67,6 +67,60 @@ def test_metadata_tampering_is_integrity_error(tmp_path):
         cache.get(identity)
 
 
+def test_mismatched_identity_is_integrity_error(tmp_path):
+    cache = PredictionCache(tmp_path)
+    identity = _identity()
+    cache.put(identity, torch.zeros((4, 8, 12)))
+    path = tmp_path / f"{identity.key}.json"
+    metadata = json.loads(path.read_text())
+    metadata["identity"]["sample_id"] = "other"
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(CacheIntegrityError):
+        cache.get(identity)
+
+
+def test_truncated_tensor_is_integrity_error(tmp_path):
+    cache = PredictionCache(tmp_path)
+    identity = _identity()
+    cache.put(identity, torch.zeros((4, 8, 12)))
+    path = tmp_path / f"{identity.key}.safetensors"
+    path.write_bytes(path.read_bytes()[:12])
+    with pytest.raises(CacheIntegrityError):
+        cache.get(identity)
+
+
+def test_tensor_digest_mismatch_is_integrity_error(tmp_path):
+    cache = PredictionCache(tmp_path)
+    identity = _identity()
+    cache.put(identity, torch.zeros((4, 8, 12)))
+    path = tmp_path / f"{identity.key}.json"
+    metadata = json.loads(path.read_text())
+    metadata["prediction"]["sha256"] = "0" * 64
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(CacheIntegrityError):
+        cache.get(identity)
+
+
+def test_identity_defensively_copies_and_rejects_non_scalar_provenance():
+    provenance = {"name": "demo"}
+    identity = build_identity(provenance, "s", "id", torch.zeros((4, 2, 3)))
+    provenance["name"] = "changed"
+    assert identity.model_provenance["name"] == "demo"
+    with pytest.raises(TypeError):
+        build_identity({"nested": {"x": 1}}, "s", "id", torch.zeros((4, 2, 3)))
+
+
+def test_metadata_has_no_paths_timestamps_pickle_or_temporary_files(tmp_path):
+    cache = PredictionCache(tmp_path)
+    identity = _identity()
+    cache.put(identity, torch.zeros((4, 8, 12)))
+    payload = (tmp_path / f"{identity.key}.json").read_text()
+    assert str(tmp_path) not in payload
+    assert "timestamp" not in payload.lower()
+    assert "pickle" not in payload.lower()
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
 def test_tensor_only_is_miss(tmp_path):
     cache = PredictionCache(tmp_path)
     identity = _identity()

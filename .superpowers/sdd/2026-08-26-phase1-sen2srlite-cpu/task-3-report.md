@@ -25,3 +25,27 @@ The JSON sidecar is the commit marker: tensor replacement precedes metadata repl
 ## Concerns
 
 No known concerns for the specified contract. Cache directory creation is intentionally limited to the configured root.
+
+## Fix round (review findings)
+
+Implemented explicit close/flush/fsync for tensor and metadata temporary files, directory fsync after each replacement, and retained JSON-last commit ordering. Identity provenance is now defensively copied into an immutable mapping. Added coverage in `tests/artifacts/test_predictions.py`:
+
+- `test_mismatched_identity_is_integrity_error`
+- `test_truncated_tensor_is_integrity_error`
+- `test_tensor_digest_mismatch_is_integrity_error`
+- `test_identity_defensively_copies_and_rejects_non_scalar_provenance`
+- `test_metadata_has_no_paths_timestamps_pickle_or_temporary_files`
+
+Commands and output:
+
+```text
+$ uv run pytest tests/artifacts/test_predictions.py -q
+.............                                                            [100%]
+
+$ uv run pytest -q
+...............................................                          [100%]
+43 warnings (torch.jit deprecation)
+
+$ uv run ruff check .
+All checks passed!
+```
