@@ -5,10 +5,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.py[cod]
-data/
-artifacts/
-models/
-checkpoints/
+/data/
+/artifacts/
+/models/
+/checkpoints/
 *.ckpt
 *.pth
 *.pt
