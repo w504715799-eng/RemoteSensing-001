@@ -66,7 +66,13 @@ def fake_metrics(monkeypatch):
     )
 
 
-def _run(tmp_path: Path, pairs: list[SRPair], models: list[FakeModel]):
+def _run(
+    tmp_path: Path,
+    pairs: list[SRPair],
+    models: list[FakeModel],
+    *,
+    expected_model_count: int = 2,
+):
     from trustsr.cli.benchmark_baselines import run_benchmark
 
     return run_benchmark(
@@ -83,7 +89,36 @@ def _run(tmp_path: Path, pairs: list[SRPair], models: list[FakeModel]):
             "opensr_test": "test-opensr",
             "device": "cpu",
         },
+        expected_model_count=expected_model_count,
     )
+
+
+def test_three_models_preserve_input_order(tmp_path: Path):
+    global PAIRS
+    PAIRS = _pairs()
+    result = _run(
+        tmp_path,
+        PAIRS,
+        [FakeModel("a"), FakeModel("b"), FakeModel("c")],
+        expected_model_count=3,
+    )
+    assert list(result["models"]) == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_default_expected_model_count_rejects_wrong_count(tmp_path: Path, count: int):
+    global PAIRS
+    PAIRS = _pairs()
+    with pytest.raises(ValueError, match="exactly two"):
+        _run(tmp_path, PAIRS, [FakeModel(str(i)) for i in range(count)])
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 2.0])
+def test_expected_model_count_requires_exact_positive_int(tmp_path: Path, count):
+    global PAIRS
+    PAIRS = _pairs()
+    with pytest.raises(ValueError, match="positive int"):
+        _run(tmp_path, PAIRS, [FakeModel("a"), FakeModel("b")], expected_model_count=count)
 
 
 def test_requires_exactly_nine_unique_spot_samples(tmp_path: Path):

@@ -132,11 +132,16 @@ def run_benchmark(
     cache_root: Path | str,
     result_path: Path | str,
     environment: Mapping[str, str],
+    expected_model_count: int = 2,
 ) -> dict[str, object]:
-    """Evaluate two models over one frozen nine-sample manifest and write JSON."""
+    """Evaluate models over one frozen nine-sample manifest and write JSON."""
     _require_nine_unique_pairs(pairs)
-    if len(models) != 2:
-        raise ValueError("benchmark requires exactly two models")
+    if type(expected_model_count) is not int or expected_model_count <= 0:
+        raise ValueError("expected_model_count must be an exact positive int")
+    if len(models) != expected_model_count:
+        if expected_model_count == 2:
+            raise ValueError("benchmark requires exactly two models")
+        raise ValueError(f"benchmark requires exactly {expected_model_count} models")
     if environment.get("dataset") != "spot" or environment.get("dataset_version") != "v3":
         raise ValueError("benchmark requires the SPOT v3 development dataset")
 
