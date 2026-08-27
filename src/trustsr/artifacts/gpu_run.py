@@ -180,11 +180,15 @@ def _parse_nvcc_version(text: str) -> str:
     return text.split(marker, 1)[1].split(",", 1)[0].strip() or "unavailable"
 
 
-def _command_version(text: str) -> str:
+def _command_version(expected_name: str, text: str) -> str:
     if text == "unavailable":
         return text
     parts = text.split()
-    if len(parts) < 2 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", parts[1]):
+    if (
+        len(parts) < 2
+        or parts[0] != expected_name
+        or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", parts[1])
+    ):
         return "unavailable"
     return parts[1]
 
@@ -238,8 +242,8 @@ def collect_gpu_environment(
     uv_command = [str(Path(sys.executable).absolute().parent / "uv"), "--version"]
     runtime: dict[str, JsonScalar] = {
         "python": platform.python_version(),
-        "conda": _command_version(_run_text(command_runner, _CONDA_COMMAND)),
-        "uv": _command_version(_run_text(command_runner, uv_command)),
+        "conda": _command_version("conda", _run_text(command_runner, _CONDA_COMMAND)),
+        "uv": _command_version("uv", _run_text(command_runner, uv_command)),
         "torch": _package_version("torch"),
         "cuda_toolkit": _parse_nvcc_version(_run_text(command_runner, _NVCC_COMMAND)),
         "cuda_runtime": torch.version.cuda or "unavailable",

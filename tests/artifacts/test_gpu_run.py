@@ -166,12 +166,18 @@ def test_collect_gpu_environment_records_versions_not_trailing_build_metadata(mo
     [
         ("conda release-26\n", "uv 0.12.5\n", "conda"),
         ("conda 26.5.3\n", "uv release-0.12\n", "uv"),
+        ("unexpected 1.2.3\n", "uv 0.12.5\n", "conda"),
+        ("conda 26.5.3\n", "unavailable 1.2.3\n", "uv"),
+        ("\n", "uv 0.12.5\n", "conda"),
+        ("conda 26.5.3\n", "\n", "uv"),
+        ("unavailable\n", "uv 0.12.5\n", "conda"),
+        ("conda 26.5.3\n", "unavailable\n", "uv"),
     ],
 )
 def test_collect_gpu_environment_marks_malformed_tool_versions_unavailable(
     monkeypatch, conda_output: str, uv_output: str, runtime_key: str
 ) -> None:
-    """A non-version token must not enter the runtime manifest."""
+    """Malformed runtime-tool output must not enter the manifest."""
     active_uv = Path(sys.executable).absolute().parent / "uv"
     outputs = {
         ("conda", "--version"): conda_output,
