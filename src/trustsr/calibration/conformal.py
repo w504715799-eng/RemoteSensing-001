@@ -32,41 +32,36 @@ class ConformalCalibration:
 
 
 def _validate_positive_finite(value: float, *, name: str) -> float:
-    if isinstance(value, bool):
+    if not _is_runtime_real(value):
         raise ValueError(f"{name} must be a positive finite number")
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{name} must be a positive finite number") from error
+    numeric_value = float(value)
     if not math.isfinite(numeric_value) or numeric_value <= 0:
         raise ValueError(f"{name} must be a positive finite number")
     return numeric_value
 
 
 def _validate_alpha(alpha: float, *, risk_upper_bound: float) -> float:
-    if isinstance(alpha, bool):
+    if not _is_runtime_real(alpha):
         raise ValueError("alpha must be in (0, risk_upper_bound]")
-    try:
-        numeric_alpha = float(alpha)
-    except (TypeError, ValueError) as error:
-        raise ValueError("alpha must be in (0, risk_upper_bound]") from error
+    numeric_alpha = float(alpha)
     if not math.isfinite(numeric_alpha) or not 0 < numeric_alpha <= risk_upper_bound:
         raise ValueError("alpha must be in (0, risk_upper_bound]")
     return numeric_alpha
 
 
 def _validate_threshold(threshold: float) -> float:
-    if isinstance(threshold, bool):
+    if not _is_runtime_real(threshold):
         raise ValueError("threshold must be finite or -inf")
-    try:
-        numeric_threshold = float(threshold)
-    except (TypeError, ValueError) as error:
-        raise ValueError("threshold must be finite or -inf") from error
+    numeric_threshold = float(threshold)
     if numeric_threshold == float("-inf"):
         return numeric_threshold
     if not math.isfinite(numeric_threshold) or numeric_threshold < 0:
         raise ValueError("threshold must be finite or -inf")
     return numeric_threshold
+
+
+def _is_runtime_real(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _validate_count(value: int, *, name: str, allow_zero: bool) -> None:

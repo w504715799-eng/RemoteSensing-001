@@ -109,14 +109,45 @@ def test_calibration_result_is_immutable() -> None:
         ("alpha", float("nan"), "alpha must be a positive finite number"),
         ("threshold", float("inf"), "threshold must be finite or -inf"),
         ("risk_bound", float("inf"), "risk_bound must be a positive finite number"),
+        ("alpha", True, "alpha must be a positive finite number"),
+        ("threshold", True, "threshold must be finite or -inf"),
+        ("risk_bound", True, "risk_bound must be a positive finite number"),
         ("calibration_size", -1, "calibration_size must be a positive integer"),
         ("trusted_pixels", -1, "trusted_pixels must be a non-negative integer"),
         ("total_pixels", -1, "total_pixels must be a non-negative integer"),
+        ("calibration_size", True, "calibration_size must be a positive integer"),
+        ("trusted_pixels", True, "trusted_pixels must be a non-negative integer"),
+        ("total_pixels", True, "total_pixels must be a non-negative integer"),
         ("trusted_pixels", 2, "trusted_pixels must not exceed total_pixels"),
     ],
 )
 def test_conformal_calibration_rejects_invalid_invariants(
     field: str, value: float | int, message: str
+) -> None:
+    values = {
+        "alpha": 0.5,
+        "threshold": 0.2,
+        "risk_bound": 0.5,
+        "calibration_size": 1,
+        "trusted_pixels": 1,
+        "total_pixels": 1,
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        ConformalCalibration(**values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("alpha", "0.5", "alpha must be a positive finite number"),
+        ("threshold", "0.2", "threshold must be finite or -inf"),
+        ("risk_bound", "0.5", "risk_bound must be a positive finite number"),
+    ],
+)
+def test_conformal_calibration_rejects_string_typed_float_fields(
+    field: str, value: str, message: str
 ) -> None:
     values = {
         "alpha": 0.5,
