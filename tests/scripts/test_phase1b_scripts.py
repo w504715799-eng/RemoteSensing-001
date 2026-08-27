@@ -428,6 +428,48 @@ def test_stage_runner_rejects_descendant_symlink_escape_before_cli_or_outside_wr
     assert list(outside.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    "escaping_relative", (Path("artifacts/phase1b"), Path("artifacts/phase1b/cache"))
+)
+def test_stage_runner_rejects_fixed_output_tree_symlink_before_cli_or_any_output_write(
+    tmp_path: Path, escaping_relative: Path
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    (remote_root / "repo").mkdir(parents=True)
+    executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
+    executable.parent.mkdir(parents=True)
+    _make_executable(
+        executable,
+        "#!/usr/bin/env bash\n"
+        "printf 'called' > \"$CLI_CALLED_FILE\"\n"
+        "mkdir -p \"$TRUSTSR_ARTIFACT_ROOT/phase1b/cache\"\n"
+        "printf 'environment' > \"$TRUSTSR_ARTIFACT_ROOT/phase1b/environment.json\"\n"
+        "printf 'cache' > \"$TRUSTSR_ARTIFACT_ROOT/phase1b/cache/output.json\"\n",
+    )
+    outside = tmp_path / f"outside-{'-'.join(escaping_relative.parts)}"
+    outside.mkdir()
+    escaping_path = remote_root / escaping_relative
+    escaping_path.parent.mkdir(parents=True, exist_ok=True)
+    escaping_path.symlink_to(outside, target_is_directory=True)
+    cli_called = tmp_path / "cli-called"
+    environment, _ = _environment(tmp_path)
+    environment["CLI_CALLED_FILE"] = str(cli_called)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / "run_remote.sh"), str(remote_root), "preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert "symlink" in completed.stderr.lower() or "escape" in completed.stderr.lower()
+    assert not cli_called.exists()
+    assert list(outside.iterdir()) == []
+    assert not (remote_root / "artifacts/phase1b/environment.json").is_file()
+
+
 def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digests(tmp_path: Path) -> None:
     remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
     _write_manifest(

@@ -89,6 +89,8 @@ derived_directories=(
   artifacts
   artifacts/cache
   artifacts/cache/predictions
+  artifacts/phase1b
+  artifacts/phase1b/cache
 )
 for relative in "${derived_directories[@]}"; do
   validate_derived_directory "$relative"
@@ -99,7 +101,12 @@ project_root="${remote_root}/repo"
 cli="${remote_root}/conda-env/bin/trustsr-ldsr-gpu"
 [[ -x "$cli" && ! -L "$cli" ]] || die 'compatible prefix with trustsr-ldsr-gpu is required'
 
-for relative in data/opensr models/sen2srlite models/ldsr-s2 artifacts/cache/predictions; do
+for relative in \
+  data/opensr \
+  models/sen2srlite \
+  models/ldsr-s2 \
+  artifacts/cache/predictions \
+  artifacts/phase1b/cache; do
   create_derived_directory "$relative"
 done
 
