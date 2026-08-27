@@ -46,6 +46,10 @@ network and CPU. Subsequent runs reuse predictions from
 `artifacts/phase1/spot-v3-baselines.json`. All three locations are intentionally
 untracked. Path overrides are available through `trustsr-benchmark --help`.
 
+If network access is unavailable, operators may stage the five pinned SEN2SRLite files
+into the model directory by an available transport. Production loads a staged cache
+only after every pinned SHA-256 digest verifies successfully.
+
 SPOT is a development reproducibility check, not final scientific evidence. The future
 LDSR-S2 GPU phase is intentionally separate from this CPU checkpoint.
 

@@ -125,6 +125,103 @@ def test_verification_failure_prevents_mlm_load(monkeypatch, tmp_path):
     assert not load_called
 
 
+def test_complete_valid_cache_skips_download_and_verifies_before_load(monkeypatch, tmp_path):
+    events = []
+    assets = {name: f"verified {name}".encode() for name in MODEL_ASSET_SHA256}
+    for name, content in assets.items():
+        (tmp_path / name).write_bytes(content)
+        monkeypatch.setitem(MODEL_ASSET_SHA256, name, hashlib.sha256(content).hexdigest())
+
+    original_verify = sen2srlite.verify_model_assets
+
+    def record_verify(root):
+        events.append(("verify", root))
+        original_verify(root)
+
+    loader = object()
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "download",
+        lambda *_: (_ for _ in ()).throw(AssertionError("download must not run")),
+    )
+    monkeypatch.setattr(sen2srlite, "verify_model_assets", record_verify)
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "load",
+        lambda manifest: events.append(("load", manifest)) or loader,
+    )
+
+    assert sen2srlite.download_verified_model(tmp_path) is loader
+    assert events == [
+        ("verify", tmp_path),
+        ("load", tmp_path / "mlm.json"),
+    ]
+
+
+def test_complete_invalid_cache_skips_download_and_load(monkeypatch, tmp_path):
+    calls = []
+    for name in MODEL_ASSET_SHA256:
+        (tmp_path / name).write_bytes(b"invalid")
+
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "download",
+        lambda *_: calls.append("download"),
+    )
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "load",
+        lambda *_: calls.append("load"),
+    )
+    with pytest.raises(ValueError, match="hash mismatch"):
+        sen2srlite.download_verified_model(tmp_path)
+    assert calls == []
+
+
+def test_partial_cache_uses_official_download_path(monkeypatch, tmp_path):
+    events = []
+    assets = {name: f"downloaded {name}".encode() for name in MODEL_ASSET_SHA256}
+    for name, content in assets.items():
+        monkeypatch.setitem(MODEL_ASSET_SHA256, name, hashlib.sha256(content).hexdigest())
+    (tmp_path / "mlm.json").write_bytes(assets["mlm.json"])
+
+    class Downloaded:
+        source = str(tmp_path)
+
+    loader = object()
+
+    original_verify = sen2srlite.verify_model_assets
+
+    def download(url, cache_dir):
+        events.append(("download", url, cache_dir))
+        for name, content in assets.items():
+            (cache_dir / name).write_bytes(content)
+        return Downloaded()
+
+    def record_verify(root):
+        events.append(("verify", root))
+        original_verify(root)
+
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "download",
+        download,
+    )
+    monkeypatch.setattr(sen2srlite, "verify_model_assets", record_verify)
+    monkeypatch.setattr(
+        sen2srlite.mlstac,
+        "load",
+        lambda manifest: events.append(("load", manifest)) or loader,
+    )
+
+    assert sen2srlite.download_verified_model(tmp_path) is loader
+    assert events == [
+        ("download", sen2srlite.MODEL_MANIFEST_URL, tmp_path),
+        ("verify", tmp_path),
+        ("load", tmp_path / "mlm.json"),
+    ]
+
+
 def test_pretrained_verifies_before_loader(monkeypatch, tmp_path):
     events = []
 
