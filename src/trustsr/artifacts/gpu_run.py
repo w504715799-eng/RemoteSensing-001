@@ -184,7 +184,9 @@ def _command_version(text: str) -> str:
     if text == "unavailable":
         return text
     parts = text.split()
-    return parts[-1] if parts else "unavailable"
+    if len(parts) < 2 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", parts[1]):
+        return "unavailable"
+    return parts[1]
 
 
 def resolve_project_root(project_root: Path | str | None = None) -> Path:

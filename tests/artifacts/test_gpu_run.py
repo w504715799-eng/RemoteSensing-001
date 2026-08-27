@@ -127,6 +127,82 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
         assert forbidden not in text.lower()
 
 
+def test_collect_gpu_environment_records_versions_not_trailing_build_metadata(monkeypatch):
+    """The runtime manifest must retain each tool's version token."""
+    active_uv = Path(sys.executable).absolute().parent / "uv"
+    outputs = {
+        ("conda", "--version"): "conda 26.5.3\n",
+        (str(active_uv), "--version"): "uv 0.12.5 (x86_64-unknown-linux-gnu)\n",
+        ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
+        ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
+    }
+
+    def runner(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, outputs[tuple(argv)], "")
+
+    monkeypatch.setattr("trustsr.artifacts.gpu_run._read_cgroup_limit", lambda name: "max")
+    snapshot = GPUHardwareSnapshot(
+        name="NVIDIA A100",
+        uuid="GPU-uuid",
+        driver_version="555.1",
+        memory_total_mib=24576,
+        memory_free_mib=20000,
+        compute_capability="8.6",
+        compute_pids=(),
+    )
+
+    runtime = collect_gpu_environment(
+        hardware_snapshot=snapshot,
+        project_root=REPOSITORY,
+        command_runner=runner,
+    )["runtime"]
+
+    assert runtime["uv"] == "0.12.5"
+    assert runtime["conda"] == "26.5.3"
+
+
+@pytest.mark.parametrize(
+    ("conda_output", "uv_output", "runtime_key"),
+    [
+        ("conda release-26\n", "uv 0.12.5\n", "conda"),
+        ("conda 26.5.3\n", "uv release-0.12\n", "uv"),
+    ],
+)
+def test_collect_gpu_environment_marks_malformed_tool_versions_unavailable(
+    monkeypatch, conda_output: str, uv_output: str, runtime_key: str
+) -> None:
+    """A non-version token must not enter the runtime manifest."""
+    active_uv = Path(sys.executable).absolute().parent / "uv"
+    outputs = {
+        ("conda", "--version"): conda_output,
+        (str(active_uv), "--version"): uv_output,
+        ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
+        ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
+    }
+
+    def runner(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, outputs[tuple(argv)], "")
+
+    monkeypatch.setattr("trustsr.artifacts.gpu_run._read_cgroup_limit", lambda name: "max")
+    snapshot = GPUHardwareSnapshot(
+        name="NVIDIA A100",
+        uuid="GPU-uuid",
+        driver_version="555.1",
+        memory_total_mib=24576,
+        memory_free_mib=20000,
+        compute_capability="8.6",
+        compute_pids=(),
+    )
+
+    runtime = collect_gpu_environment(
+        hardware_snapshot=snapshot,
+        project_root=REPOSITORY,
+        command_runner=runner,
+    )["runtime"]
+
+    assert runtime[runtime_key] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("gpu_output", "process_output", "cuda_available", "message"),
     [
