@@ -1,5 +1,6 @@
 import json
 import random
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -170,6 +171,39 @@ def test_predict_restores_python_numpy_and_torch_rng_state() -> None:
     assert torch.equal(torch.random.get_rng_state(), expected_torch)
 
 
+def test_isolated_randomness_restores_all_cuda_generator_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cuda_states = ["device-zero-state", "device-one-state"]
+
+    @contextmanager
+    def fake_fork_rng(*, devices: list[int]) -> object:
+        assert devices == [0]
+        selected_state = cuda_states[0]
+        try:
+            yield
+        finally:
+            cuda_states[0] = selected_state
+
+    def fake_manual_seed_all(seed: int) -> None:
+        cuda_states[:] = [f"seed-{seed}"] * len(cuda_states)
+
+    monkeypatch.setattr(ldsr_s2.torch.random, "fork_rng", fake_fork_rng)
+    monkeypatch.setattr(ldsr_s2.torch, "manual_seed", lambda _seed: None)
+    monkeypatch.setattr(ldsr_s2.torch.cuda, "manual_seed_all", fake_manual_seed_all)
+    monkeypatch.setattr(ldsr_s2.torch.cuda, "get_rng_state_all", lambda: list(cuda_states))
+    monkeypatch.setattr(
+        ldsr_s2.torch.cuda,
+        "set_rng_state_all",
+        lambda states: cuda_states.__setitem__(slice(None), states),
+    )
+
+    with ldsr_s2._isolated_randomness("cuda:0", 23):
+        assert cuda_states == ["seed-23", "seed-23"]
+
+    assert cuda_states == ["device-zero-state", "device-one-state"]
+
+
 @pytest.mark.parametrize("raises", [False, True])
 def test_predict_restores_cudnn_flags_after_success_and_exception(raises: bool) -> None:
     original_benchmark = torch.backends.cudnn.benchmark
@@ -273,6 +307,7 @@ def test_from_pretrained_constructs_only_after_available_cuda_check(
     backend = FakeBackend()
     calls: list[tuple[Path | str, str]] = []
     monkeypatch.setattr(ldsr_s2.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(ldsr_s2.torch.cuda, "device_count", lambda: 1)
     monkeypatch.setattr(
         ldsr_s2,
         "build_verified_backend",
@@ -283,3 +318,22 @@ def test_from_pretrained_constructs_only_after_available_cuda_check(
 
     assert model._backend is backend
     assert calls == [(tmp_path, "cuda:0")]
+
+
+@pytest.mark.parametrize(("device", "device_count"), [("cuda", 0), ("cuda:1", 1)])
+def test_from_pretrained_rejects_unavailable_cuda_index_before_backend_construction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str, device_count: int
+) -> None:
+    constructed = False
+
+    def fail_build(*args: object, **kwargs: object) -> None:
+        nonlocal constructed
+        constructed = True
+
+    monkeypatch.setattr(ldsr_s2.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(ldsr_s2.torch.cuda, "device_count", lambda: device_count)
+    monkeypatch.setattr(ldsr_s2, "build_verified_backend", fail_build)
+
+    with pytest.raises(ValueError, match="requested CUDA device is unavailable"):
+        LDSRS2X4.from_pretrained(tmp_path, device=device)
+    assert constructed is False

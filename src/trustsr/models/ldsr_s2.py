@@ -59,6 +59,7 @@ def _isolated_randomness(device: str | torch.device, seed: int) -> Iterator[None
     cudnn_deterministic = torch.backends.cudnn.deterministic
     torch_device = torch.device(device)
     cuda_devices = [torch_device.index or 0] if torch_device.type == "cuda" else []
+    cuda_rng_states = torch.cuda.get_rng_state_all() if torch_device.type == "cuda" else None
     try:
         with torch.random.fork_rng(devices=cuda_devices):
             random.seed(seed)
@@ -72,6 +73,8 @@ def _isolated_randomness(device: str | torch.device, seed: int) -> Iterator[None
     finally:
         random.setstate(python_state)
         np.random.set_state(numpy_state)
+        if cuda_rng_states is not None:
+            torch.cuda.set_rng_state_all(cuda_rng_states)
         torch.backends.cudnn.benchmark = cudnn_benchmark
         torch.backends.cudnn.deterministic = cudnn_deterministic
 
@@ -110,7 +113,12 @@ class LDSRS2X4:
     @classmethod
     def from_pretrained(cls, model_dir: Path | str, *, device: str = "cuda:0") -> LDSRS2X4:
         torch_device = torch.device(device)
-        if torch_device.type != "cuda" or not torch.cuda.is_available():
+        device_index = torch_device.index or 0
+        if (
+            torch_device.type != "cuda"
+            or not torch.cuda.is_available()
+            or device_index >= torch.cuda.device_count()
+        ):
             raise ValueError(f"requested CUDA device is unavailable: {device}")
         return cls(build_verified_backend(model_dir, device=device), device=device)
 
