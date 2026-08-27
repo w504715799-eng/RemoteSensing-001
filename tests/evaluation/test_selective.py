@@ -6,12 +6,12 @@ from trustsr.evaluation.selective import SelectivePoint, evaluate_selective_poin
 
 def test_selective_point_reports_pixel_coverage_and_mean_roi_maximum() -> None:
     scores = (
-        torch.tensor([[0.1, 0.4]]),
-        torch.tensor([[0.2, 0.3]]),
+        torch.tensor([[0.1, 0.4]], dtype=torch.float64),
+        torch.tensor([[0.2, 0.3]], dtype=torch.float64),
     )
     risks = (
-        torch.tensor([[0.2, 0.8]]),
-        torch.tensor([[0.3, 0.7]]),
+        torch.tensor([[0.2, 0.8]], dtype=torch.float64),
+        torch.tensor([[0.3, 0.7]], dtype=torch.float64),
     )
 
     result = evaluate_selective_point(scores, risks, threshold=0.2)
@@ -22,8 +22,14 @@ def test_selective_point_reports_pixel_coverage_and_mean_roi_maximum() -> None:
 
 
 def test_all_abstain_reports_zero_coverage_and_risk() -> None:
-    scores = (torch.tensor([[0.1, 0.4]]), torch.tensor([[0.2, 0.3]]))
-    risks = (torch.tensor([[0.2, 0.8]]), torch.tensor([[0.3, 0.7]]))
+    scores = (
+        torch.tensor([[0.1, 0.4]], dtype=torch.float64),
+        torch.tensor([[0.2, 0.3]], dtype=torch.float64),
+    )
+    risks = (
+        torch.tensor([[0.2, 0.8]], dtype=torch.float64),
+        torch.tensor([[0.3, 0.7]], dtype=torch.float64),
+    )
 
     result = evaluate_selective_point(scores, risks, threshold=float("-inf"))
 
@@ -31,8 +37,8 @@ def test_all_abstain_reports_zero_coverage_and_risk() -> None:
 
 
 def test_lower_threshold_has_no_larger_mean_roi_maximum_risk() -> None:
-    scores = (torch.tensor([[0.1, 0.2, 0.3]]),)
-    risks = (torch.tensor([[0.1, 0.4, 0.9]]),)
+    scores = (torch.tensor([[0.1, 0.2, 0.3]], dtype=torch.float64),)
+    risks = (torch.tensor([[0.1, 0.4, 0.9]], dtype=torch.float64),)
 
     lower = evaluate_selective_point(scores, risks, threshold=0.1)
     higher = evaluate_selective_point(scores, risks, threshold=0.3)
@@ -45,6 +51,16 @@ def test_selective_point_is_frozen() -> None:
 
     with pytest.raises(AttributeError):
         point.coverage = 0.6
+
+
+def test_float32_score_slightly_above_exact_threshold_is_rejected() -> None:
+    scores = (torch.tensor([[0.2]], dtype=torch.float32),)
+    risks = (torch.tensor([[0.5]], dtype=torch.float32),)
+
+    result = evaluate_selective_point(scores, risks, threshold=0.2)
+
+    assert result.coverage == 0.0
+    assert result.roi_max_risk == 0.0
 
 
 @pytest.mark.parametrize(
@@ -67,6 +83,26 @@ def test_selective_point_is_frozen() -> None:
 def test_invalid_score_and_risk_inputs_are_rejected(scores, risks, message) -> None:
     with pytest.raises(ValueError, match=message):
         evaluate_selective_point(scores, risks, threshold=0.5)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_scores_are_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        evaluate_selective_point(
+            (torch.tensor([[value]]),),
+            (torch.zeros((1, 1)),),
+            threshold=0.5,
+        )
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_risks_are_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        evaluate_selective_point(
+            (torch.zeros((1, 1)),),
+            (torch.tensor([[value]]),),
+            threshold=0.5,
+        )
 
 
 @pytest.mark.parametrize("threshold", [float("nan"), float("inf")])

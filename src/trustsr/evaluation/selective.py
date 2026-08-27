@@ -77,8 +77,8 @@ def _validated_maps(
         _validate_risk_map(risk)
         if score.shape != risk.shape:
             raise ValueError("ROI shapes must match")
-        validated_scores.append(score.to(device="cpu"))
-        validated_risks.append(risk.to(device="cpu"))
+        validated_scores.append(score.to(device="cpu", dtype=torch.float64))
+        validated_risks.append(risk.to(device="cpu", dtype=torch.float64))
     return tuple(validated_scores), tuple(validated_risks)
 
 
