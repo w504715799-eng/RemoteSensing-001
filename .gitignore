@@ -12,3 +12,6 @@ __pycache__/
 *.ckpt
 *.pth
 *.pt
+*.taco
+artifacts/datasets/cache/
+artifacts/datasets/pixels/

@@ -39,6 +39,18 @@ This command uses no real satellite data and provides no paper evidence or cross
 guarantee. In schema `trustsr.conformal-smoke.v1`, a JSON `null` calibration threshold
 means the internal threshold is `-inf`, the valid all-abstain sentinel.
 
+## Phase 2B0 SEN2NAIPv2 provenance
+
+Inspect the frozen, offline SEN2NAIPv2 provenance record with:
+
+```bash
+uv run trustsr-dataset-audit
+```
+
+Local SEN2NAIPv2 pixel downloads are forbidden. This checkpoint records metadata and
+Git LFS object identities only; it does not download TACO files or extract real
+samples. Cloud access and real sample extraction begin only in Phase 2B1.
+
 ## Phase 1A
 
 Run the deterministic CPU comparison of bicubic interpolation and the verified
