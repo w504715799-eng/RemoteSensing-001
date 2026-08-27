@@ -34,7 +34,7 @@ _COMPUTE_PROCESS_COMMAND = [
     "--query-compute-apps=pid",
     "--format=csv,noheader,nounits",
 ]
-EXPECTED_GPU_NAME = "NVIDIA GeForce RTX 3090"
+EXPECTED_GPU_NAME = "NVIDIA GeForce RTX 4090"
 MINIMUM_FREE_MEMORY_MIB = 18 * 1024
 
 
@@ -142,9 +142,9 @@ def capture_gpu_hardware(
     if total <= 0 or free < 0 or free > total:
         raise RuntimeError("nvidia-smi returned invalid GPU memory data")
     if fields[0] != EXPECTED_GPU_NAME:
-        raise RuntimeError(f"expected exactly one RTX 3090 ({EXPECTED_GPU_NAME})")
+        raise RuntimeError(f"expected exactly one RTX 4090 ({EXPECTED_GPU_NAME})")
     if free < MINIMUM_FREE_MEMORY_MIB:
-        raise RuntimeError("RTX 3090 must have at least 18 GiB initial free VRAM")
+        raise RuntimeError("RTX 4090 must have at least 18 GiB initial free VRAM")
     pids = _parse_compute_pids(_run_required_text(command_runner, _COMPUTE_PROCESS_COMMAND))
     own_pid = os.getpid() if current_pid is None else current_pid
     if set(pids) - {own_pid}:

@@ -8,7 +8,7 @@
 
 ## 1. 目标
 
-本阶段把 LDSR-S2 作为第三个黑盒 RGBN ×4 超分辨率基线接入 TrustSR，并在租用的单张 RTX 3090 上完成可复现推理。实施继续遵守“小步通过、失败即停”的原则：先验证环境，再运行单样本，再运行固定 9 样本；任何一步失败都不扩大规模。
+本阶段把 LDSR-S2 作为第三个黑盒 RGBN ×4 超分辨率基线接入 TrustSR，并在租用的单张 RTX 4090 上完成可复现推理。实施继续遵守“小步通过、失败即停”的原则：先验证环境，再运行单样本，再运行固定 9 样本；任何一步失败都不扩大规模。
 
 阶段交付物：
 
@@ -146,9 +146,10 @@ provenance 使用 JSON 标量，至少记录：
 └── artifacts/phase1b/     # 运行清单与结果
 ```
 
-环境由 `conda` 创建 Python 3.12 前缀；在该前缀安装固定 `uv==0.12.5`，再从提交的 `uv.lock` 以 frozen 模式安装项目及 `gpu` extra。远端不得直接在 base Conda 环境安装项目依赖。
+环境由 `conda` 创建 Python 3.12 前缀；在该前缀安装固定 `uv==0.12.5`，再从提交的 `uv.lock` 以 frozen 模式安装项目及 `gpu` extra。远端不得直接在 base Conda 环境安装项目依赖。只有 `/root/rivermind-fs` 已作为实际挂载点时才允许开始运行。
 
-首次真实运行前记录：
+首次真实运行前，必须确认 CUDA 可用、仅有一张名称精确为 `NVIDIA GeForce RTX 4090`
+的 GPU、初始空闲显存至少 18 GiB，且没有外部 CUDA compute 进程；随后记录：
 
 - 主机 UTC 时间和 TrustSR Git 提交；
 - GPU 名称、UUID、总显存、驱动版本和 compute capability；
@@ -225,7 +226,7 @@ provenance 使用 JSON 标量，至少记录：
 出现以下任一情况立即停止当前关卡并报告：
 
 - SSH 主机指纹变化且用户未确认；
-- RTX 3090 不可见、可用显存不足 18 GB 或存在未知 GPU 进程；
+- 名称精确为 `NVIDIA GeForce RTX 4090` 的 GPU 不可见、可用显存不足 18 GB 或存在未知 GPU 进程；
 - 锁定依赖与 CUDA 13/PyTorch 组合无法导入或运行；
 - checkpoint/config/package 任一哈希不匹配；
 - `weights_only=True` 无法安全加载固定 checkpoint；

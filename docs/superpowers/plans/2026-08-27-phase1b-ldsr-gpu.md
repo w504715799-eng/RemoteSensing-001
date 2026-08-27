@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a supply-chain-verified, deterministic LDSR-S2 RGBN ×4 adapter and run a staged one-sample then nine-sample benchmark on the user's RTX 3090 cloud instance.
+**Goal:** Add a supply-chain-verified, deterministic LDSR-S2 RGBN ×4 adapter and run a staged one-sample then nine-sample benchmark on the user's exact `NVIDIA GeForce RTX 4090` cloud instance.
 
 **Architecture:** Keep GPU-only imports behind lazy factories so the default CPU environment remains unchanged. Separate immutable asset verification, safe upstream backend construction, RNG-isolated model adaptation, repeatability evaluation, staged CLI orchestration, and remote operations. Local tasks and reviews finish first; the cloud instance stays off until the explicit GPU acceptance task.
 
@@ -785,12 +785,15 @@ Create the stacked PR against `feature/phase1-pretrained-baselines`. On the remo
 
 - [ ] **Step 3: Run preflight only**
 
+First confirm `/root/rivermind-fs` is an actual mountpoint; otherwise wait and do
+not run any command.
+
 ```bash
 scripts/phase1b/bootstrap_remote.sh /root/rivermind-fs/trustsr-phase1b /root/rivermind-fs/trustsr-phase1b/repo
 scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b preflight
 ```
 
-Inspect the manifest for one RTX 3090, at least 18 GiB free VRAM before construction, driver/CUDA/Python/PyTorch/package versions, config/checkpoint hashes, exact Git commit, cgroup limits and absence of credentials. Stop on any mismatch.
+Inspect the manifest for exactly one `NVIDIA GeForce RTX 4090`, at least 18 GiB free VRAM before construction, driver/CUDA/Python/PyTorch/package versions, config/checkpoint hashes, exact Git commit, cgroup limits and absence of credentials. Stop on any mismatch.
 
 - [ ] **Step 4: Run the single-sample gate**
 

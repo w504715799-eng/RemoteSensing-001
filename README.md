@@ -59,10 +59,13 @@ commands or committed files: an SSH password or key never belongs in a command
 or the repository.
 
 When the approved GPU instance is available, clone this exact checked-out commit
-onto its data disk and run the following commands *on that instance*. Replace the
-example root with the approved directory below `/root/rivermind-fs/`; the
-bootstrap refuses any other resolved location and requires at least 15 GiB free
-before it changes anything.
+onto the verified persistent data disk and run the following commands *on that
+instance*. The only accepted production root is
+`/root/rivermind-fs/trustsr-phase1b`; bootstrap refuses any other resolved
+location and requires at least 15 GiB free before it changes anything. Do not
+run a stage until `/root/rivermind-fs` is an actual mountpoint. Before model
+construction, the workflow requires CUDA, exactly one `NVIDIA GeForce RTX 4090`,
+at least 18 GiB free VRAM, and no foreign CUDA compute process.
 
 ```bash
 scripts/phase1b/bootstrap_remote.sh /root/rivermind-fs/trustsr-phase1b "$PWD"

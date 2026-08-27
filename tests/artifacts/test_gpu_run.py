@@ -19,6 +19,28 @@ from trustsr.artifacts.gpu_run import (
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 
+def test_hardware_snapshot_accepts_the_verified_rtx_4090_before_model_construction() -> None:
+    verified_name = "NVIDIA GeForce RTX 4090"
+
+    def runner(argv, **_kwargs):
+        output = (
+            f"{verified_name}, GPU-verified, 555.1, 24564, 24058, 8.9\n"
+            if "--query-compute-apps=pid" not in argv
+            else ""
+        )
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    snapshot = capture_gpu_hardware(
+        command_runner=runner,
+        cuda_available=lambda: True,
+        current_pid=os.getpid(),
+    )
+
+    assert snapshot.name == verified_name
+    assert snapshot.memory_total_mib == 24564
+    assert snapshot.memory_free_mib == 24058
+
+
 def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_uv(
     monkeypatch, tmp_path
 ):
@@ -108,7 +130,13 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
             True,
             "exactly one GPU",
         ),
-        ("NVIDIA A100, GPU-one, 555.1, 81920, 80000, 8.0", "", True, "RTX 3090"),
+        (
+            "NVIDIA GeForce RTX 3090, GPU-one, 555.1, 24576, 20000, 8.6",
+            "",
+            True,
+            "RTX 4090",
+        ),
+        ("NVIDIA A100, GPU-one, 555.1, 81920, 80000, 8.0", "", True, "RTX 4090"),
         (
             f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 18431, 8.6",
             "",

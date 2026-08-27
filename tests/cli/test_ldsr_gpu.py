@@ -194,7 +194,7 @@ def test_single_refuses_to_write_when_repeatability_fails(tmp_path, monkeypatch)
     "hardware_error",
     [
         "requires exactly one GPU",
-        "expected exactly one RTX 3090",
+        "expected exactly one RTX 4090",
         "at least 18 GiB initial free VRAM",
         "a foreign CUDA compute process prevents this staged run",
     ],
