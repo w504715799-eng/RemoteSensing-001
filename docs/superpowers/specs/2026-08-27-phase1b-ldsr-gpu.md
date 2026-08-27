@@ -1,7 +1,7 @@
 # Phase 1B：LDSR-S2 云 GPU 基线设计
 
 **日期：** 2026-08-27  
-**状态：** 待用户书面审阅  
+**状态：** 用户已批准，待实施
 **基础分支：** `feature/phase1-pretrained-baselines`  
 **实施分支：** `feature/phase1b-ldsr-gpu`  
 **上位路线：** `2026-08-26-trustworthy-sentinel2-sr-roadmap.md` 的阶段 1  
@@ -53,11 +53,12 @@
 | PyPI wheel SHA-256 | `6168336d800d24976751bba46dd6cb129906109608b8c6003354c89a7a5b72e0` |
 | 上游 Git tag commit | `10f4c01cc8172586841ea9e78c6de9939da47337` |
 | 配置文件 | `opensr_model/configs/config_10m.yaml` |
+| 配置大小 | `1,487` bytes |
 | 配置 SHA-256 | `ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f` |
 | 检查点 | `opensr-ldsrs2_v1_0_0.ckpt` |
 | 检查点 URL | `https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt` |
 | 检查点 SHA-256 | `e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a` |
-| 检查点大小 | 约 1.13 GB |
+| 检查点大小 | `1,130,715,795` bytes（约 1.13 GB） |
 | Python | `3.12.x` |
 | 环境解析器 | 项目 `uv.lock`，`uv==0.12.5` |
 
