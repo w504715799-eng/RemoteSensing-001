@@ -139,14 +139,13 @@ provenance 使用 JSON 标量，至少记录：
 ```text
 /root/rivermind-fs/trustsr-phase1b/
 ├── repo/                  # Git 工作树
-├── conda-env/             # Python 3.12 隔离环境
 ├── models/ldsr-s2/        # 1.13 GB 检查点
 ├── data/opensr/           # SPOT v3
 ├── artifacts/cache/       # 三模型预测缓存
 └── artifacts/phase1b/     # 运行清单与结果
 ```
 
-环境由 `conda` 使用 `--override-channels --channel conda-forge` 创建 Python 3.12 前缀，明确从 conda-forge 获取该前缀的远端 Python 包，避免依赖环境中默认 channel 的策略或配置；不得在远端接受 Conda channel 条款。在该前缀安装固定 `uv==0.12.5`，再从提交的 `uv.lock` 以 frozen 模式安装项目及 `gpu` extra。远端不得直接在 base Conda 环境安装项目依赖。只有 `/root/rivermind-fs` 已作为实际挂载点时才允许开始运行。
+用户批准复用云镜像已有的固定 `/opt/conda/bin/python`：它必须报告 Python 3.12，并且预装的 PyTorch、torchvision 与 CUDA 可用。远端不再创建隔离 Conda 前缀；这失去了完全冻结的隔离环境，因此每次 bootstrap 都必须在安装前后记录并比较实际 PyTorch、torchvision 和 CUDA runtime 指纹。安装前必须以 `--upgrade-strategy only-if-needed` 对 editable `gpu` 安装执行 pip dry-run/report，并以结构化方式拒绝任何 `torch`、`torchvision`、`triton` 或 `nvidia-*` 变更；随后只经该 base Python 安装 `uv==0.12.5` 与项目 `gpu` extra，且不得使用 `--upgrade`。每次运行必须记录实际包/硬件 provenance 与 `uv.lock` SHA-256，不能只信任已有 stamp。既有的部分 `conda-env` 目录保持原样、脚本忽略它。只有 `/root/rivermind-fs` 已作为实际挂载点时才允许开始运行。
 
 首次真实运行前，必须确认 CUDA 可用、仅有一张可见 GPU、`nvidia-smi` 返回的
 compute capability 是数值 `major.minor` 且不低于 `8.0`、初始空闲显存至少 18 GiB，且没有外部 CUDA compute 进程；随后原样记录：
@@ -242,7 +241,7 @@ compute capability 是数值 `major.minor` 且不低于 `8.0`、初始空闲显�
 阶段 1B 只有同时满足以下条件才完成：
 
 1. 本地默认 CPU 环境测试和 Ruff 通过；
-2. GPU extra 在固定 Conda/uv 环境中可从锁文件重建；
+2. GPU extra 在经验证的云镜像 base Python 中以实际包/硬件 provenance 记录并保持 PyTorch/CUDA 指纹不变；
 3. 所有上游代码、配置和模型资产有固定版本与 SHA-256；
 4. 单样本两次强制推理满足确定性门槛；
 5. 九样本三模型结果可从预测缓存重建且连续运行字节一致；

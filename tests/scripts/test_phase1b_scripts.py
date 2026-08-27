@@ -286,7 +286,30 @@ def test_every_shell_entry_point_parses_with_bash_n() -> None:
         assert completed.returncode == 0, completed.stderr
 
 
-def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path) -> None:
+def test_bootstrap_contract_reuses_the_fixed_base_and_preserves_its_cuda_stack() -> None:
+    """Removing a preflight, dry-run, or preservation check would break this contract."""
+    contents = (SCRIPTS / "bootstrap_remote.sh").read_text(encoding="utf-8")
+
+    assert "/opt/conda/bin/python" in contents
+    assert "--version" in contents
+    assert "conda create" not in contents
+    assert "conda-env" not in contents
+    assert "uv sync" not in contents
+    assert "torch.cuda.is_available()" in contents
+    assert "torch.version.cuda" in contents
+    assert "--dry-run" in contents
+    assert "--report" in contents
+    assert "--upgrade-strategy only-if-needed" in contents
+    assert "opensr-model" in contents
+    assert '"uv==0.12.5"' in contents
+    assert "pip check" in contents
+    assert ".trustsr-bootstrap-provenance.json" in contents
+
+
+def test_bootstrap_fails_closed_before_conda_prefix_creation_when_fixed_base_is_absent(
+    tmp_path: Path,
+) -> None:
+    """A missing cloud-image interpreter must not fall back to creating a prefix."""
     remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
     remote_root.mkdir(parents=True)
@@ -302,17 +325,10 @@ def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path
         env=environment,
     )
 
-    assert completed.returncode == 0, completed.stderr
-    commands = log.read_text(encoding="utf-8")
-    assert (
-        f"conda create --yes --override-channels --channel conda-forge "
-        f"--prefix {remote_root}/conda-env python=3.12 pip"
-    ) in commands
-    assert "python -m pip install uv==0.12.5" in commands
-    assert f"uv sync --directory {repo_dir} --frozen --no-dev --extra gpu env={remote_root}/conda-env" in commands
-    assert (remote_root / "conda-env" / ".trustsr-uv-lock.sha256").read_text().strip() == hashlib.sha256(
-        b"locked"
-    ).hexdigest()
+    assert completed.returncode != 0
+    assert "/opt/conda/bin/python" in completed.stderr
+    assert not log.exists()
+    assert not (remote_root / "conda-env").exists()
 
 
 def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> None:
@@ -337,29 +353,14 @@ def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> No
     assert not (remote_root / "conda-env").exists()
 
 
-@pytest.mark.parametrize("mismatch", ("python", "uv", "lock_digest"))
-def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
-    mismatch: str, tmp_path: Path
-) -> None:
+def test_bootstrap_ignores_an_existing_partial_conda_prefix(tmp_path: Path) -> None:
     remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
     (remote_root / "conda-env" / "bin").mkdir(parents=True)
     repo_dir.mkdir()
     (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
-    python_version = "Python 3.11.9" if mismatch == "python" else "Python 3.12.4"
-    uv_version = "uv 0.12.4" if mismatch == "uv" else "uv 0.12.5"
-    _make_executable(
-        remote_root / "conda-env" / "bin" / "python",
-        f"#!/usr/bin/env bash\necho '{python_version}'\n",
-    )
-    _make_executable(
-        remote_root / "conda-env" / "bin" / "uv",
-        f"#!/usr/bin/env bash\necho '{uv_version}'\n",
-    )
-    digest = hashlib.sha256(b"locked").hexdigest()
-    if mismatch == "lock_digest":
-        digest = "0" * 64
-    (remote_root / "conda-env" / ".trustsr-uv-lock.sha256").write_text(f"{digest}\n")
+    sentinel = remote_root / "conda-env" / "preserve-me"
+    sentinel.write_text("partial environment", encoding="utf-8")
     environment, log = _environment(tmp_path)
 
     completed = subprocess.run(
@@ -371,82 +372,19 @@ def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
     )
 
     assert completed.returncode != 0
-    assert "remove" in completed.stderr.lower() or "recreate" in completed.stderr.lower()
+    assert "/opt/conda/bin/python" in completed.stderr
     assert not log.exists()
+    assert sentinel.read_text(encoding="utf-8") == "partial environment"
 
 
-def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_command(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
-    (remote_root / "repo").mkdir(parents=True)
-    executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
-    executable.parent.mkdir(parents=True)
-    _make_executable(
-        executable,
-        "#!/usr/bin/env bash\nprintf 'stage %s data=%s sen2=%s ldsr=%s artifacts=%s cwd=%s\\n' \"$*\" \\\n"
-        "  \"$TRUSTSR_DATA_CACHE_DIR\" \"$TRUSTSR_SEN2SR_MODEL_DIR\" \"$TRUSTSR_LDSR_MODEL_DIR\" \\\n"
-        "  \"$TRUSTSR_ARTIFACT_ROOT\" \"$PWD\" >> \"$COMMAND_LOG\"\n",
-    )
-    environment, log = _environment(tmp_path)
+def test_stage_runner_contract_uses_the_fixed_base_module_cli_without_a_prefix() -> None:
+    """A prefix command or a console-script launcher would use the wrong runtime."""
+    contents = (SCRIPTS / "run_remote.sh").read_text(encoding="utf-8")
 
-    completed = subprocess.run(
-        ["bash", str(SCRIPTS / "run_remote.sh"), str(remote_root), "benchmark"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    lines = log.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    assert lines[0].startswith(f"stage benchmark --project-root {remote_root}/repo")
-    assert f"data={remote_root}/data/opensr" in lines[0]
-    assert f"sen2={remote_root}/models/sen2srlite" in lines[0]
-    assert f"ldsr={remote_root}/models/ldsr-s2" in lines[0]
-    assert f"artifacts={remote_root}/artifacts" in lines[0]
-    assert f"cwd={remote_root}/repo" in lines[0]
-
-
-@pytest.mark.parametrize("stage", ("preflight", "single", "benchmark", "manifest"))
-def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
-    stage: str, tmp_path: Path
-) -> None:
-    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
-    (remote_root / "repo").mkdir(parents=True)
-    executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
-    executable.parent.mkdir(parents=True)
-    _make_executable(
-        executable,
-        "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$STAGE_ARGUMENTS_FILE\"\n",
-    )
-    stage_arguments = tmp_path / "stage-arguments"
-    environment, _ = _environment(tmp_path)
-    environment["STAGE_ARGUMENTS_FILE"] = str(stage_arguments)
-
-    completed = subprocess.run(
-        ["bash", str(SCRIPTS / "run_remote.sh"), str(remote_root), stage],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert _nul_arguments(stage_arguments) == [
-        stage,
-        "--project-root",
-        f"{remote_root}/repo",
-        "--dataset-cache-dir",
-        f"{remote_root}/data/opensr",
-        "--ldsr-model-dir",
-        f"{remote_root}/models/ldsr-s2",
-        "--sen2srlite-model-dir",
-        f"{remote_root}/models/sen2srlite",
-        "--artifacts-dir",
-        f"{remote_root}/artifacts",
-        "--prediction-cache-dir",
-        f"{remote_root}/artifacts/cache/predictions",
-    ]
+    assert "/opt/conda/bin/python" in contents
+    assert "-m trustsr.cli.ldsr_gpu" in contents
+    assert "conda-env" not in contents
+    assert "trustsr-ldsr-gpu" not in contents
 
 
 @pytest.mark.parametrize("escaping_directory", ("data", "models", "artifacts"))

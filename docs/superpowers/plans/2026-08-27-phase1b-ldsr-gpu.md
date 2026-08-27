@@ -6,7 +6,7 @@
 
 **Architecture:** Keep GPU-only imports behind lazy factories so the default CPU environment remains unchanged. Separate immutable asset verification, safe upstream backend construction, RNG-isolated model adaptation, repeatability evaluation, staged CLI orchestration, and remote operations. Local tasks and reviews finish first; the cloud instance stays off until the explicit GPU acceptance task.
 
-**Tech Stack:** Python 3.12, PyTorch 2.x/CUDA 13, opensr-model 1.1.1, OmegaConf, safetensors, OpenSR-Test, Conda, uv 0.12.5, pytest, Ruff, Bash, SSH/rsync.
+**Tech Stack:** Python 3.12, PyTorch 2.x/CUDA 13, opensr-model 1.1.1, OmegaConf, safetensors, OpenSR-Test, cloud-image base Conda Python, uv 0.12.5, pytest, Ruff, Bash, SSH/rsync.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-phase1b-ldsr-gpu.md`
 
@@ -16,7 +16,7 @@
 - Use strict TDD for every Python behavior: add the focused failing test, run it and retain RED output, implement minimally, then run focused tests, the full suite once, and Ruff.
 - Unit tests must remain offline, CPU-only, and must not import `opensr_model` unless a fake module is injected.
 - The default `uv sync --dev` environment must not install `opensr-model`; GPU installation uses the optional `gpu` extra.
-- Pin `opensr-model==1.1.1`, uv `0.12.5`, upstream tag commit `10f4c01cc8172586841ea9e78c6de9939da47337`, package/config/checkpoint hashes, and the exact checkpoint size from the specification.
+- Pin `opensr-model==1.1.1`, uv `0.12.5`, upstream tag commit `10f4c01cc8172586841ea9e78c6de9939da47337`, package/config/checkpoint hashes, and the exact checkpoint size from the specification. The approved cloud image base Python is reused; record actual package/hardware provenance and preserve its pre-install PyTorch/CUDA fingerprint rather than claiming a fully frozen isolated environment.
 - Never call upstream `load_pretrained()`. Verify the checkpoint and packaged config before `torch.load(..., weights_only=True)` or backend construction consumes them.
 - Preserve Phase 0 and Phase 1A CLIs, identifiers, deterministic JSON, caches, tests, and CPU behavior.
 - `LDSRS2X4` uses CUDA only in production, fixed seed `3407`, 100 steps, eta `0.95`, temperature `1.0`, histogram matching enabled, and output clipping to `[0,1]`.
@@ -647,7 +647,7 @@ Tests run `bash -n` and inspect behavior with fake executables placed first in `
 - `set -euo pipefail` in every script;
 - exact argument count and refusal of empty, `/`, `/root`, `~`, glob-containing, or newline-containing paths;
 - remote root must resolve under `/root/rivermind-fs/`;
-- bootstrap creates Conda prefix `${REMOTE_ROOT}/conda-env` with `--override-channels --channel conda-forge`, explicitly sourcing remote Python packages from conda-forge to avoid ambient default-channel policy/configuration, installs `uv==0.12.5`, and executes frozen `uv sync --extra gpu` against `REPO_DIR` without touching base Conda or accepting channel terms;
+- bootstrap reuses only `/opt/conda/bin/python`, fails closed unless its Python 3.12/PyTorch/torchvision/CUDA checks pass, parses a pip dry-run/report to refuse protected CUDA-stack changes, installs only `uv==0.12.5` and editable `REPO_DIR[gpu]` with `--upgrade-strategy only-if-needed`, and records pre/post package/CUDA provenance without trusting a prior stamp;
 - run script accepts only four named stages and invokes one matching CLI command;
 - pull script accepts an SSH config alias rather than raw user/host/port/password, uses `rsync --protect-args`, pulls the manifest first, pulls only paths listed in the manifest, and runs local verification;
 - no script contains the cloud hostname, port, username, password, `StrictHostKeyChecking=no`, GitHub token, `shutdown`, `poweroff`, `rm -rf`, or `git reset`.
@@ -660,18 +660,17 @@ uv run pytest tests/scripts/test_phase1b_scripts.py -q
 
 - [ ] **Step 3: Implement bootstrap**
 
-The core commands are:
+The amended core commands reuse the cloud-image base interpreter and are:
 
 ```bash
-conda create --yes --override-channels --channel conda-forge \
-  --prefix "${remote_root}/conda-env" python=3.12 pip
-"${remote_root}/conda-env/bin/python" -m pip install "uv==0.12.5"
-UV_PROJECT_ENVIRONMENT="${remote_root}/conda-env" \
-  "${remote_root}/conda-env/bin/uv" sync \
-  --directory "${repo_dir}" --frozen --no-dev --extra gpu
+/opt/conda/bin/python -m pip install --dry-run --report "${report}" \
+  --upgrade-strategy only-if-needed -e "${repo_dir}[gpu]"
+/opt/conda/bin/python -m pip install --upgrade-strategy only-if-needed "uv==0.12.5"
+/opt/conda/bin/python -m pip install --upgrade-strategy only-if-needed \
+  -e "${repo_dir}[gpu]"
 ```
 
-Before creating anything, assert the data disk has at least 15 GiB free. If the prefix exists, require its `python --version`, uv version and project lock digest to match; otherwise fail with instructions instead of mutating it in place.
+Before dependency installation, assert the data disk has at least 15 GiB free and validate the existing base interpreter, Python 3.12, PyTorch/torchvision imports and CUDA. Structurally parse the dry-run report and abort on normalized `torch`, `torchvision`, `triton` or `nvidia-*` changes. Compare an exact pre/post PyTorch/torchvision/CUDA runtime fingerprint, validate `opensr-model==1.1.1`, `uv==0.12.5`, TrustSR import and `pip check`, then atomically stamp the `uv.lock` SHA-256 and verified fingerprint under `REMOTE_ROOT`. The former partial `${REMOTE_ROOT}/conda-env` is deliberately ignored and never deleted or changed. Base reuse is not a fully frozen isolated environment; actual package and hardware provenance remains mandatory.
 
 - [ ] **Step 4: Implement stage runner and puller**
 

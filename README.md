@@ -79,12 +79,19 @@ scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b benchmark
 scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b manifest
 ```
 
-Bootstrap creates only an isolated Conda prefix at `conda-env`, explicitly sources
-the prefix's remote Python packages from `conda-forge` to avoid ambient default-channel
-policy or configuration, installs `uv==0.12.5`, and uses frozen GPU dependency
-synchronization. It never modifies the base Conda environment or accepts Conda
-channel terms. A reused prefix must have Python 3.12, that exact uv version, and
-the same `uv.lock` digest; otherwise recreate it deliberately.
+The approved cloud image already supplies the fixed `/opt/conda/bin/python` with
+Python 3.12 and its CUDA-enabled PyTorch stack. Bootstrap deliberately reuses that
+base interpreter: it first verifies Python, PyTorch, torchvision, and CUDA; obtains
+a structured pip dry-run report and refuses any proposed PyTorch/CUDA-stack change;
+then installs only `uv==0.12.5` and this editable project with its `gpu` extra using
+`only-if-needed`. It records the `uv.lock` digest and actual verified package/CUDA
+fingerprint in a non-secret provenance stamp under the approved persistent root.
+After installation it requires the exact same PyTorch/torchvision/CUDA fingerprint,
+CUDA availability, `opensr-model==1.1.1`, `uv==0.12.5`, a TrustSR import, and a
+clean `pip check`. This is not a fully frozen isolated environment: the cloud image
+is the base dependency source, so actual package and hardware provenance is required
+for every run. Any existing partial `conda-env` directory is intentionally ignored
+and left untouched.
 Budget at least 15 GiB free disk space before bootstrap, including the verified
 approximately 1.13 GB LDSR-S2 checkpoint and downloaded/developed outputs.
 

@@ -65,6 +65,7 @@ fi
 
 remote_root="$1"
 stage="$2"
+base_python=/opt/conda/bin/python
 validate_path "$remote_root" || die 'remote root'
 [[ "$remote_root" == /* ]] || die 'remote root must be absolute'
 reject_symlink_components "$remote_root"
@@ -79,8 +80,6 @@ esac
 
 derived_directories=(
   repo
-  conda-env
-  conda-env/bin
   data
   data/opensr
   models
@@ -98,8 +97,7 @@ done
 
 project_root="${remote_root}/repo"
 [[ -d "$project_root" && ! -L "$project_root" ]] || die 'canonical project root is required'
-cli="${remote_root}/conda-env/bin/trustsr-ldsr-gpu"
-[[ -x "$cli" && ! -L "$cli" ]] || die 'compatible prefix with trustsr-ldsr-gpu is required'
+[[ -x "$base_python" ]] || die "required cloud-image interpreter is unavailable: $base_python"
 
 for relative in \
   data/opensr \
@@ -116,7 +114,7 @@ export TRUSTSR_LDSR_MODEL_DIR="${remote_root}/models/ldsr-s2"
 export TRUSTSR_ARTIFACT_ROOT="${remote_root}/artifacts"
 
 cd -- "$project_root"
-exec "$cli" "$stage" \
+exec "$base_python" -m trustsr.cli.ldsr_gpu "$stage" \
   --project-root "$project_root" \
   --dataset-cache-dir "$TRUSTSR_DATA_CACHE_DIR" \
   --ldsr-model-dir "$TRUSTSR_LDSR_MODEL_DIR" \
