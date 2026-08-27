@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 /data/
+/artifacts/*
+!/artifacts/datasets/
 /models/
 /checkpoints/
 *.ckpt
