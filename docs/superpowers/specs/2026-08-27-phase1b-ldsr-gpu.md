@@ -1,10 +1,10 @@
 # Phase 1B：LDSR-S2 云 GPU 基线设计
 
-**日期：** 2026-08-27  
+**日期：** 2026-08-27
 **状态：** 用户已批准，待实施
-**基础分支：** `feature/phase1-pretrained-baselines`  
-**实施分支：** `feature/phase1b-ldsr-gpu`  
-**上位路线：** `2026-08-26-trustworthy-sentinel2-sr-roadmap.md` 的阶段 1  
+**基础分支：** `feature/phase1-pretrained-baselines`
+**实施分支：** `feature/phase1b-ldsr-gpu`
+**上位路线：** `2026-08-26-trustworthy-sentinel2-sr-roadmap.md` 的阶段 1
 
 ## 1. 目标
 
