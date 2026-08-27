@@ -256,6 +256,59 @@ def test_main_applies_cli_path_overrides(tmp_path, monkeypatch):
     assert (artifacts / "phase1b/environment.json").is_file()
 
 
+def test_main_single_routes_dataset_model_artifact_and_independent_cache_overrides(
+    tmp_path, monkeypatch
+):
+    received = {}
+    data = tmp_path / "external-data"
+    models = tmp_path / "external-models"
+    artifacts = tmp_path / "external-artifacts"
+    cache = tmp_path / "independent-cache"
+    model = FakeModel()
+
+    def factory(model_dir, *, device):
+        received["model_dir"] = model_dir
+        received["device"] = device
+        return model
+
+    def load_pairs(dataset_name, cache_dir, version, *, limit, expected_count):
+        received["dataset"] = (dataset_name, cache_dir, version, limit, expected_count)
+        return _pairs()
+
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", factory)
+    monkeypatch.setattr(gpu, "load_opensr_pairs", load_pairs)
+    monkeypatch.setattr(
+        gpu, "compute_opensr_metrics", lambda *args: {key: 0.0 for key in gpu.METRIC_KEYS}
+    )
+    monkeypatch.setattr(gpu.torch.cuda, "reset_peak_memory_stats", lambda: None)
+    monkeypatch.setattr(gpu.torch.cuda, "max_memory_allocated", lambda: 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "trustsr-ldsr-gpu",
+            "single",
+            "--dataset-cache-dir",
+            str(data),
+            "--ldsr-model-dir",
+            str(models),
+            "--artifacts-dir",
+            str(artifacts),
+            "--prediction-cache-dir",
+            str(cache),
+        ],
+    )
+
+    gpu.main()
+
+    assert received["model_dir"] == models
+    assert received["device"] == "cuda:0"
+    assert received["dataset"] == ("spot", data, "v3", 9, 9)
+    result = json.loads((artifacts / "phase1b/single.json").read_text())
+    assert (cache / f"{result['cache_key']}.json").is_file()
+    assert (cache / f"{result['cache_key']}.safetensors").is_file()
+
+
 def _write_required_manifest_inputs(args: argparse.Namespace, key: str) -> None:
     phase = args.artifacts_dir / "phase1b"
     phase.mkdir(parents=True)
@@ -265,7 +318,9 @@ def _write_required_manifest_inputs(args: argparse.Namespace, key: str) -> None:
     (phase / "spot-v3-three-models.json").write_text("{}")
 
 
-def test_manifest_stages_only_named_cache_entries_from_independent_cache_root(tmp_path):
+def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_root(
+    tmp_path, monkeypatch
+):
     args = _args(tmp_path)
     args.prediction_cache_dir = tmp_path / "independent-cache"
     key = "a" * 64
@@ -276,15 +331,36 @@ def test_manifest_stages_only_named_cache_entries_from_independent_cache_root(tm
         (args.prediction_cache_dir / f"{name}.json").write_text(f"{name}-metadata")
         (args.prediction_cache_dir / f"{name}.safetensors").write_bytes(name.encode())
 
-    manifest = gpu.run_manifest(args)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "trustsr-ldsr-gpu",
+            "manifest",
+            "--dataset-cache-dir",
+            str(args.dataset_cache_dir),
+            "--ldsr-model-dir",
+            str(args.ldsr_model_dir),
+            "--sen2srlite-model-dir",
+            str(args.sen2srlite_model_dir),
+            "--artifacts-dir",
+            str(args.artifacts_dir),
+            "--prediction-cache-dir",
+            str(args.prediction_cache_dir),
+        ],
+    )
 
+    gpu.main()
+
+    manifest_path = args.artifacts_dir / "phase1b/artifact-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
     paths = [entry["path"] for entry in manifest["files"]]
     assert f"phase1b/cache/{key}.json" in paths
     assert f"phase1b/cache/{key}.safetensors" in paths
     assert old_key not in "".join(paths)
     assert all(not Path(path).is_absolute() for path in paths)
     verify_artifact_manifest(
-        args.artifacts_dir, args.artifacts_dir / "phase1b/artifact-manifest.json"
+        args.artifacts_dir, manifest_path
     )
 
 

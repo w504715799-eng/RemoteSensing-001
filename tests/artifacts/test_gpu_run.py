@@ -14,8 +14,13 @@ from trustsr.artifacts.gpu_run import (
 
 def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monkeypatch, tmp_path):
     calls = []
+    lock_digest = hashlib.sha256(Path("uv.lock").read_bytes()).hexdigest()
+    sensitive_working_directory = tmp_path / "sensitive-working-directory"
+    sensitive_working_directory.mkdir()
+    monkeypatch.chdir(sensitive_working_directory)
 
     def runner(argv, **kwargs):
+        assert Path.cwd() == sensitive_working_directory
         calls.append((argv, kwargs))
         outputs = {
             (
@@ -53,14 +58,12 @@ def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monk
     assert result["runtime"]["python"]
     assert result["runtime"]["cuda_toolkit"] == "12.4"
     assert result["runtime"]["opensr_model"] == "opensr-model-version"
-    assert result["dependency_lock_sha256"] == hashlib.sha256(
-        Path("uv.lock").read_bytes()
-    ).hexdigest()
+    assert result["dependency_lock_sha256"] == lock_digest
     assert result["model_provenance"]["name"] == "ldsr-s2-x4"
     assert all(isinstance(argv, list) for argv, _ in calls)
     assert all(kwargs["shell"] is False for _, kwargs in calls)
     text = json.dumps(result)
-    assert str(tmp_path) not in text
+    assert str(sensitive_working_directory) not in text
     for forbidden in ("ssh", "password", "private", "github", "hostname", "port"):
         assert forbidden not in text.lower()
 
