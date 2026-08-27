@@ -23,14 +23,14 @@ def _make_executable(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
+def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[dict[str, str], Path]:
     fake_bin = tmp_path / "fake-bin"
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     log = tmp_path / "commands.log"
     _make_executable(
         fake_bin / "df",
         "#!/usr/bin/env bash\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
-        "printf '/dev/fake 30000000 1 30000000 1%% /fake\\n'\n",
+        f"printf '/dev/fake 30000000 1 {available_kib} 1%% /fake\\n'\n",
     )
     _make_executable(
         fake_bin / "realpath",
@@ -55,10 +55,19 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     _make_executable(
         fake_bin / "rsync",
         "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'rsync %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ -n \"${RSYNC_ARGUMENT_DIR:-}\" ]]; then\n"
+        "  mkdir -p \"$RSYNC_ARGUMENT_DIR\"; call=$(find \"$RSYNC_ARGUMENT_DIR\" -type f | wc -l)\n"
+        "  printf '%s\\0' \"$@\" > \"$RSYNC_ARGUMENT_DIR/$call\"\nfi\n"
         "args=(\"$@\"); source=\"${args[$(( $# - 2 ))]}\"; destination=\"${args[$(( $# - 1 ))]}\"\n"
         "source=\"${source#*:}\"\n"
         "if [[ -n \"${REMOTE_FIXTURE_ROOT:-}\" ]]; then source=\"${REMOTE_FIXTURE_ROOT}${source#/root/rivermind-data/phase1b}\"; fi\n"
         "mkdir -p \"$destination\"\ncp \"$source\" \"$destination\"\n",
+    )
+    _make_executable(
+        fake_bin / "ssh",
+        "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'ssh %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ -n \"${SSH_ARGUMENTS_FILE:-}\" ]]; then printf '%s\\0' \"$@\" > \"$SSH_ARGUMENTS_FILE\"; fi\n"
+        "printf '%s\\n' \"${SSH_REALPATH_RESULT:-/root/rivermind-data/phase1b}\"\n",
     )
     _make_executable(
         fake_bin / "uv",
@@ -105,6 +114,10 @@ def _write_manifest(root: Path, paths: dict[str, str]) -> None:
     manifest.write_text(json.dumps({"schema_version": 1, "files": entries}), encoding="utf-8")
 
 
+def _nul_arguments(path: Path) -> list[str]:
+    return [item.decode("utf-8") for item in path.read_bytes().split(b"\0") if item]
+
+
 def test_scripts_use_strict_mode_and_contain_no_prohibited_remote_controls() -> None:
     prohibited = (
         "StrictHostKeyChecking=no",
@@ -142,6 +155,54 @@ def test_scripts_reject_invalid_or_unconfined_arguments(
     assert "invalid" in completed.stderr.lower() or "under" in completed.stderr.lower()
 
 
+@pytest.mark.parametrize("invalid_path", ("", "/", "/root", "~unsafe", "path*", "path\nnext"))
+@pytest.mark.parametrize("slot", ("bootstrap_root", "repo_dir", "pull_remote_root", "pull_local_output"))
+def test_scripts_reject_every_required_invalid_path_class(
+    invalid_path: str, slot: str, tmp_path: Path
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root.mkdir(parents=True)
+    repo_dir = tmp_path / "repository"
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    cases = {
+        "bootstrap_root": ("bootstrap_remote.sh", [str(remote_root), str(repo_dir)], 0),
+        "repo_dir": ("bootstrap_remote.sh", [str(remote_root), str(repo_dir)], 1),
+        "pull_local_output": (
+            "pull_artifacts.sh",
+            ["phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+            2,
+        ),
+        "pull_remote_root": (
+            "pull_artifacts.sh",
+            ["phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+            1,
+        ),
+    }
+    script, arguments, index = cases[slot]
+    arguments[index] = invalid_path
+
+    completed = _run(script, *arguments, tmp_path=tmp_path)
+
+    assert completed.returncode != 0
+    assert "invalid" in completed.stderr.lower() or "under" in completed.stderr.lower()
+
+
+def test_stage_runner_rejects_every_required_invalid_remote_path_class(tmp_path: Path) -> None:
+    for index, invalid_path in enumerate(("", "/", "/root", "~unsafe", "path*", "path\nnext")):
+        completed = _run("run_remote.sh", invalid_path, "preflight", tmp_path=tmp_path / str(index))
+        assert completed.returncode != 0
+
+
+def test_stage_runner_rejects_an_unknown_stage(tmp_path: Path) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root.mkdir(parents=True)
+    completed = _run("run_remote.sh", str(remote_root), "unknown", tmp_path=tmp_path)
+
+    assert completed.returncode != 0
+    assert "stage must be" in completed.stderr
+
+
 @pytest.mark.parametrize(
     ("script", "arguments"),
     [
@@ -157,6 +218,17 @@ def test_scripts_require_their_exact_argument_count(
 
     assert completed.returncode != 0
     assert "argument count" in completed.stderr
+
+
+def test_every_shell_entry_point_parses_with_bash_n() -> None:
+    for name in ("bootstrap_remote.sh", "run_remote.sh", "pull_artifacts.sh"):
+        completed = subprocess.run(
+            ["bash", "-n", str(SCRIPTS / name)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
 
 
 def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path) -> None:
@@ -185,14 +257,51 @@ def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path
     ).hexdigest()
 
 
-def test_bootstrap_refuses_to_mutate_an_incompatible_existing_prefix(tmp_path: Path) -> None:
+def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    repo_dir = tmp_path / "repository"
+    remote_root.mkdir(parents=True)
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    environment, log = _environment(tmp_path, available_kib=15 * 1024 * 1024 - 1)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / "bootstrap_remote.sh"), str(remote_root), str(repo_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert "15 gib" in completed.stderr.lower()
+    assert not log.exists()
+    assert not (remote_root / "conda-env").exists()
+
+
+@pytest.mark.parametrize("mismatch", ("python", "uv", "lock_digest"))
+def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
+    mismatch: str, tmp_path: Path
+) -> None:
     remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
     repo_dir = tmp_path / "repository"
     (remote_root / "conda-env" / "bin").mkdir(parents=True)
     repo_dir.mkdir()
     (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
-    _make_executable(remote_root / "conda-env" / "bin" / "python", "#!/usr/bin/env bash\necho 'Python 3.11.9'\n")
-    _make_executable(remote_root / "conda-env" / "bin" / "uv", "#!/usr/bin/env bash\necho 'uv 0.12.5'\n")
+    python_version = "Python 3.11.9" if mismatch == "python" else "Python 3.12.4"
+    uv_version = "uv 0.12.4" if mismatch == "uv" else "uv 0.12.5"
+    _make_executable(
+        remote_root / "conda-env" / "bin" / "python",
+        f"#!/usr/bin/env bash\necho '{python_version}'\n",
+    )
+    _make_executable(
+        remote_root / "conda-env" / "bin" / "uv",
+        f"#!/usr/bin/env bash\necho '{uv_version}'\n",
+    )
+    digest = hashlib.sha256(b"locked").hexdigest()
+    if mismatch == "lock_digest":
+        digest = "0" * 64
+    (remote_root / "conda-env" / ".trustsr-uv-lock.sha256").write_text(f"{digest}\n")
     environment, log = _environment(tmp_path)
 
     completed = subprocess.run(
@@ -238,6 +347,45 @@ def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_comma
     assert f"artifacts={remote_root}/artifacts" in lines[0]
 
 
+@pytest.mark.parametrize("stage", ("preflight", "single", "benchmark", "manifest"))
+def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
+    stage: str, tmp_path: Path
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
+    executable.parent.mkdir(parents=True)
+    _make_executable(
+        executable,
+        "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$STAGE_ARGUMENTS_FILE\"\n",
+    )
+    stage_arguments = tmp_path / "stage-arguments"
+    environment, _ = _environment(tmp_path)
+    environment["STAGE_ARGUMENTS_FILE"] = str(stage_arguments)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / "run_remote.sh"), str(remote_root), stage],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert _nul_arguments(stage_arguments) == [
+        stage,
+        "--dataset-cache-dir",
+        f"{remote_root}/data/opensr",
+        "--ldsr-model-dir",
+        f"{remote_root}/models/ldsr-s2",
+        "--sen2srlite-model-dir",
+        f"{remote_root}/models/sen2srlite",
+        "--artifacts-dir",
+        f"{remote_root}/artifacts",
+        "--prediction-cache-dir",
+        f"{remote_root}/artifacts/cache/predictions",
+    ]
+
+
 def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digests(tmp_path: Path) -> None:
     remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
     _write_manifest(
@@ -275,6 +423,70 @@ def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digest
     assert calls[2].endswith(f"{remote_artifacts}/phase1b/environment.json {local_output}/phase1b")
     assert (local_output / "phase1b" / "cache" / "prediction.json").read_text() == "prediction"
     assert any(line.startswith("local-uv run --directory") for line in log.read_text().splitlines())
+
+
+def test_puller_uses_exact_ssh_and_manifest_allowlisted_rsync_argument_arrays(tmp_path: Path) -> None:
+    remote_root = tmp_path / "remote-fixture"
+    _write_manifest(
+        remote_root,
+        {
+            "phase1b/cache/prediction.json": "prediction",
+            "phase1b/environment.json": "environment",
+        },
+    )
+    local_output = tmp_path / "local-artifacts"
+    environment, _ = _environment(tmp_path)
+    environment["REMOTE_FIXTURE_ROOT"] = str(remote_root)
+    ssh_arguments = tmp_path / "ssh-arguments"
+    rsync_arguments = tmp_path / "rsync-arguments"
+    environment["SSH_ARGUMENTS_FILE"] = str(ssh_arguments)
+    environment["RSYNC_ARGUMENT_DIR"] = str(rsync_arguments)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "pull_artifacts.sh"),
+            "phase1b-gpu",
+            "/root/rivermind-data/phase1b",
+            str(local_output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert _nul_arguments(ssh_arguments) == [
+        "--",
+        "phase1b-gpu",
+        "realpath -e -- /root/rivermind-data/phase1b",
+    ]
+    arguments = [_nul_arguments(rsync_arguments / str(index)) for index in range(3)]
+    source_root = "phase1b-gpu:/root/rivermind-data/phase1b/artifacts"
+    assert arguments == [
+        [
+            "--archive",
+            "--protect-args",
+            "--",
+            f"{source_root}/phase1b/artifact-manifest.json",
+            f"{local_output}/phase1b",
+        ],
+        [
+            "--archive",
+            "--protect-args",
+            "--",
+            f"{source_root}/phase1b/cache/prediction.json",
+            f"{local_output}/phase1b/cache",
+        ],
+        [
+            "--archive",
+            "--protect-args",
+            "--",
+            f"{source_root}/phase1b/environment.json",
+            f"{local_output}/phase1b",
+        ],
+    ]
 
 
 def test_puller_rejects_escaping_manifest_path_before_transferring_it(tmp_path: Path) -> None:
@@ -381,4 +593,69 @@ def test_puller_accepts_a_confined_remote_path_that_is_not_local(tmp_path: Path)
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert len([line for line in log.read_text().splitlines() if line.startswith("rsync ")]) == 1
+
+
+def test_puller_rejects_a_remote_root_that_resolves_outside_the_data_disk(tmp_path: Path) -> None:
+    remote_root = tmp_path / "remote-fixture"
+    _write_manifest(remote_root, {})
+    environment, log = _environment(tmp_path)
+    environment["REMOTE_FIXTURE_ROOT"] = str(remote_root)
+    environment["SSH_REALPATH_RESULT"] = "/outside-data-disk"
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "pull_artifacts.sh"),
+            "phase1b-gpu",
+            "/root/rivermind-data/phase1b-link",
+            str(tmp_path / "out"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert not [line for line in log.read_text().splitlines() if line.startswith("rsync ")]
+
+
+def test_puller_rejects_nul_manifest_path_before_any_artifact_transfer(tmp_path: Path) -> None:
+    remote_root = tmp_path / "remote-fixture"
+    manifest = remote_root / "artifacts" / "phase1b" / "artifact-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "files": [
+                    {
+                        "path": "phase1b/nul\0path.json",
+                        "size": 0,
+                        "sha256": "0" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment, log = _environment(tmp_path)
+    environment["REMOTE_FIXTURE_ROOT"] = str(remote_root)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "pull_artifacts.sh"),
+            "phase1b-gpu",
+            "/root/rivermind-data/phase1b",
+            str(tmp_path / "out"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
     assert len([line for line in log.read_text().splitlines() if line.startswith("rsync ")]) == 1
