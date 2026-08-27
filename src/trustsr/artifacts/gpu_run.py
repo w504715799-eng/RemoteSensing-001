@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -187,6 +188,26 @@ def _safe_relative(root: Path, relative: Path) -> tuple[Path, str]:
     return candidate, relative.as_posix()
 
 
+def _safe_output_path(root: Path, relative: Path) -> Path:
+    """Constrain a not-yet-created output path without following symlinks."""
+    if root.is_symlink():
+        raise ValueError("artifact manifest root must not be a symlink")
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise ValueError("artifact output path must be a confined relative path")
+    resolved_root = root.resolve(strict=False)
+    candidate = root / relative
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("artifact output path must not traverse a symlink")
+    try:
+        candidate.resolve(strict=False).relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("artifact output path escapes manifest root") from exc
+    return candidate
+
+
 def _atomic_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -214,6 +235,42 @@ def _atomic_json(path: Path, value: object) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def stage_artifact_file(root: Path, source: Path, relative_destination: Path) -> Path:
+    """Atomically copy one verified regular file into a confined artifact tree."""
+    source = Path(source)
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("staged artifact source must be a regular non-symlink file")
+    destination = _safe_output_path(Path(root), Path(relative_destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with source.open("rb") as input_stream, tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+            mode="wb",
+        ) as output_stream:
+            temporary = Path(output_stream.name)
+            shutil.copyfileobj(input_stream, output_stream)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+        try:
+            descriptor = os.open(destination.parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError:
+            pass
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return destination
+
+
 def write_artifact_manifest(root: Path, relative_paths: Sequence[Path]) -> Path:
     """Hash named regular files below ``root`` into a canonical manifest."""
     root = Path(root)
@@ -227,7 +284,7 @@ def write_artifact_manifest(root: Path, relative_paths: Sequence[Path]) -> Path:
         digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
         entries.append({"path": portable, "size": file_path.stat().st_size, "sha256": digest})
     entries.sort(key=lambda entry: str(entry["path"]))
-    manifest_path = root / "phase1b" / "artifact-manifest.json"
+    manifest_path = _safe_output_path(root, Path("phase1b/artifact-manifest.json"))
     _atomic_json(manifest_path, {"schema_version": 1, "files": entries})
     return manifest_path
 

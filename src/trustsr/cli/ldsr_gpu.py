@@ -14,7 +14,12 @@ from typing import Any
 
 import torch
 
-from trustsr.artifacts.gpu_run import _atomic_json, collect_gpu_environment, write_artifact_manifest
+from trustsr.artifacts.gpu_run import (
+    _atomic_json,
+    collect_gpu_environment,
+    stage_artifact_file,
+    write_artifact_manifest,
+)
 from trustsr.artifacts.predictions import PredictionCache, build_identity, tensor_sha256
 from trustsr.cli.benchmark_baselines import (
     EXPECTED_SPOT_V3_IDENTITIES,
@@ -211,6 +216,8 @@ def _cache_keys_from_json(value: object) -> set[str]:
 
 def _named_cache_artifacts(args: argparse.Namespace, result_paths: Sequence[Path]) -> list[Path]:
     cache_root = Path(args.prediction_cache_dir)
+    if cache_root.is_symlink():
+        raise ValueError("prediction cache root must not be a symlink")
     named: list[Path] = []
     for result_path in result_paths:
         try:
@@ -243,7 +250,11 @@ def run_manifest(args: argparse.Namespace) -> dict[str, object]:
     for path in required:
         if not path.is_file() or path.is_symlink():
             raise FileNotFoundError(f"missing allowlisted Phase 1B output: {path.name}")
-    paths = required + _named_cache_artifacts(args, [required[1], required[3]])
+    staged_cache_paths = [
+        stage_artifact_file(root, source, Path("phase1b") / "cache" / source.name)
+        for source in _named_cache_artifacts(args, [required[1], required[3]])
+    ]
+    paths = required + staged_cache_paths
     relative_paths: list[Path] = []
     for path in paths:
         try:

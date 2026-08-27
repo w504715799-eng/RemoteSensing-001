@@ -1,11 +1,14 @@
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
 import torch
 
 import trustsr.cli.ldsr_gpu as gpu
+from trustsr.artifacts import build_identity, tensor_sha256, verify_artifact_manifest
 from trustsr.contracts import SRPair
 from trustsr.evaluation.repeatability import RepeatabilityError
 
@@ -105,6 +108,13 @@ def test_single_runs_two_predictions_writes_separate_runtime_and_verified_cache(
     assert deterministic.exists() and runtime.exists()
     assert "duration" not in deterministic.read_text()
     assert json.loads(runtime.read_text())["peak_memory_bytes"] == 12
+    pair = _pairs()[0]
+    expected_prediction = torch.zeros((4, 8, 12), dtype=torch.float32)
+    expected_identity = build_identity(model.provenance(), pair.source, pair.sample_id, pair.lr)
+    assert result["lr_sha256"] == tensor_sha256(pair.lr)
+    assert result["repeatability"]["first_sha256"] == tensor_sha256(expected_prediction)
+    assert result["repeatability"]["second_sha256"] == tensor_sha256(expected_prediction)
+    assert result["cache_key"] == expected_identity.key
     assert (tmp_path / "artifacts/cache/predictions" / f"{result['cache_key']}.json").exists()
     assert (
         tmp_path / "artifacts/cache/predictions" / f"{result['cache_key']}.safetensors"
@@ -124,6 +134,38 @@ def test_single_refuses_to_write_when_repeatability_fails(tmp_path, monkeypatch)
     with pytest.raises(RepeatabilityError):
         gpu.run_single(_args(tmp_path))
     assert not (tmp_path / "artifacts/phase1b/single.json").exists()
+
+
+def test_preflight_blocks_foreign_compute_process_before_model_construction(tmp_path, monkeypatch):
+    constructed = False
+
+    def factory(*args, **kwargs):
+        nonlocal constructed
+        constructed = True
+        return FakeModel()
+
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", factory)
+    monkeypatch.setattr(gpu, "_active_compute_pids", lambda: {os.getpid() + 1})
+
+    with pytest.raises(RuntimeError, match="another active"):
+        gpu.run_preflight(_args(tmp_path))
+    assert not constructed
+
+
+def test_preflight_allows_only_current_process_after_model_construction(tmp_path, monkeypatch):
+    calls = 0
+
+    def pids():
+        nonlocal calls
+        calls += 1
+        return set() if calls == 1 else {os.getpid()}
+
+    monkeypatch.setattr(gpu, "_active_compute_pids", pids)
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", lambda *args, **kwargs: FakeModel())
+
+    gpu.run_preflight(_args(tmp_path))
+
+    assert calls == 2
 
 
 def test_benchmark_uses_exact_order_three_models_and_cuda_environment(tmp_path, monkeypatch):
@@ -176,3 +218,88 @@ def test_parser_has_only_staged_commands_and_no_scientific_sampling_flags():
     assert set(actions[0].choices) == {"preflight", "single", "benchmark", "manifest"}
     with pytest.raises(SystemExit):
         parser.parse_args(["single", "--seed", "1"])
+
+
+def test_main_applies_cli_path_overrides(tmp_path, monkeypatch):
+    received = {}
+
+    def factory(model_dir, *, device):
+        received["model_dir"] = model_dir
+        received["device"] = device
+        return FakeModel()
+
+    data = tmp_path / "external-data"
+    models = tmp_path / "external-models"
+    artifacts = tmp_path / "external-artifacts"
+    cache = tmp_path / "external-cache"
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", factory)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "trustsr-ldsr-gpu",
+            "preflight",
+            "--dataset-cache-dir",
+            str(data),
+            "--ldsr-model-dir",
+            str(models),
+            "--artifacts-dir",
+            str(artifacts),
+            "--prediction-cache-dir",
+            str(cache),
+        ],
+    )
+
+    gpu.main()
+
+    assert received == {"model_dir": models, "device": "cuda:0"}
+    assert (artifacts / "phase1b/environment.json").is_file()
+
+
+def _write_required_manifest_inputs(args: argparse.Namespace, key: str) -> None:
+    phase = args.artifacts_dir / "phase1b"
+    phase.mkdir(parents=True)
+    (phase / "environment.json").write_text("{}")
+    (phase / "single.json").write_text(json.dumps({"cache_key": key}))
+    (phase / "single-runtime.json").write_text("{}")
+    (phase / "spot-v3-three-models.json").write_text("{}")
+
+
+def test_manifest_stages_only_named_cache_entries_from_independent_cache_root(tmp_path):
+    args = _args(tmp_path)
+    args.prediction_cache_dir = tmp_path / "independent-cache"
+    key = "a" * 64
+    old_key = "b" * 64
+    _write_required_manifest_inputs(args, key)
+    args.prediction_cache_dir.mkdir()
+    for name in (key, old_key):
+        (args.prediction_cache_dir / f"{name}.json").write_text(f"{name}-metadata")
+        (args.prediction_cache_dir / f"{name}.safetensors").write_bytes(name.encode())
+
+    manifest = gpu.run_manifest(args)
+
+    paths = [entry["path"] for entry in manifest["files"]]
+    assert f"phase1b/cache/{key}.json" in paths
+    assert f"phase1b/cache/{key}.safetensors" in paths
+    assert old_key not in "".join(paths)
+    assert all(not Path(path).is_absolute() for path in paths)
+    verify_artifact_manifest(
+        args.artifacts_dir, args.artifacts_dir / "phase1b/artifact-manifest.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "missing_name",
+    ["environment.json", "single.json", "single-runtime.json", "spot-v3-three-models.json"],
+)
+def test_manifest_rejects_each_missing_required_output(tmp_path, missing_name):
+    args = _args(tmp_path)
+    key = "a" * 64
+    _write_required_manifest_inputs(args, key)
+    (args.prediction_cache_dir).mkdir(parents=True)
+    for suffix in (".json", ".safetensors"):
+        (args.prediction_cache_dir / f"{key}{suffix}").write_text("cache")
+    (args.artifacts_dir / "phase1b" / missing_name).unlink()
+
+    with pytest.raises(FileNotFoundError, match="allowlisted"):
+        gpu.run_manifest(args)

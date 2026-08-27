@@ -12,7 +12,7 @@ from trustsr.artifacts.gpu_run import (
 )
 
 
-def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monkeypatch):
+def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monkeypatch, tmp_path):
     calls = []
 
     def runner(argv, **kwargs):
@@ -60,6 +60,7 @@ def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monk
     assert all(isinstance(argv, list) for argv, _ in calls)
     assert all(kwargs["shell"] is False for _, kwargs in calls)
     text = json.dumps(result)
+    assert str(tmp_path) not in text
     for forbidden in ("ssh", "password", "private", "github", "hostname", "port"):
         assert forbidden not in text.lower()
 
@@ -93,15 +94,18 @@ def test_artifact_manifest_rejects_nonconfined_paths(tmp_path: Path, relative: P
 
 
 def test_artifact_manifest_rejects_symlink_and_modified_or_malformed_entries(tmp_path: Path):
-    target = tmp_path / "target.json"
+    target = tmp_path.parent / "outside-target.json"
     target.write_text("content")
     link = tmp_path / "link.json"
     link.symlink_to(target)
     with pytest.raises(ValueError, match="symlink"):
         write_artifact_manifest(tmp_path, [Path("link.json")])
 
-    manifest_path = write_artifact_manifest(tmp_path, [Path("target.json")])
-    target.write_text("changed")
+    tracked = tmp_path / "tracked.json"
+    tracked.write_text("content")
+
+    manifest_path = write_artifact_manifest(tmp_path, [Path("tracked.json")])
+    tracked.write_text("changed")
     with pytest.raises(ValueError, match="mismatch"):
         verify_artifact_manifest(tmp_path, manifest_path)
     payload = json.loads(manifest_path.read_text())
@@ -109,6 +113,11 @@ def test_artifact_manifest_rejects_symlink_and_modified_or_malformed_entries(tmp
     manifest_path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="digest"):
         verify_artifact_manifest(tmp_path, manifest_path)
+
+
+def test_artifact_manifest_rejects_a_missing_named_file(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="missing"):
+        write_artifact_manifest(tmp_path, [Path("missing.json")])
 
 
 def test_artifact_manifest_rejects_a_symlinked_root(tmp_path: Path):
@@ -120,3 +129,13 @@ def test_artifact_manifest_rejects_a_symlinked_root(tmp_path: Path):
 
     with pytest.raises(ValueError, match="root"):
         write_artifact_manifest(linked_root, [Path("output.json")])
+
+
+def test_artifact_manifest_rejects_symlinked_output_directory(tmp_path: Path):
+    (tmp_path / "output.json").write_text("content")
+    outside = tmp_path.parent / "outside-phase"
+    outside.mkdir(exist_ok=True)
+    (tmp_path / "phase1b").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        write_artifact_manifest(tmp_path, [Path("output.json")])
