@@ -18,7 +18,7 @@ require_remote_root() {
   local resolved
   validate_path "$value" || die 'remote root'
   resolved="$(realpath -e -- "$value")" || die 'remote root'
-  [[ "$resolved" == /root/rivermind-data/* ]] || die 'remote root must resolve under /root/rivermind-data/'
+  [[ "$resolved" == /root/rivermind-fs/* ]] || die 'remote root must resolve under /root/rivermind-fs/'
   [[ -d "$value" && ! -L "$value" ]] || die 'remote root must be an existing directory'
 }
 

@@ -22,17 +22,17 @@ remote_root="$2"
 local_output_dir="$3"
 [[ "$ssh_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die 'SSH config alias'
 validate_path "$remote_root" || die 'remote root'
-[[ "$remote_root" == /root/rivermind-data/* ]] || die 'remote root must resolve under /root/rivermind-data/'
+[[ "$remote_root" == /root/rivermind-fs/* ]] || die 'remote root must resolve under /root/rivermind-fs/'
 case "$remote_root" in
   *'//'* | */./* | */../* | */. | */..) die 'remote root must be a normalized path' ;;
 esac
-[[ "$remote_root" =~ ^/root/rivermind-data/[A-Za-z0-9._/-]+$ ]] || die 'remote root must use safe path characters'
+[[ "$remote_root" =~ ^/root/rivermind-fs/[A-Za-z0-9._/-]+$ ]] || die 'remote root must use safe path characters'
 validate_path "$local_output_dir" || die 'local output directory'
 
 printf -v quoted_remote_root '%q' "$remote_root"
 canonical_remote_root="$(ssh -- "$ssh_alias" "realpath -e -- ${quoted_remote_root}")" || die 'could not resolve remote root through SSH alias'
 validate_path "$canonical_remote_root" || die 'remote root returned an invalid canonical path'
-[[ "$canonical_remote_root" == /root/rivermind-data/* ]] || die 'remote root must resolve under /root/rivermind-data/'
+[[ "$canonical_remote_root" == /root/rivermind-fs/* ]] || die 'remote root must resolve under /root/rivermind-fs/'
 remote_root="$canonical_remote_root"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

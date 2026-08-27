@@ -137,7 +137,7 @@ provenance 使用 JSON 标量，至少记录：
 云端使用持久数据盘，不占用 30 GB 系统盘：
 
 ```text
-/root/rivermind-data/trustsr-phase1b/
+/root/rivermind-fs/trustsr-phase1b/
 ├── repo/                  # Git 工作树
 ├── conda-env/             # Python 3.12 隔离环境
 ├── models/ldsr-s2/        # 1.13 GB 检查点

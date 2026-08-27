@@ -646,7 +646,7 @@ Tests run `bash -n` and inspect behavior with fake executables placed first in `
 
 - `set -euo pipefail` in every script;
 - exact argument count and refusal of empty, `/`, `/root`, `~`, glob-containing, or newline-containing paths;
-- remote root must resolve under `/root/rivermind-data/`;
+- remote root must resolve under `/root/rivermind-fs/`;
 - bootstrap creates Conda prefix `${REMOTE_ROOT}/conda-env`, installs `uv==0.12.5`, and executes frozen `uv sync --extra gpu` against `REPO_DIR` without touching base Conda;
 - run script accepts only four named stages and invokes one matching CLI command;
 - pull script accepts an SSH config alias rather than raw user/host/port/password, uses `rsync --protect-args`, pulls the manifest first, pulls only paths listed in the manifest, and runs local verification;
@@ -786,8 +786,8 @@ Create the stacked PR against `feature/phase1-pretrained-baselines`. On the remo
 - [ ] **Step 3: Run preflight only**
 
 ```bash
-scripts/phase1b/bootstrap_remote.sh /root/rivermind-data/trustsr-phase1b /root/rivermind-data/trustsr-phase1b/repo
-scripts/phase1b/run_remote.sh /root/rivermind-data/trustsr-phase1b preflight
+scripts/phase1b/bootstrap_remote.sh /root/rivermind-fs/trustsr-phase1b /root/rivermind-fs/trustsr-phase1b/repo
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b preflight
 ```
 
 Inspect the manifest for one RTX 3090, at least 18 GiB free VRAM before construction, driver/CUDA/Python/PyTorch/package versions, config/checkpoint hashes, exact Git commit, cgroup limits and absence of credentials. Stop on any mismatch.
@@ -795,7 +795,7 @@ Inspect the manifest for one RTX 3090, at least 18 GiB free VRAM before construc
 - [ ] **Step 4: Run the single-sample gate**
 
 ```bash
-scripts/phase1b/run_remote.sh /root/rivermind-data/trustsr-phase1b single
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b single
 ```
 
 Require `spot-0000`, two fresh 100-step predictions, exact hashes or `max_abs_diff <= 1e-6`, finite clipped `(4,512,512)` output, finite metrics, recorded duration/peak VRAM, and verified prediction-cache replay. Stop on failure.
@@ -803,10 +803,10 @@ Require `spot-0000`, two fresh 100-step predictions, exact hashes or `max_abs_di
 - [ ] **Step 5: Run the full benchmark twice**
 
 ```bash
-scripts/phase1b/run_remote.sh /root/rivermind-data/trustsr-phase1b benchmark
-sha256sum /root/rivermind-data/trustsr-phase1b/artifacts/phase1b/spot-v3-three-models.json
-scripts/phase1b/run_remote.sh /root/rivermind-data/trustsr-phase1b benchmark
-sha256sum /root/rivermind-data/trustsr-phase1b/artifacts/phase1b/spot-v3-three-models.json
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b benchmark
+sha256sum /root/rivermind-fs/trustsr-phase1b/artifacts/phase1b/spot-v3-three-models.json
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b benchmark
+sha256sum /root/rivermind-fs/trustsr-phase1b/artifacts/phase1b/spot-v3-three-models.json
 ```
 
 Hashes must match. Inspect exactly nine samples/model, one shared manifest hash, finite metrics and complete provenance. Snapshot cache filenames, sizes, hashes and modification times before the second run; require no current entry changes.
@@ -814,8 +814,8 @@ Hashes must match. Inspect exactly nine samples/model, one shared manifest hash,
 - [ ] **Step 6: Build and pull the artifact manifest**
 
 ```bash
-scripts/phase1b/run_remote.sh /root/rivermind-data/trustsr-phase1b manifest
-scripts/phase1b/pull_artifacts.sh trustsr-phase1b /root/rivermind-data/trustsr-phase1b artifacts/remote/phase1b
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b manifest
+scripts/phase1b/pull_artifacts.sh trustsr-phase1b /root/rivermind-fs/trustsr-phase1b artifacts/remote/phase1b
 ```
 
 Re-run local `verify_artifact_manifest()` and inspect every JSON for finite values and prohibited credential/path fields. Do not delete remote artifacts.
@@ -826,4 +826,4 @@ Review the runtime manifests/results against every Stage 2–5 specification gat
 
 - [ ] **Step 8: Notify the user**
 
-Only after local artifact hash verification, explicitly say the GPU instance can be stopped in the provider console. Report that stopping via SSH was intentionally not attempted and that data under `/root/rivermind-data/` must be retained until the user decides otherwise.
+Only after local artifact hash verification, explicitly say the GPU instance can be stopped in the provider console. Report that stopping via SSH was intentionally not attempted and that data under `/root/rivermind-fs/trustsr-phase1b` must be retained until the user decides otherwise.

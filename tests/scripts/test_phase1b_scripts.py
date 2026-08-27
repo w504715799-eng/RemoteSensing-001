@@ -36,7 +36,7 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         fake_bin / "realpath",
         "#!/usr/bin/env bash\nvalue=\"${!#}\"\n"
         "if [[ -n \"${FAKE_REMOTE_ROOT:-}\" && \"$value\" == \"$FAKE_REMOTE_ROOT\" ]]; then\n"
-        "  printf '/root/rivermind-data/test-root\\n'\n"
+        "  printf '%s\\n' \"${FAKE_CANONICAL_ROOT:-/root/rivermind-fs/test-root}\"\n"
         "else\n"
         "  /usr/bin/realpath -e -- \"$value\"\n"
         "fi\n",
@@ -63,14 +63,18 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "  printf '%s\\0' \"$@\" > \"$RSYNC_ARGUMENT_DIR/$call\"\nfi\n"
         "args=(\"$@\"); source=\"${args[$(( $# - 2 ))]}\"; destination=\"${args[$(( $# - 1 ))]}\"\n"
         "source=\"${source#*:}\"\n"
-        "if [[ -n \"${REMOTE_FIXTURE_ROOT:-}\" ]]; then source=\"${REMOTE_FIXTURE_ROOT}${source#/root/rivermind-data/phase1b}\"; fi\n"
+        "if [[ -n \"${REMOTE_FIXTURE_ROOT:-}\" ]]; then\n"
+        "  source=\"${source#/root/rivermind-fs/phase1b}\"\n"
+        "  source=\"${source#/root/rivermind-data/phase1b}\"\n"
+        "  source=\"${REMOTE_FIXTURE_ROOT}${source}\"\n"
+        "fi\n"
         "mkdir -p \"$destination\"\ncp \"$source\" \"$destination\"\n",
     )
     _make_executable(
         fake_bin / "ssh",
         "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'ssh %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
         "if [[ -n \"${SSH_ARGUMENTS_FILE:-}\" ]]; then printf '%s\\0' \"$@\" > \"$SSH_ARGUMENTS_FILE\"; fi\n"
-        "printf '%s\\n' \"${SSH_REALPATH_RESULT:-/root/rivermind-data/phase1b}\"\n",
+        "printf '%s\\n' \"${SSH_REALPATH_RESULT:-/root/rivermind-fs/phase1b}\"\n",
     )
     _make_executable(
         fake_bin / "uv",
@@ -84,7 +88,7 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "COMMAND_LOG": str(log),
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "REAL_PYTHON": sys.executable,
-        "FAKE_REMOTE_ROOT": str(tmp_path / "root" / "rivermind-data" / "phase1b"),
+        "FAKE_REMOTE_ROOT": str(tmp_path / "root" / "rivermind-fs" / "phase1b"),
     }
     return environment, log
 
@@ -143,11 +147,11 @@ def test_scripts_use_strict_mode_and_contain_no_prohibited_remote_controls() -> 
     ("script", "arguments"),
     [
         ("bootstrap_remote.sh", ("", "/repo")),
-        ("bootstrap_remote.sh", ("/root/rivermind-data/run", "/")),
+        ("bootstrap_remote.sh", ("/root/rivermind-data/run", "/repo")),
         ("run_remote.sh", ("/root", "preflight")),
-        ("run_remote.sh", ("/root/rivermind-data/run*", "preflight")),
-        ("pull_artifacts.sh", ("alias", "/root/rivermind-data/run\nnext", "/tmp/out")),
-        ("pull_artifacts.sh", ("raw/host", "/root/rivermind-data/run", "/tmp/out")),
+        ("run_remote.sh", ("/root/rivermind-fs/run*", "preflight")),
+        ("pull_artifacts.sh", ("alias", "/root/rivermind-fs/run\nnext", "/tmp/out")),
+        ("pull_artifacts.sh", ("raw/host", "/root/rivermind-fs/run", "/tmp/out")),
     ],
 )
 def test_scripts_reject_invalid_or_unconfined_arguments(
@@ -159,12 +163,51 @@ def test_scripts_reject_invalid_or_unconfined_arguments(
     assert "invalid" in completed.stderr.lower() or "under" in completed.stderr.lower()
 
 
+@pytest.mark.parametrize("script", ("bootstrap_remote.sh", "run_remote.sh", "pull_artifacts.sh"))
+def test_scripts_reject_the_obsolete_data_disk_root_before_side_effects(
+    script: str, tmp_path: Path
+) -> None:
+    old_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    old_root.mkdir(parents=True)
+    environment, log = _environment(tmp_path)
+    environment["FAKE_REMOTE_ROOT"] = str(old_root)
+    environment["FAKE_CANONICAL_ROOT"] = "/root/rivermind-data/test-root"
+
+    if script == "bootstrap_remote.sh":
+        repository = tmp_path / "repository"
+        repository.mkdir()
+        (repository / "uv.lock").write_text("locked", encoding="utf-8")
+        arguments = [str(old_root), str(repository)]
+    elif script == "run_remote.sh":
+        (old_root / "repo").mkdir()
+        executable = old_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
+        executable.parent.mkdir(parents=True)
+        _make_executable(executable, "#!/usr/bin/env bash\nprintf 'called' >> \"$COMMAND_LOG\"\n")
+        arguments = [str(old_root), "preflight"]
+    else:
+        _write_manifest(old_root, {})
+        environment["REMOTE_FIXTURE_ROOT"] = str(old_root)
+        environment["SSH_REALPATH_RESULT"] = "/root/rivermind-data/phase1b"
+        arguments = ["phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")]
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / script), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert not log.exists()
+
+
 @pytest.mark.parametrize("invalid_path", ("", "/", "/root", "~unsafe", "path*", "path\nnext"))
 @pytest.mark.parametrize("slot", ("bootstrap_root", "repo_dir", "pull_remote_root", "pull_local_output"))
 def test_scripts_reject_every_required_invalid_path_class(
     invalid_path: str, slot: str, tmp_path: Path
 ) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     remote_root.mkdir(parents=True)
     repo_dir = tmp_path / "repository"
     repo_dir.mkdir()
@@ -174,12 +217,12 @@ def test_scripts_reject_every_required_invalid_path_class(
         "repo_dir": ("bootstrap_remote.sh", [str(remote_root), str(repo_dir)], 1),
         "pull_local_output": (
             "pull_artifacts.sh",
-            ["phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+            ["phase1b-gpu", "/root/rivermind-fs/phase1b", str(tmp_path / "out")],
             2,
         ),
         "pull_remote_root": (
             "pull_artifacts.sh",
-            ["phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+            ["phase1b-gpu", "/root/rivermind-fs/phase1b", str(tmp_path / "out")],
             1,
         ),
     }
@@ -199,7 +242,7 @@ def test_stage_runner_rejects_every_required_invalid_remote_path_class(tmp_path:
 
 
 def test_stage_runner_rejects_an_unknown_stage(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     remote_root.mkdir(parents=True)
     completed = _run("run_remote.sh", str(remote_root), "unknown", tmp_path=tmp_path)
 
@@ -210,9 +253,9 @@ def test_stage_runner_rejects_an_unknown_stage(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("script", "arguments"),
     [
-        ("bootstrap_remote.sh", ("/root/rivermind-data/run",)),
-        ("run_remote.sh", ("/root/rivermind-data/run", "preflight", "extra")),
-        ("pull_artifacts.sh", ("phase1b-gpu", "/root/rivermind-data/run")),
+        ("bootstrap_remote.sh", ("/root/rivermind-fs/run",)),
+        ("run_remote.sh", ("/root/rivermind-fs/run", "preflight", "extra")),
+        ("pull_artifacts.sh", ("phase1b-gpu", "/root/rivermind-fs/run")),
     ],
 )
 def test_scripts_require_their_exact_argument_count(
@@ -236,7 +279,7 @@ def test_every_shell_entry_point_parses_with_bash_n() -> None:
 
 
 def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
     remote_root.mkdir(parents=True)
     repo_dir.mkdir()
@@ -262,7 +305,7 @@ def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path
 
 
 def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
     remote_root.mkdir(parents=True)
     repo_dir.mkdir()
@@ -287,7 +330,7 @@ def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> No
 def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
     mismatch: str, tmp_path: Path
 ) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
     (remote_root / "conda-env" / "bin").mkdir(parents=True)
     repo_dir.mkdir()
@@ -322,7 +365,7 @@ def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
 
 
 def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_command(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
@@ -357,7 +400,7 @@ def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_comma
 def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
     stage: str, tmp_path: Path
 ) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
@@ -399,7 +442,7 @@ def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
 def test_stage_runner_rejects_descendant_symlink_escape_before_cli_or_outside_write(
     tmp_path: Path, escaping_directory: str
 ) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
@@ -434,7 +477,7 @@ def test_stage_runner_rejects_descendant_symlink_escape_before_cli_or_outside_wr
 def test_stage_runner_rejects_fixed_output_tree_symlink_before_cli_or_any_output_write(
     tmp_path: Path, escaping_relative: Path
 ) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
@@ -471,7 +514,7 @@ def test_stage_runner_rejects_fixed_output_tree_symlink_before_cli_or_any_output
 
 
 def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digests(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     _write_manifest(
         remote_root,
         {
@@ -488,7 +531,7 @@ def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digest
             "bash",
             str(SCRIPTS / "pull_artifacts.sh"),
             "phase1b-gpu",
-            "/root/rivermind-data/phase1b",
+            "/root/rivermind-fs/phase1b",
             str(local_output),
         ],
         check=False,
@@ -501,7 +544,7 @@ def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digest
     calls = [line for line in log.read_text(encoding="utf-8").splitlines() if line.startswith("rsync ")]
     assert len(calls) == 3
     assert "--protect-args" in calls[0]
-    remote_artifacts = "phase1b-gpu:/root/rivermind-data/phase1b/artifacts"
+    remote_artifacts = "phase1b-gpu:/root/rivermind-fs/phase1b/artifacts"
     assert calls[0].endswith(f"{remote_artifacts}/phase1b/artifact-manifest.json {local_output}/phase1b")
     assert calls[1].endswith(f"{remote_artifacts}/phase1b/cache/prediction.json {local_output}/phase1b/cache")
     assert calls[2].endswith(f"{remote_artifacts}/phase1b/environment.json {local_output}/phase1b")
@@ -531,7 +574,7 @@ def test_puller_uses_exact_ssh_and_manifest_allowlisted_rsync_argument_arrays(tm
             "bash",
             str(SCRIPTS / "pull_artifacts.sh"),
             "phase1b-gpu",
-            "/root/rivermind-data/phase1b",
+            "/root/rivermind-fs/phase1b",
             str(local_output),
         ],
         check=False,
@@ -544,10 +587,10 @@ def test_puller_uses_exact_ssh_and_manifest_allowlisted_rsync_argument_arrays(tm
     assert _nul_arguments(ssh_arguments) == [
         "--",
         "phase1b-gpu",
-        "realpath -e -- /root/rivermind-data/phase1b",
+        "realpath -e -- /root/rivermind-fs/phase1b",
     ]
     arguments = [_nul_arguments(rsync_arguments / str(index)) for index in range(3)]
-    source_root = "phase1b-gpu:/root/rivermind-data/phase1b/artifacts"
+    source_root = "phase1b-gpu:/root/rivermind-fs/phase1b/artifacts"
     assert arguments == [
         [
             "--archive",
@@ -574,7 +617,7 @@ def test_puller_uses_exact_ssh_and_manifest_allowlisted_rsync_argument_arrays(tm
 
 
 def test_puller_rejects_escaping_manifest_path_before_transferring_it(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     manifest = remote_root / "artifacts" / "phase1b" / "artifact-manifest.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
@@ -596,7 +639,7 @@ def test_puller_rejects_escaping_manifest_path_before_transferring_it(tmp_path: 
     environment["REMOTE_FIXTURE_ROOT"] = str(remote_root)
 
     completed = subprocess.run(
-        ["bash", str(SCRIPTS / "pull_artifacts.sh"), "phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+        ["bash", str(SCRIPTS / "pull_artifacts.sh"), "phase1b-gpu", "/root/rivermind-fs/phase1b", str(tmp_path / "out")],
         check=False,
         capture_output=True,
         text=True,
@@ -610,7 +653,7 @@ def test_puller_rejects_escaping_manifest_path_before_transferring_it(tmp_path: 
 
 
 def test_puller_rejects_newline_manifest_path_before_transferring_it(tmp_path: Path) -> None:
-    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     manifest = remote_root / "artifacts" / "phase1b" / "artifact-manifest.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
@@ -632,7 +675,7 @@ def test_puller_rejects_newline_manifest_path_before_transferring_it(tmp_path: P
     environment["REMOTE_FIXTURE_ROOT"] = str(remote_root)
 
     completed = subprocess.run(
-        ["bash", str(SCRIPTS / "pull_artifacts.sh"), "phase1b-gpu", "/root/rivermind-data/phase1b", str(tmp_path / "out")],
+        ["bash", str(SCRIPTS / "pull_artifacts.sh"), "phase1b-gpu", "/root/rivermind-fs/phase1b", str(tmp_path / "out")],
         check=False,
         capture_output=True,
         text=True,
@@ -667,7 +710,7 @@ def test_puller_accepts_a_confined_remote_path_that_is_not_local(tmp_path: Path)
             "bash",
             str(SCRIPTS / "pull_artifacts.sh"),
             "phase1b-gpu",
-            "/root/rivermind-data/phase1b",
+            "/root/rivermind-fs/phase1b",
             str(tmp_path / "out"),
         ],
         check=False,
@@ -692,7 +735,7 @@ def test_puller_rejects_a_remote_root_that_resolves_outside_the_data_disk(tmp_pa
             "bash",
             str(SCRIPTS / "pull_artifacts.sh"),
             "phase1b-gpu",
-            "/root/rivermind-data/phase1b-link",
+            "/root/rivermind-fs/phase1b-link",
             str(tmp_path / "out"),
         ],
         check=False,
@@ -732,7 +775,7 @@ def test_puller_rejects_nul_manifest_path_before_any_artifact_transfer(tmp_path:
             "bash",
             str(SCRIPTS / "pull_artifacts.sh"),
             "phase1b-gpu",
-            "/root/rivermind-data/phase1b",
+            "/root/rivermind-fs/phase1b",
             str(tmp_path / "out"),
         ],
         check=False,

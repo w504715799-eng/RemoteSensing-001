@@ -69,7 +69,7 @@ validate_path "$remote_root" || die 'remote root'
 [[ "$remote_root" == /* ]] || die 'remote root must be absolute'
 reject_symlink_components "$remote_root"
 resolved_root="$(realpath -e -- "$remote_root")" || die 'remote root'
-[[ "$resolved_root" == /root/rivermind-data/* ]] || die 'remote root must resolve under /root/rivermind-data/'
+[[ "$resolved_root" == /root/rivermind-fs/* ]] || die 'remote root must resolve under /root/rivermind-fs/'
 [[ -d "$remote_root" && ! -L "$remote_root" ]] || die 'remote root must be an existing directory'
 remote_root="$(cd -- "$remote_root" && pwd -P)" || die 'remote root'
 case "$stage" in

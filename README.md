@@ -60,16 +60,16 @@ or the repository.
 
 When the approved GPU instance is available, clone this exact checked-out commit
 onto its data disk and run the following commands *on that instance*. Replace the
-example root with the approved directory below `/root/rivermind-data/`; the
+example root with the approved directory below `/root/rivermind-fs/`; the
 bootstrap refuses any other resolved location and requires at least 15 GiB free
 before it changes anything.
 
 ```bash
-scripts/phase1b/bootstrap_remote.sh /root/rivermind-data/phase1b "$PWD"
-scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b preflight
-scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b single
-scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b benchmark
-scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b manifest
+scripts/phase1b/bootstrap_remote.sh /root/rivermind-fs/trustsr-phase1b "$PWD"
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b preflight
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b single
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b benchmark
+scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b manifest
 ```
 
 Bootstrap creates only an isolated Conda prefix at `conda-env`, installs
@@ -91,7 +91,7 @@ Before telling anyone to stop the instance, pull and verify the artifacts from a
 local checkout using the SSH config alias:
 
 ```bash
-scripts/phase1b/pull_artifacts.sh phase1b-gpu /root/rivermind-data/phase1b ./artifacts/remote-phase1b
+scripts/phase1b/pull_artifacts.sh phase1b-gpu /root/rivermind-fs/trustsr-phase1b ./artifacts/remote-phase1b
 ```
 
 The puller retrieves the manifest first, transfers only its listed paths with
