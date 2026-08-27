@@ -38,6 +38,18 @@ def test_main_is_byte_repeatable(capsys: pytest.CaptureFixture[str]) -> None:
     assert second == first
 
 
+def test_low_alpha_main_uses_repeatable_null_all_abstain_sentinel(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--alpha", "0.1"]) == 0
+    first = capsys.readouterr().out
+    assert main(["--alpha", "0.1"]) == 0
+    second = capsys.readouterr().out
+
+    assert second == first
+    assert json.loads(first)["calibration"]["threshold"] is None
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -46,6 +58,7 @@ def test_main_is_byte_repeatable(capsys: pytest.CaptureFixture[str]) -> None:
         ["--alpha", "nan"],
         ["--window", "0"],
         ["--window", "2"],
+        ["--window", "5"],
     ],
 )
 def test_main_rejects_invalid_conformal_parameters(arguments: list[str]) -> None:

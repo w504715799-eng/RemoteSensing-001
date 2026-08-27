@@ -72,3 +72,17 @@ def test_local_l1_risk_rejects_invalid_inputs(sr, hr, window) -> None:
 def test_ensemble_variance_score_rejects_invalid_inputs(samples) -> None:
     with pytest.raises(ValueError):
         ensemble_variance_score(samples)
+
+
+def test_local_l1_risk_rejects_complex_tensors_explicitly() -> None:
+    sr = torch.zeros((4, 2, 2), dtype=torch.complex64)
+
+    with pytest.raises(ValueError, match="sr must be real-valued"):
+        local_l1_risk(sr, sr, window=1)
+
+
+def test_ensemble_variance_score_rejects_complex_tensors_explicitly() -> None:
+    samples = torch.zeros((2, 4, 2, 2), dtype=torch.complex64)
+
+    with pytest.raises(ValueError, match="samples must be real-valued"):
+        ensemble_variance_score(samples)

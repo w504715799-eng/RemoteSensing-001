@@ -36,7 +36,8 @@ uv run trustsr-conformal-smoke --alpha 0.27 --window 1
 ```
 
 This command uses no real satellite data and provides no paper evidence or cross-sensor
-guarantee.
+guarantee. In schema `trustsr.conformal-smoke.v1`, a JSON `null` calibration threshold
+means the internal threshold is `-inf`, the valid all-abstain sentinel.
 
 ## Phase 1A
 

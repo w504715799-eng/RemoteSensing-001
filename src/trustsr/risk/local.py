@@ -11,6 +11,8 @@ def _validate_reflectance(value: torch.Tensor, *, name: str) -> None:
         raise ValueError(f"{name} must have shape (4, H, W)")
     if value.shape[1] == 0 or value.shape[2] == 0:
         raise ValueError(f"{name} must have non-empty spatial dimensions")
+    if value.is_complex():
+        raise ValueError(f"{name} must be real-valued")
     if not torch.isfinite(value).all():
         raise ValueError(f"{name} must contain only finite values")
     if (value < 0).any() or (value > 1).any():
@@ -51,6 +53,8 @@ def ensemble_variance_score(samples: torch.Tensor) -> torch.Tensor:
         raise ValueError("samples must have shape (K, 4, H, W)")
     if samples.shape[0] < 2 or samples.shape[2] == 0 or samples.shape[3] == 0:
         raise ValueError("samples must contain at least two non-empty samples")
+    if samples.is_complex():
+        raise ValueError("samples must be real-valued")
     if not torch.isfinite(samples).all():
         raise ValueError("samples must contain only finite values")
     if (samples < 0).any() or (samples > 1).any():

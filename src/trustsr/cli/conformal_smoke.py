@@ -24,8 +24,10 @@ def _positive_finite_alpha(value: str) -> float:
 
 def _positive_odd_window(value: str) -> int:
     window = int(value)
-    if window <= 0 or window % 2 == 0:
-        raise argparse.ArgumentTypeError("window must be a positive odd integer")
+    if window <= 0 or window % 2 == 0 or window > 4:
+        raise argparse.ArgumentTypeError(
+            "window must be a positive odd integer no greater than 4"
+        )
     return window
 
 
@@ -81,7 +83,9 @@ def run(*, alpha: float = 0.27, window: int = 1) -> dict[str, Any]:
             "coverage": calibration_point.coverage,
             "risk_bound": calibration.risk_bound,
             "roi_max_risk": calibration_point.roi_max_risk,
-            "threshold": calibration.threshold,
+            "threshold": (
+                None if calibration.threshold == float("-inf") else calibration.threshold
+            ),
         },
         "test": {
             "coverage": test_point.coverage,

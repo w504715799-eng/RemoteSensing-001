@@ -165,6 +165,9 @@ ROI 和 2 个测试 ROI。CLI 输出 canonical JSON，至少包含：
 - 输入配置 `channels=4`、`scale=4`、`window`；
 - 不包含时间戳、绝对路径、设备随机信息或耗时。
 
+内部全拒绝阈值保持为 `-inf`；在 `trustsr.conformal-smoke.v1` JSON 载荷中，
+`calibration.threshold` 使用 `null` 表示该哨兵值，以保持严格 JSON 兼容性。
+
 相同命令连续运行两次必须字节一致。
 
 ## 6. 通过与停止条件

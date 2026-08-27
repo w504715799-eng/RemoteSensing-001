@@ -24,7 +24,7 @@ class ConformalCalibration:
         _validate_positive_finite(self.risk_bound, name="risk_bound")
         _validate_count(self.calibration_size, name="calibration_size", allow_zero=False)
         _validate_count(self.trusted_pixels, name="trusted_pixels", allow_zero=True)
-        _validate_count(self.total_pixels, name="total_pixels", allow_zero=True)
+        _validate_count(self.total_pixels, name="total_pixels", allow_zero=False)
         if self.trusted_pixels > self.total_pixels:
             raise ValueError("trusted_pixels must not exceed total_pixels")
         if self.threshold == float("-inf") and self.trusted_pixels != 0:
@@ -73,32 +73,42 @@ def _validate_count(value: int, *, name: str, allow_zero: bool) -> None:
         raise ValueError(f"{name} must be a {qualifier} integer")
 
 
-def _validate_score_map(score: torch.Tensor) -> None:
+def _validate_score_map(score: torch.Tensor) -> torch.Tensor:
     if not isinstance(score, torch.Tensor):
         raise ValueError("score maps must be torch.Tensors")
     if score.ndim != 2:
         raise ValueError("score maps must be two-dimensional")
+    if 0 in score.shape:
+        raise ValueError("score maps must be non-empty two-dimensional tensors")
     if score.is_complex():
         raise ValueError("score maps must be real-valued")
-    if not torch.isfinite(score).all():
+    normalized_score = score.to(dtype=torch.float64)
+    if not torch.isfinite(normalized_score).all():
         raise ValueError("score maps must contain only finite values")
-    if (score < 0).any():
+    if (normalized_score < 0).any():
         raise ValueError("scores must be non-negative")
+    return normalized_score
 
 
-def _validate_risk_map(risk: torch.Tensor, *, risk_upper_bound: float) -> None:
+def _validate_risk_map(
+    risk: torch.Tensor, *, risk_upper_bound: float
+) -> torch.Tensor:
     if not isinstance(risk, torch.Tensor):
         raise ValueError("risk maps must be torch.Tensors")
     if risk.ndim != 2:
         raise ValueError("risk maps must be two-dimensional")
+    if 0 in risk.shape:
+        raise ValueError("risk maps must be non-empty two-dimensional tensors")
     if risk.is_complex():
         raise ValueError("risk maps must be real-valued")
-    if not torch.isfinite(risk).all():
+    normalized_risk = risk.to(dtype=torch.float64)
+    if not torch.isfinite(normalized_risk).all():
         raise ValueError("risk maps must contain only finite values")
-    if (risk < 0).any():
+    if (normalized_risk < 0).any():
         raise ValueError("risks must be non-negative")
-    if (risk > risk_upper_bound).any():
+    if (normalized_risk > risk_upper_bound).any():
         raise ValueError("risk exceeds risk_upper_bound")
+    return normalized_risk
 
 
 def _validated_maps(
@@ -120,12 +130,14 @@ def _validated_maps(
     validated_scores: list[torch.Tensor] = []
     validated_risks: list[torch.Tensor] = []
     for score, risk in zip(scores, risks, strict=True):
-        _validate_score_map(score)
-        _validate_risk_map(risk, risk_upper_bound=risk_upper_bound)
+        normalized_score = _validate_score_map(score)
+        normalized_risk = _validate_risk_map(
+            risk, risk_upper_bound=risk_upper_bound
+        )
         if score.shape != risk.shape:
             raise ValueError("ROI shapes must match")
-        validated_scores.append(score.to(device="cpu", dtype=torch.float64))
-        validated_risks.append(risk.to(device="cpu", dtype=torch.float64))
+        validated_scores.append(normalized_score.to(device="cpu"))
+        validated_risks.append(normalized_risk.to(device="cpu"))
     return tuple(validated_scores), tuple(validated_risks)
 
 
@@ -195,11 +207,11 @@ def calibrate_fidelity_mask(
 
 def trusted_mask(score: torch.Tensor, calibration: ConformalCalibration) -> torch.Tensor:
     """Return the boolean mask of score values trusted by a calibration result."""
-    _validate_score_map(score)
+    normalized_score = _validate_score_map(score)
     if not isinstance(calibration, ConformalCalibration):
         raise ValueError("calibration must be a ConformalCalibration")
     if calibration.threshold == float("-inf"):
         return torch.zeros_like(score, dtype=torch.bool)
     if not math.isfinite(calibration.threshold):
         raise ValueError("calibration threshold must be finite or -inf")
-    return score <= calibration.threshold
+    return normalized_score <= calibration.threshold
