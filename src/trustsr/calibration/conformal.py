@@ -18,6 +18,18 @@ class ConformalCalibration:
     trusted_pixels: int
     total_pixels: int
 
+    def __post_init__(self) -> None:
+        _validate_positive_finite(self.alpha, name="alpha")
+        _validate_threshold(self.threshold)
+        _validate_positive_finite(self.risk_bound, name="risk_bound")
+        _validate_count(self.calibration_size, name="calibration_size", allow_zero=False)
+        _validate_count(self.trusted_pixels, name="trusted_pixels", allow_zero=True)
+        _validate_count(self.total_pixels, name="total_pixels", allow_zero=True)
+        if self.trusted_pixels > self.total_pixels:
+            raise ValueError("trusted_pixels must not exceed total_pixels")
+        if self.threshold == float("-inf") and self.trusted_pixels != 0:
+            raise ValueError("-inf threshold must have zero trusted_pixels")
+
 
 def _validate_positive_finite(value: float, *, name: str) -> float:
     if isinstance(value, bool):
@@ -43,11 +55,36 @@ def _validate_alpha(alpha: float, *, risk_upper_bound: float) -> float:
     return numeric_alpha
 
 
+def _validate_threshold(threshold: float) -> float:
+    if isinstance(threshold, bool):
+        raise ValueError("threshold must be finite or -inf")
+    try:
+        numeric_threshold = float(threshold)
+    except (TypeError, ValueError) as error:
+        raise ValueError("threshold must be finite or -inf") from error
+    if numeric_threshold == float("-inf"):
+        return numeric_threshold
+    if not math.isfinite(numeric_threshold) or numeric_threshold < 0:
+        raise ValueError("threshold must be finite or -inf")
+    return numeric_threshold
+
+
+def _validate_count(value: int, *, name: str, allow_zero: bool) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} must be a {qualifier} integer")
+    if value < 0 or (value == 0 and not allow_zero):
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} must be a {qualifier} integer")
+
+
 def _validate_score_map(score: torch.Tensor) -> None:
     if not isinstance(score, torch.Tensor):
         raise ValueError("score maps must be torch.Tensors")
     if score.ndim != 2:
         raise ValueError("score maps must be two-dimensional")
+    if score.is_complex():
+        raise ValueError("score maps must be real-valued")
     if not torch.isfinite(score).all():
         raise ValueError("score maps must contain only finite values")
     if (score < 0).any():
@@ -59,6 +96,8 @@ def _validate_risk_map(risk: torch.Tensor, *, risk_upper_bound: float) -> None:
         raise ValueError("risk maps must be torch.Tensors")
     if risk.ndim != 2:
         raise ValueError("risk maps must be two-dimensional")
+    if risk.is_complex():
+        raise ValueError("risk maps must be real-valued")
     if not torch.isfinite(risk).all():
         raise ValueError("risk maps must contain only finite values")
     if (risk < 0).any():

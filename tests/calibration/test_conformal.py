@@ -104,6 +104,57 @@ def test_calibration_result_is_immutable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("alpha", float("nan"), "alpha must be a positive finite number"),
+        ("threshold", float("inf"), "threshold must be finite or -inf"),
+        ("risk_bound", float("inf"), "risk_bound must be a positive finite number"),
+        ("calibration_size", -1, "calibration_size must be a positive integer"),
+        ("trusted_pixels", -1, "trusted_pixels must be a non-negative integer"),
+        ("total_pixels", -1, "total_pixels must be a non-negative integer"),
+        ("trusted_pixels", 2, "trusted_pixels must not exceed total_pixels"),
+    ],
+)
+def test_conformal_calibration_rejects_invalid_invariants(
+    field: str, value: float | int, message: str
+) -> None:
+    values = {
+        "alpha": 0.5,
+        "threshold": 0.2,
+        "risk_bound": 0.5,
+        "calibration_size": 1,
+        "trusted_pixels": 1,
+        "total_pixels": 1,
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        ConformalCalibration(**values)
+
+
+@pytest.mark.parametrize(
+    ("scores", "risks", "message"),
+    [
+        (
+            (torch.ones((1, 1), dtype=torch.complex64),),
+            (torch.zeros((1, 1)),),
+            "score maps must be real-valued",
+        ),
+        (
+            (torch.zeros((1, 1)),),
+            (torch.ones((1, 1), dtype=torch.complex64),),
+            "risk maps must be real-valued",
+        ),
+    ],
+)
+def test_calibration_rejects_complex_maps(
+    scores: tuple[torch.Tensor, ...], risks: tuple[torch.Tensor, ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        calibrate_fidelity_mask(scores, risks, alpha=0.5)
+
+
+@pytest.mark.parametrize(
     ("scores", "risks", "alpha", "risk_upper_bound", "message"),
     [
         ((), (), 0.5, 1.0, "scores and risks must be non-empty"),
