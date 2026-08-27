@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from trustsr.artifacts.gpu_run import (
-    EXPECTED_GPU_NAME,
     GPUHardwareSnapshot,
     capture_gpu_hardware,
     collect_gpu_environment,
@@ -19,12 +18,23 @@ from trustsr.artifacts.gpu_run import (
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 
-def test_hardware_snapshot_accepts_the_verified_rtx_4090_before_model_construction() -> None:
-    verified_name = "NVIDIA GeForce RTX 4090"
+@pytest.mark.parametrize(
+    ("name", "compute_capability"),
+    [
+        ("NVIDIA GeForce RTX 3090", "8.6"),
+        ("NVIDIA GeForce RTX 4090", "8.9"),
+        ("NVIDIA A100", "8.0"),
+        ("NVIDIA future accelerator", "10.2"),
+    ],
+)
+def test_hardware_snapshot_accepts_single_gpu_with_supported_capability_before_model_construction(
+    name: str, compute_capability: str
+) -> None:
+    """A product-name gate would wrongly reject compatible rental substitutions."""
 
     def runner(argv, **_kwargs):
         output = (
-            f"{verified_name}, GPU-verified, 555.1, 24564, 24058, 8.9\n"
+            f"{name}, GPU-verified, 555.1, 24564, 24058, {compute_capability}\n"
             if "--query-compute-apps=pid" not in argv
             else ""
         )
@@ -36,9 +46,10 @@ def test_hardware_snapshot_accepts_the_verified_rtx_4090_before_model_constructi
         current_pid=os.getpid(),
     )
 
-    assert snapshot.name == verified_name
+    assert snapshot.name == name
     assert snapshot.memory_total_mib == 24564
     assert snapshot.memory_free_mib == 24058
+    assert snapshot.compute_capability == compute_capability
 
 
 def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_uv(
@@ -64,7 +75,7 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
                 "nvidia-smi",
                 "--query-gpu=name,uuid,driver_version,memory.total,memory.free,compute_cap",
                 "--format=csv,noheader,nounits",
-            ): f"{EXPECTED_GPU_NAME}, GPU-uuid, 555.1, 24576, 20000, 8.6\n",
+            ): "NVIDIA A100, GPU-uuid, 555.1, 24576, 20000, 8.6\n",
             (
                 "nvidia-smi",
                 "--query-compute-apps=pid",
@@ -94,7 +105,7 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
     assert result["run_started_utc"] == "2026-08-27T00:00:00Z"
     assert result["git_commit"] == "reviewed-commit"
     assert result["gpu"] == {
-        "name": EXPECTED_GPU_NAME,
+        "name": "NVIDIA A100",
         "uuid": "GPU-uuid",
         "driver_version": "555.1",
         "memory_total_mib": 24576,
@@ -122,8 +133,8 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
         (
             "\n".join(
                 [
-                    f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
-                    f"{EXPECTED_GPU_NAME}, GPU-two, 555.1, 24576, 20000, 8.6",
+                    "NVIDIA A100, GPU-one, 555.1, 24576, 20000, 8.6",
+                    "NVIDIA A100, GPU-two, 555.1, 24576, 20000, 8.6",
                 ]
             ),
             "",
@@ -131,26 +142,19 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
             "exactly one GPU",
         ),
         (
-            "NVIDIA GeForce RTX 3090, GPU-one, 555.1, 24576, 20000, 8.6",
-            "",
-            True,
-            "RTX 4090",
-        ),
-        ("NVIDIA A100, GPU-one, 555.1, 81920, 80000, 8.0", "", True, "RTX 4090"),
-        (
-            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 18431, 8.6",
+            "NVIDIA A100, GPU-one, 555.1, 24576, 18431, 8.6",
             "",
             True,
             "18 GiB",
         ),
         (
-            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
+            "NVIDIA A100, GPU-one, 555.1, 24576, 20000, 8.6",
             str(os.getpid() + 1),
             True,
             "foreign",
         ),
         (
-            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
+            "NVIDIA A100, GPU-one, 555.1, 24576, 20000, 8.6",
             "",
             False,
             "CUDA",
@@ -172,9 +176,51 @@ def test_hardware_snapshot_fails_closed_on_an_unacceptable_initial_state(
         )
 
 
+@pytest.mark.parametrize(
+    "compute_capability",
+    ["7.5", "7.9", "", "8", "8.", ".0", "8.0.1", "NaN", "infinity", "-8.0", "8.-1"],
+)
+def test_hardware_snapshot_rejects_unsupported_or_malformed_compute_capability(
+    compute_capability: str,
+) -> None:
+    """Accepting a non-8.x-capable GPU or non-integer version is unsafe."""
+
+    def runner(argv, **_kwargs):
+        output = (
+            f"NVIDIA T4, GPU-one, 555.1, 24576, 20000, {compute_capability}"
+            if "--query-compute-apps=pid" not in argv
+            else ""
+        )
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    with pytest.raises(RuntimeError, match="compute capability"):
+        capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+
+
+@pytest.mark.parametrize(
+    "total, free",
+    [("0", "0"), ("24576", "-1"), ("24576", "24577"), ("unknown", "20000")],
+)
+def test_hardware_snapshot_rejects_invalid_memory_values_before_model_construction(
+    total: str, free: str
+) -> None:
+    """Invalid memory accounting must not make a capability-compatible GPU runnable."""
+
+    def runner(argv, **_kwargs):
+        output = (
+            f"NVIDIA A100, GPU-one, 555.1, {total}, {free}, 8.0"
+            if "--query-compute-apps=pid" not in argv
+            else ""
+        )
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    with pytest.raises(RuntimeError, match="GPU memory"):
+        capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+
+
 def test_hardware_snapshot_is_frozen() -> None:
     snapshot = GPUHardwareSnapshot(
-        name=EXPECTED_GPU_NAME,
+        name="NVIDIA A100",
         uuid="GPU-one",
         driver_version="555.1",
         memory_total_mib=24576,

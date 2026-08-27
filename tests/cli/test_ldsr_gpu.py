@@ -14,7 +14,7 @@ from trustsr.artifacts import (
     tensor_sha256,
     verify_artifact_manifest,
 )
-from trustsr.artifacts.gpu_run import EXPECTED_GPU_NAME, GPUHardwareSnapshot
+from trustsr.artifacts.gpu_run import GPUHardwareSnapshot
 from trustsr.contracts import SRPair
 from trustsr.evaluation.repeatability import RepeatabilityError
 
@@ -61,7 +61,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
 @pytest.fixture(autouse=True)
 def safe_gpu(monkeypatch):
     snapshot = GPUHardwareSnapshot(
-        name=EXPECTED_GPU_NAME,
+        name="NVIDIA A100",
         uuid="GPU-test",
         driver_version="555.1",
         memory_total_mib=24576,
@@ -194,7 +194,7 @@ def test_single_refuses_to_write_when_repeatability_fails(tmp_path, monkeypatch)
     "hardware_error",
     [
         "requires exactly one GPU",
-        "expected exactly one RTX 4090",
+        "requires compute capability at least 8.0",
         "at least 18 GiB initial free VRAM",
         "a foreign CUDA compute process prevents this staged run",
     ],
@@ -225,7 +225,7 @@ def test_preflight_environment_preserves_the_single_preconstruction_snapshot(
     tmp_path, monkeypatch
 ):
     snapshot = GPUHardwareSnapshot(
-        name=EXPECTED_GPU_NAME,
+        name="NVIDIA A100",
         uuid="GPU-preconstruction",
         driver_version="555.1",
         memory_total_mib=24576,

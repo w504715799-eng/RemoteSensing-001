@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,7 @@ _COMPUTE_PROCESS_COMMAND = [
     "--query-compute-apps=pid",
     "--format=csv,noheader,nounits",
 ]
-EXPECTED_GPU_NAME = "NVIDIA GeForce RTX 4090"
+_MINIMUM_COMPUTE_CAPABILITY = (8, 0)
 MINIMUM_FREE_MEMORY_MIB = 18 * 1024
 
 
@@ -119,6 +120,17 @@ def _parse_compute_pids(text: str) -> tuple[int, ...]:
     return tuple(sorted(pids))
 
 
+def _validate_compute_capability(value: str) -> str:
+    """Reject nonnumeric or unsupported CUDA compute-capability records."""
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)", value)
+    if match is None:
+        raise RuntimeError("nvidia-smi returned an invalid GPU compute capability")
+    capability = (int(match.group(1)), int(match.group(2)))
+    if capability < _MINIMUM_COMPUTE_CAPABILITY:
+        raise RuntimeError("LDSR-S2 GPU workflow requires compute capability at least 8.0")
+    return value
+
+
 def capture_gpu_hardware(
     *,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
@@ -133,18 +145,17 @@ def capture_gpu_hardware(
     if len(rows) != 1:
         raise RuntimeError("LDSR-S2 GPU workflow requires exactly one GPU")
     fields = [part.strip() for part in rows[0].split(",")]
-    if len(fields) != 6 or any(not field for field in fields):
+    if len(fields) != 6 or any(not field for field in fields[:5]):
         raise RuntimeError("nvidia-smi returned invalid GPU identity data")
+    compute_capability = _validate_compute_capability(fields[5])
     try:
         total, free = int(fields[3]), int(fields[4])
     except ValueError as exc:
         raise RuntimeError("nvidia-smi returned invalid GPU memory data") from exc
     if total <= 0 or free < 0 or free > total:
         raise RuntimeError("nvidia-smi returned invalid GPU memory data")
-    if fields[0] != EXPECTED_GPU_NAME:
-        raise RuntimeError(f"expected exactly one RTX 4090 ({EXPECTED_GPU_NAME})")
     if free < MINIMUM_FREE_MEMORY_MIB:
-        raise RuntimeError("RTX 4090 must have at least 18 GiB initial free VRAM")
+        raise RuntimeError("GPU must have at least 18 GiB initial free VRAM")
     pids = _parse_compute_pids(_run_required_text(command_runner, _COMPUTE_PROCESS_COMMAND))
     own_pid = os.getpid() if current_pid is None else current_pid
     if set(pids) - {own_pid}:
@@ -155,7 +166,7 @@ def capture_gpu_hardware(
         driver_version=fields[2],
         memory_total_mib=total,
         memory_free_mib=free,
-        compute_capability=fields[5],
+        compute_capability=compute_capability,
         compute_pids=pids,
     )
 

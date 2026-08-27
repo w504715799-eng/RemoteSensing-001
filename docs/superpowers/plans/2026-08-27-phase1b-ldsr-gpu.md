@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a supply-chain-verified, deterministic LDSR-S2 RGBN ×4 adapter and run a staged one-sample then nine-sample benchmark on the user's exact `NVIDIA GeForce RTX 4090` cloud instance.
+**Goal:** Add a supply-chain-verified, deterministic LDSR-S2 RGBN ×4 adapter and run a staged one-sample then nine-sample benchmark on a single cloud GPU that satisfies the approved capability gate.
 
 **Architecture:** Keep GPU-only imports behind lazy factories so the default CPU environment remains unchanged. Separate immutable asset verification, safe upstream backend construction, RNG-isolated model adaptation, repeatability evaluation, staged CLI orchestration, and remote operations. Local tasks and reviews finish first; the cloud instance stays off until the explicit GPU acceptance task.
 
@@ -573,9 +573,9 @@ Register:
 trustsr-ldsr-gpu = "trustsr.cli.ldsr_gpu:main"
 ```
 
-Use `argparse` subparsers with defaults rooted at `data/`, `models/`, and `artifacts/`. Every production subcommand first requires `torch.cuda.is_available()` and no unexpected active compute process; the active-process check permits only the current process after model construction and fails before construction if another PID is reported.
+Use `argparse` subparsers with defaults rooted at `data/`, `models/`, and `artifacts/`. Before model construction, every production subcommand requires CUDA, exactly one visible GPU, a numeric `major.minor` compute capability of at least `8.0`, at least 18 GiB free VRAM, and no unexpected active compute process; the active-process check permits only the current process after model construction and fails before construction if another PID is reported. Record the actual name, UUID, driver, memory, and capability without making a product-name requirement.
 
-`single` records `torch.cuda.reset_peak_memory_stats()`, monotonic duration and `torch.cuda.max_memory_allocated()` only in `single-runtime.json`. Its deterministic summary contains sample identity/input digest, model provenance, two output hashes, equality/difference/tolerance, cache key and finite metrics.
+`single` records `torch.cuda.reset_peak_memory_stats()`, monotonic duration and `torch.cuda.max_memory_allocated()` only in `single-runtime.json`. Compare duration only within the hardware recorded in the environment manifest; deterministic hashes, repeatability, and quality metrics remain comparable. Its deterministic summary contains sample identity/input digest, model provenance, two output hashes, equality/difference/tolerance, cache key and finite metrics.
 
 The deterministic single-result schema is exactly:
 
@@ -793,7 +793,7 @@ scripts/phase1b/bootstrap_remote.sh /root/rivermind-fs/trustsr-phase1b /root/riv
 scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b preflight
 ```
 
-Inspect the manifest for exactly one `NVIDIA GeForce RTX 4090`, at least 18 GiB free VRAM before construction, driver/CUDA/Python/PyTorch/package versions, config/checkpoint hashes, exact Git commit, cgroup limits and absence of credentials. Stop on any mismatch.
+Inspect the manifest for CUDA availability, exactly one visible GPU, a numeric `major.minor` compute capability of at least `8.0`, at least 18 GiB free VRAM before construction, the recorded actual name/UUID/driver/memory, CUDA/Python/PyTorch/package versions, config/checkpoint hashes, exact Git commit, cgroup limits and absence of credentials. Stop on any mismatch.
 
 - [ ] **Step 4: Run the single-sample gate**
 
@@ -801,7 +801,7 @@ Inspect the manifest for exactly one `NVIDIA GeForce RTX 4090`, at least 18 GiB 
 scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b single
 ```
 
-Require `spot-0000`, two fresh 100-step predictions, exact hashes or `max_abs_diff <= 1e-6`, finite clipped `(4,512,512)` output, finite metrics, recorded duration/peak VRAM, and verified prediction-cache replay. Stop on failure.
+Require `spot-0000`, two fresh 100-step predictions, exact hashes or `max_abs_diff <= 1e-6`, finite clipped `(4,512,512)` output, finite metrics, recorded duration/peak VRAM, and verified prediction-cache replay. Compare duration only within the recorded same hardware; quality and repeatability outputs remain comparable. Stop on failure.
 
 - [ ] **Step 5: Run the full benchmark twice**
 
