@@ -114,12 +114,31 @@ def test_read_error_cleans_temporary_file(tmp_path):
     assert not (tmp_path / CHECKPOINT_NAME).exists()
 
 
+def test_fsync_error_cleans_temporary_file(tmp_path, monkeypatch):
+    def fail_fsync(_fd):
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr("trustsr.models.ldsr_assets.os.fsync", fail_fsync)
+    with pytest.raises(OSError, match="fsync failed"):
+        download_verified_checkpoint(
+            tmp_path,
+            opener=FakeOpener(b"payload"),
+            expected_size=7,
+            expected_sha256=hashlib.sha256(b"payload").hexdigest(),
+        )
+    assert not list(tmp_path.glob(f".{CHECKPOINT_NAME}.*.tmp"))
+    assert not (tmp_path / CHECKPOINT_NAME).exists()
+
+
 def test_config_is_confined_and_verified(tmp_path):
     root = tmp_path / "package"
     config = root / CONFIG_RELATIVE_PATH
     config.parent.mkdir(parents=True)
-    config.write_bytes(b"config")
+    config.write_bytes(b"config" * 248 + b"xxx")
     with pytest.raises(AssetIntegrityError, match="size"):
+        verify_packaged_config(root)
+    config.write_bytes(b"x" * CONFIG_SIZE)
+    with pytest.raises(AssetIntegrityError, match="SHA-256"):
         verify_packaged_config(root)
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -132,7 +151,10 @@ def test_config_is_confined_and_verified(tmp_path):
 def test_file_sha256_and_constants():
     assert file_sha256(Path(__file__))
     assert CHECKPOINT_NAME == "opensr-ldsrs2_v1_0_0.ckpt"
-    assert CHECKPOINT_URL.endswith(CHECKPOINT_NAME)
+    assert CHECKPOINT_URL == (
+        "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/"
+        "opensr-ldsrs2_v1_0_0.ckpt"
+    )
     assert CHECKPOINT_SIZE == 1_130_715_795
     assert CHECKPOINT_SHA256 == "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a"
     assert CONFIG_RELATIVE_PATH == Path("configs/config_10m.yaml")
