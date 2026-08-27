@@ -117,6 +117,34 @@ def test_rejects_invalid_assets_before_backend_construction(tmp_path, monkeypatc
     assert events == ["download_checkpoint"]
 
 
+def test_rejects_invalid_checkpoint_before_backend_construction(tmp_path, monkeypatch):
+    from trustsr.models import ldsr_backend
+
+    constructed = False
+    package = ModuleType("fake")
+    package.__file__ = str(tmp_path / "__init__.py")
+
+    def construct(*_args, **_kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("backend must not be constructed")
+
+    package.SRLatentDiffusion = construct
+    monkeypatch.setattr(
+        ldsr_backend,
+        "download_verified_checkpoint",
+        lambda _model_dir: (_ for _ in ()).throw(
+            ldsr_backend.AssetIntegrityError("bad checkpoint")
+        ),
+    )
+
+    with pytest.raises(ldsr_backend.AssetIntegrityError, match="bad checkpoint"):
+        ldsr_backend.build_verified_backend(
+            tmp_path, device="cuda:0", package_module=package, omega_conf=object()
+        )
+    assert constructed is False
+
+
 @pytest.mark.parametrize(
     "loaded",
     [{}, {"state_dict": []}, {"state_dict": {1: torch.tensor(1)}}, {"state_dict": {"x": 1}}],
@@ -175,3 +203,37 @@ def test_strict_load_error_is_wrapped_and_training_disabled(tmp_path, monkeypatc
             omega_conf=SimpleNamespace(load=lambda _: {}),
         )
     assert isinstance(exc.value.__cause__, RuntimeError)
+
+
+def test_rejects_backend_left_in_training_mode_after_strict_load(tmp_path, monkeypatch):
+    from trustsr.models import ldsr_backend
+
+    package = ModuleType("fake")
+    package.__file__ = str(tmp_path / "__init__.py")
+    config = tmp_path / "config.yaml"
+    config.write_text("x")
+    checkpoint = _asset(tmp_path / "checkpoint")
+    monkeypatch.setattr(ldsr_backend, "download_verified_checkpoint", lambda _: checkpoint)
+    monkeypatch.setattr(ldsr_backend, "verify_packaged_config", lambda _: _asset(config))
+
+    class Model:
+        training = True
+
+        def load_state_dict(self, _state, *, strict):
+            assert strict is True
+
+    class Backend:
+        training = True
+        model = Model()
+
+    package.SRLatentDiffusion = lambda *_args, **_kwargs: Backend()
+    monkeypatch.setattr(
+        ldsr_backend.torch, "load", lambda *_a, **_k: {"state_dict": {"x": torch.tensor(1)}}
+    )
+    with pytest.raises(ldsr_backend.BackendLoadError, match="evaluation mode"):
+        ldsr_backend.build_verified_backend(
+            tmp_path,
+            device="cpu",
+            package_module=package,
+            omega_conf=SimpleNamespace(load=lambda _: {}),
+        )
