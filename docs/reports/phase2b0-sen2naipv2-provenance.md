@@ -44,3 +44,22 @@ git ls-files '*.taco'
 - Accepted audit SHA-256: `2cb8aebf21942d3a9875c49439eebc8726ef1c62bd1118597ad35e1772bc1418`.
 - Audit output states `metadata_only: true`, `network_accessed: false`, and
   `pixel_data_downloaded: false`.
+
+## Final post-fix evidence
+
+The final policy/configuration fix is commit `04c7b4b` (`fix: enforce dataset index
+size policy`). The policy now derives tracked paths and staged blob sizes from the Git
+index, checks a present working-tree file as well, and fails closed when index entries
+or blob inspection are malformed. The ignore rules preserve generated artifact ignores
+while explicitly allowing `artifacts/datasets/` metadata subject to the targeted
+TACO/cache/pixel exclusions.
+
+Fresh final commands and results:
+
+- `uv run pytest tests/data/test_local_data_policy.py -v`: 6 passed.
+- `uv run pytest`: 437 passed; 43 third-party PyTorch deprecation warnings.
+- `uv run ruff check .`: all checks passed.
+- Two `uv run trustsr-dataset-audit` outputs were byte-identical (`cmp` exit 0); their
+  SHA-256 is `2cb8aebf21942d3a9875c49439eebc8726ef1c62bd1118597ad35e1772bc1418`.
+- The repository-root policy assertion, `git diff --check`, and `git ls-files '*.taco'`
+  all exited successfully with no output.
