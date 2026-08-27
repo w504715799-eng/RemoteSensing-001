@@ -79,10 +79,12 @@ scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b benchmark
 scripts/phase1b/run_remote.sh /root/rivermind-fs/trustsr-phase1b manifest
 ```
 
-Bootstrap creates only an isolated Conda prefix at `conda-env`, installs
-`uv==0.12.5`, and uses frozen GPU dependency synchronization. It never modifies
-the base Conda environment. A reused prefix must have Python 3.12, that exact uv
-version, and the same `uv.lock` digest; otherwise recreate it deliberately.
+Bootstrap creates only an isolated Conda prefix at `conda-env`, explicitly sources
+the prefix's remote Python packages from `conda-forge` to avoid ambient default-channel
+policy or configuration, installs `uv==0.12.5`, and uses frozen GPU dependency
+synchronization. It never modifies the base Conda environment or accepts Conda
+channel terms. A reused prefix must have Python 3.12, that exact uv version, and
+the same `uv.lock` digest; otherwise recreate it deliberately.
 Budget at least 15 GiB free disk space before bootstrap, including the verified
 approximately 1.13 GB LDSR-S2 checkpoint and downloaded/developed outputs.
 

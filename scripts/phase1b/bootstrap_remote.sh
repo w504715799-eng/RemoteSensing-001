@@ -55,7 +55,7 @@ if [[ -e "$prefix" || -L "$prefix" ]]; then
   exit 0
 fi
 
-conda create --yes --prefix "$prefix" python=3.12 pip
+conda create --yes --override-channels --channel conda-forge --prefix "$prefix" python=3.12 pip
 "$prefix/bin/python" -m pip install 'uv==0.12.5'
 UV_PROJECT_ENVIRONMENT="$prefix" "$prefix/bin/uv" sync --directory "$repo_dir" --frozen --no-dev --extra gpu
 printf '%s\n' "$lock_digest" > "$stamp"

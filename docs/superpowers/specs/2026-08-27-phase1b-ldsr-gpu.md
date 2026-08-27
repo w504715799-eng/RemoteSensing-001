@@ -146,7 +146,7 @@ provenance 使用 JSON 标量，至少记录：
 └── artifacts/phase1b/     # 运行清单与结果
 ```
 
-环境由 `conda` 创建 Python 3.12 前缀；在该前缀安装固定 `uv==0.12.5`，再从提交的 `uv.lock` 以 frozen 模式安装项目及 `gpu` extra。远端不得直接在 base Conda 环境安装项目依赖。只有 `/root/rivermind-fs` 已作为实际挂载点时才允许开始运行。
+环境由 `conda` 使用 `--override-channels --channel conda-forge` 创建 Python 3.12 前缀，明确从 conda-forge 获取该前缀的远端 Python 包，避免依赖环境中默认 channel 的策略或配置；不得在远端接受 Conda channel 条款。在该前缀安装固定 `uv==0.12.5`，再从提交的 `uv.lock` 以 frozen 模式安装项目及 `gpu` extra。远端不得直接在 base Conda 环境安装项目依赖。只有 `/root/rivermind-fs` 已作为实际挂载点时才允许开始运行。
 
 首次真实运行前，必须确认 CUDA 可用、仅有一张可见 GPU、`nvidia-smi` 返回的
 compute capability 是数值 `major.minor` 且不低于 `8.0`、初始空闲显存至少 18 GiB，且没有外部 CUDA compute 进程；随后原样记录：

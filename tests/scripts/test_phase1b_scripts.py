@@ -47,6 +47,15 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "prefix=\"\"\nfor ((index = 1; index <= $#; index++)); do\n"
         "  if [[ \"${!index}\" == --prefix ]]; then\n"
         "    next=$((index + 1)); prefix=\"${!next}\"\n  fi\ndone\n"
+        "expected=(create --yes --override-channels --channel conda-forge --prefix \"$prefix\" python=3.12 pip)\n"
+        "if (( $# != ${#expected[@]} )); then\n"
+        "  printf 'unexpected conda create argv: %s\\n' \"$*\" >&2; exit 99\n"
+        "fi\n"
+        "for ((index = 1; index <= $#; index++)); do\n"
+        "  [[ \"${!index}\" == \"${expected[$((index - 1))]}\" ]] || {\n"
+        "    printf 'unexpected conda create argv: %s\\n' \"$*\" >&2; exit 99\n"
+        "  }\n"
+        "done\n"
         "mkdir -p \"$prefix/bin\"\n"
         "printf '#!/usr/bin/env bash\\nif [[ \"${1:-}\" == --version ]]; then echo \"Python 3.12.4\"; exit 0; fi\\n"
         "printf \"python %%s\\\\n\" \"$*\" >> \"$COMMAND_LOG\"\\n' > \"$prefix/bin/python\"\n"
@@ -295,7 +304,10 @@ def test_bootstrap_creates_only_a_prefix_and_runs_frozen_gpu_sync(tmp_path: Path
 
     assert completed.returncode == 0, completed.stderr
     commands = log.read_text(encoding="utf-8")
-    assert f"conda create --yes --prefix {remote_root}/conda-env python=3.12 pip" in commands
+    assert (
+        f"conda create --yes --override-channels --channel conda-forge "
+        f"--prefix {remote_root}/conda-env python=3.12 pip"
+    ) in commands
     assert "python -m pip install uv==0.12.5" in commands
     assert f"uv sync --directory {repo_dir} --frozen --no-dev --extra gpu env={remote_root}/conda-env" in commands
     assert (remote_root / "conda-env" / ".trustsr-uv-lock.sha256").read_text().strip() == hashlib.sha256(

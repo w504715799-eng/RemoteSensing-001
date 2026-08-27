@@ -647,7 +647,7 @@ Tests run `bash -n` and inspect behavior with fake executables placed first in `
 - `set -euo pipefail` in every script;
 - exact argument count and refusal of empty, `/`, `/root`, `~`, glob-containing, or newline-containing paths;
 - remote root must resolve under `/root/rivermind-fs/`;
-- bootstrap creates Conda prefix `${REMOTE_ROOT}/conda-env`, installs `uv==0.12.5`, and executes frozen `uv sync --extra gpu` against `REPO_DIR` without touching base Conda;
+- bootstrap creates Conda prefix `${REMOTE_ROOT}/conda-env` with `--override-channels --channel conda-forge`, explicitly sourcing remote Python packages from conda-forge to avoid ambient default-channel policy/configuration, installs `uv==0.12.5`, and executes frozen `uv sync --extra gpu` against `REPO_DIR` without touching base Conda or accepting channel terms;
 - run script accepts only four named stages and invokes one matching CLI command;
 - pull script accepts an SSH config alias rather than raw user/host/port/password, uses `rsync --protect-args`, pulls the manifest first, pulls only paths listed in the manifest, and runs local verification;
 - no script contains the cloud hostname, port, username, password, `StrictHostKeyChecking=no`, GitHub token, `shutdown`, `poweroff`, `rm -rf`, or `git reset`.
@@ -663,7 +663,8 @@ uv run pytest tests/scripts/test_phase1b_scripts.py -q
 The core commands are:
 
 ```bash
-conda create --yes --prefix "${remote_root}/conda-env" python=3.12 pip
+conda create --yes --override-channels --channel conda-forge \
+  --prefix "${remote_root}/conda-env" python=3.12 pip
 "${remote_root}/conda-env/bin/python" -m pip install "uv==0.12.5"
 UV_PROJECT_ENVIRONMENT="${remote_root}/conda-env" \
   "${remote_root}/conda-env/bin/uv" sync \
