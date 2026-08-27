@@ -20,6 +20,25 @@ def _temporary_repository(tmp_path: Path) -> Path:
     return repo_root
 
 
+def _is_ignored(repo_root: Path, relative_path: str) -> bool:
+    result = subprocess.run(
+        ("git", "-C", str(repo_root), "check-ignore", "-q", "--no-index", "--", relative_path),
+        check=False,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def test_ignore_rules_keep_pinned_metadata_addable() -> None:
+    """Catch a broad artifacts rule that hides the pinned provenance JSON."""
+    repo_root = Path(__file__).parents[2]
+
+    assert not _is_ignored(repo_root, "artifacts/datasets/sen2naipv2-source-v1.json")
+    assert _is_ignored(repo_root, "artifacts/datasets/sample.taco")
+    assert _is_ignored(repo_root, "artifacts/datasets/cache/sample.json")
+    assert _is_ignored(repo_root, "artifacts/datasets/pixels/sample.json")
+
+
 def test_policy_rejects_a_tracked_taco_file(tmp_path: Path) -> None:
     """Catch a policy regression that permits tracked local TACO pixel data."""
     repo_root = _temporary_repository(tmp_path)
