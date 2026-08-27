@@ -48,3 +48,54 @@ untracked. Path overrides are available through `trustsr-benchmark --help`.
 
 SPOT is a development reproducibility check, not final scientific evidence. The future
 LDSR-S2 GPU phase is intentionally separate from this CPU checkpoint.
+
+## Phase 1B remote GPU runbook
+
+The server remains off through Tasks 1–6. These scripts are an operator runbook
+only; this repository does not connect to a server, contain SSH authentication
+material, or start GPU work by itself. Configure an SSH alias in your local SSH
+configuration outside this repository. Do not put SSH authentication material in
+commands or committed files: an SSH password or key never belongs in a command
+or the repository.
+
+When the approved GPU instance is available, clone this exact checked-out commit
+onto its data disk and run the following commands *on that instance*. Replace the
+example root with the approved directory below `/root/rivermind-data/`; the
+bootstrap refuses any other resolved location and requires at least 15 GiB free
+before it changes anything.
+
+```bash
+scripts/phase1b/bootstrap_remote.sh /root/rivermind-data/phase1b "$PWD"
+scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b preflight
+scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b single
+scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b benchmark
+scripts/phase1b/run_remote.sh /root/rivermind-data/phase1b manifest
+```
+
+Bootstrap creates only an isolated Conda prefix at `conda-env`, installs
+`uv==0.12.5`, and uses frozen GPU dependency synchronization. It never modifies
+the base Conda environment. A reused prefix must have Python 3.12, that exact uv
+version, and the same `uv.lock` digest; otherwise recreate it deliberately.
+Budget at least 15 GiB free disk space before bootstrap, including the verified
+approximately 1.13 GB LDSR-S2 checkpoint and downloaded/developed outputs.
+
+The scientific settings are immutable: LDSR-S2 uses seed 3407 and 100 sampling
+steps (with eta 0.95, temperature 1.0, and histogram matching). SPOT v3 is a
+development-only reproducibility dataset, not final scientific evidence. The
+stages are intentionally separate: preflight verifies the CUDA model, single
+runs only `spot-0000` with the repeatability gate, benchmark uses all fixed nine
+SPOT samples and the fixed three-model order, and manifest allowlists their
+artifacts.
+
+Before telling anyone to stop the instance, pull and verify the artifacts from a
+local checkout using the SSH config alias:
+
+```bash
+scripts/phase1b/pull_artifacts.sh phase1b-gpu /root/rivermind-data/phase1b ./artifacts/remote-phase1b
+```
+
+The puller retrieves the manifest first, transfers only its listed paths with
+protected arguments, then verifies local file digests from the local checked-out
+code. Only after that verification succeeds should the operator stop the
+instance, using the cloud provider console. No shutdown action belongs in these
+scripts.
