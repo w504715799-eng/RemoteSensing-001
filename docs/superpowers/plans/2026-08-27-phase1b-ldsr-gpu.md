@@ -573,7 +573,7 @@ Register:
 trustsr-ldsr-gpu = "trustsr.cli.ldsr_gpu:main"
 ```
 
-Use `argparse` subparsers with defaults rooted at `data/`, `models/`, and `artifacts/`. Before model construction, every production subcommand requires CUDA, exactly one visible GPU, a numeric `major.minor` compute capability of at least `8.0`, at least 18 GiB free VRAM, and no unexpected active compute process; the active-process check permits only the current process after model construction and fails before construction if another PID is reported. Record the actual name, UUID, driver, memory, and capability without making a product-name requirement.
+Use `argparse` subparsers with defaults rooted at `data/`, `models/`, and `artifacts/`. Before model construction, every production subcommand requires CUDA, `torch.cuda.device_count() == 1`, exactly one `nvidia-smi` row, a numeric `major.minor` compute capability of at least `8.0`, at least 18 GiB free VRAM, and no unexpected active compute process; the active-process check permits only the current process after model construction and fails before construction if another PID is reported. Record the validated visible-device count plus the actual name, UUID, driver, memory, and capability without making a product-name requirement.
 
 `single` records `torch.cuda.reset_peak_memory_stats()`, monotonic duration and `torch.cuda.max_memory_allocated()` only in `single-runtime.json`. Compare duration only within the hardware recorded in the environment manifest; deterministic hashes, repeatability, and quality metrics remain comparable. Its deterministic summary contains sample identity/input digest, model provenance, two output hashes, equality/difference/tolerance, cache key and finite metrics.
 

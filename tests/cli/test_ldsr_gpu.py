@@ -68,6 +68,7 @@ def safe_gpu(monkeypatch):
         memory_free_mib=20000,
         compute_capability="8.6",
         compute_pids=(),
+        visible_device_count=1,
     )
     monkeypatch.setattr(gpu.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(gpu, "capture_gpu_hardware", lambda: snapshot, raising=False)
@@ -232,6 +233,7 @@ def test_preflight_environment_preserves_the_single_preconstruction_snapshot(
         memory_free_mib=19000,
         compute_capability="8.6",
         compute_pids=(),
+        visible_device_count=1,
     )
     captures = 0
     recorded = []

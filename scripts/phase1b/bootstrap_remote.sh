@@ -115,16 +115,20 @@ print(
 PY
 }
 
-if [[ $# -ne 2 ]]; then
-  die 'argument count; usage: bootstrap_remote.sh REMOTE_ROOT REPO_DIR'
-fi
+bootstrap_main() {
+  base_python="$1"
+  shift
+  if [[ $# -ne 2 ]]; then
+    die 'argument count; usage: bootstrap_remote.sh REMOTE_ROOT REPO_DIR'
+  fi
 
-remote_root="$1"
-repo_dir="$2"
-base_python=/opt/conda/bin/python
-require_remote_root "$remote_root"
-validate_path "$repo_dir" || die 'repository directory'
-[[ -d "$repo_dir" && ! -L "$repo_dir" && -f "$repo_dir/uv.lock" && ! -L "$repo_dir/uv.lock" ]] || die 'repository directory must contain a regular uv.lock'
+  mountpoint -q -- /root/rivermind-fs || die 'persistent mountpoint is unavailable: /root/rivermind-fs'
+
+  remote_root="$1"
+  repo_dir="$2"
+  require_remote_root "$remote_root"
+  validate_path "$repo_dir" || die 'repository directory'
+  [[ -d "$repo_dir" && ! -L "$repo_dir" && -f "$repo_dir/uv.lock" && ! -L "$repo_dir/uv.lock" ]] || die 'repository directory must contain a regular uv.lock'
 
 available_kib="$(df -Pk -- "$remote_root" | awk 'NR == 2 {print $4}')"
 [[ "$available_kib" =~ ^[0-9]+$ ]] || die 'could not determine free disk space'
@@ -175,3 +179,10 @@ Path(sys.argv[1]).write_text(
 PY
 mv -f -- "$stamp_tmp" "$stamp"
 stamp_tmp=''
+cleanup
+trap - EXIT
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  bootstrap_main /opt/conda/bin/python "$@"
+fi

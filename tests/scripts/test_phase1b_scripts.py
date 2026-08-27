@@ -42,6 +42,12 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "fi\n",
     )
     _make_executable(
+        fake_bin / "mountpoint",
+        "#!/usr/bin/env bash\n"
+        "[[ \"${FAKE_MOUNTPOINT_AVAILABLE:-1}\" == 1 ]] || exit 1\n"
+        "[[ \"$*\" == \"-q -- /root/rivermind-fs\" ]] || exit 99\n",
+    )
+    _make_executable(
         fake_bin / "conda",
         "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'conda %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
         "prefix=\"\"\nfor ((index = 1; index <= $#; index++)); do\n"
@@ -132,6 +138,118 @@ def _write_manifest(root: Path, paths: dict[str, str]) -> None:
 
 def _nul_arguments(path: Path) -> list[str]:
     return [item.decode("utf-8") for item in path.read_bytes().split(b"\0") if item]
+
+
+def _json_lines(path: Path) -> list[list[str]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _fake_base_python(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
+    modules = tmp_path / "fake-python-modules"
+    modules.mkdir()
+    (modules / "torch.py").write_text(
+        "import os\n"
+        "__version__ = os.environ['FAKE_TORCH_VERSION_CURRENT']\n"
+        "class version:\n"
+        "    cuda = os.environ['FAKE_CUDA_RUNTIME_CURRENT']\n"
+        "class cuda:\n"
+        "    @staticmethod\n"
+        "    def is_available(): return True\n",
+        encoding="utf-8",
+    )
+    (modules / "torchvision.py").write_text(
+        "import os\n__version__ = os.environ['FAKE_TORCHVISION_VERSION_CURRENT']\n",
+        encoding="utf-8",
+    )
+    (modules / "sitecustomize.py").write_text(
+        "import importlib.metadata as metadata\n"
+        "_real_version = metadata.version\n"
+        "def _version(name):\n"
+        "    fixed = {'opensr-model': '1.1.1', 'uv': '0.12.5'}\n"
+        "    return fixed[name] if name in fixed else _real_version(name)\n"
+        "metadata.version = _version\n",
+        encoding="utf-8",
+    )
+    calls = tmp_path / "fake-python-calls.jsonl"
+    counter = tmp_path / "fingerprint-counter"
+    launcher = tmp_path / "base-python"
+    launcher_source = f"""#!{sys.executable}
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+with Path(os.environ["FAKE_PYTHON_CALLS"]).open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps(args) + "\\n")
+if args == ["--version"]:
+    print("Python 3.12.4")
+    raise SystemExit(0)
+if args[:4] == ["-m", "pip", "install", "--dry-run"]:
+    report_path = Path(args[args.index("--report") + 1])
+    package = os.environ.get("FAKE_PROTECTED_PACKAGE")
+    installs = [] if package is None else [{{"metadata": {{"name": package}}}}]
+    report_path.write_text(json.dumps({{"install": installs}}), encoding="utf-8")
+    raise SystemExit(0)
+if args[:3] == ["-m", "pip", "install"] or args == ["-m", "pip", "check"]:
+    raise SystemExit(0)
+if args and args[0] == "-":
+    environment = dict(os.environ)
+    if args == ["-"]:
+        counter = Path(os.environ["FAKE_FINGERPRINT_COUNTER"])
+        invocation = int(counter.read_text(encoding="utf-8")) + 1 if counter.exists() else 1
+        counter.write_text(str(invocation), encoding="utf-8")
+        phase = "PRE" if invocation == 1 else "POST"
+        for name in ("TORCH_VERSION", "TORCHVISION_VERSION", "CUDA_RUNTIME"):
+            environment[f"FAKE_{{name}}_CURRENT"] = environment[f"FAKE_{{phase}}_{{name}}"]
+    completed = subprocess.run(
+        [{sys.executable!r}, *args],
+        input=sys.stdin.read(),
+        text=True,
+        env=environment,
+    )
+    raise SystemExit(completed.returncode)
+raise SystemExit(f"unexpected fake Python argv: {{args!r}}")
+"""
+    _make_executable(launcher, launcher_source)
+    environment = {
+        "FAKE_PYTHON_CALLS": str(calls),
+        "FAKE_FINGERPRINT_COUNTER": str(counter),
+        "FAKE_PRE_TORCH_VERSION": "2.5.0",
+        "FAKE_POST_TORCH_VERSION": "2.5.0",
+        "FAKE_PRE_TORCHVISION_VERSION": "0.20.0",
+        "FAKE_POST_TORCHVISION_VERSION": "0.20.0",
+        "FAKE_PRE_CUDA_RUNTIME": "12.4",
+        "FAKE_POST_CUDA_RUNTIME": "12.4",
+        "PYTHONPATH": f"{modules}{os.pathsep}{REPOSITORY / 'src'}",
+    }
+    return launcher, environment, calls
+
+
+def _run_internal_main(
+    script: str,
+    function: str,
+    base_python: Path,
+    arguments: list[str],
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; shift; function="$1"; shift; "$function" "$@"',
+            "phase1b-test",
+            str(SCRIPTS / script),
+            function,
+            str(base_python),
+            *arguments,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
 
 
 def test_scripts_use_strict_mode_and_contain_no_prohibited_remote_controls() -> None:
@@ -353,6 +471,40 @@ def test_bootstrap_refuses_low_disk_space_before_any_write(tmp_path: Path) -> No
     assert not (remote_root / "conda-env").exists()
 
 
+@pytest.mark.parametrize("script", ("bootstrap_remote.sh", "run_remote.sh"))
+def test_remote_entry_point_requires_persistent_mount_before_any_write(
+    tmp_path: Path, script: str
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
+    repo_dir = tmp_path / "repository"
+    remote_root.mkdir(parents=True)
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    if script == "run_remote.sh":
+        (remote_root / "repo").mkdir()
+        arguments = [str(remote_root), "preflight"]
+    else:
+        arguments = [str(remote_root), str(repo_dir)]
+    environment, log = _environment(tmp_path)
+    environment["FAKE_MOUNTPOINT_AVAILABLE"] = "0"
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / script), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert "mountpoint" in completed.stderr.lower()
+    assert not log.exists()
+    assert not (remote_root / "data").exists()
+    assert not (remote_root / "models").exists()
+    assert not (remote_root / "artifacts").exists()
+    assert not (remote_root / ".trustsr-bootstrap-provenance.json").exists()
+
+
 def test_bootstrap_ignores_an_existing_partial_conda_prefix(tmp_path: Path) -> None:
     remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
     repo_dir = tmp_path / "repository"
@@ -377,6 +529,142 @@ def test_bootstrap_ignores_an_existing_partial_conda_prefix(tmp_path: Path) -> N
     assert sentinel.read_text(encoding="utf-8") == "partial environment"
 
 
+def test_bootstrap_main_executes_exact_guarded_base_install_orchestration(tmp_path: Path) -> None:
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
+    repo_dir = tmp_path / "repository"
+    remote_root.mkdir(parents=True)
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    environment, _ = _environment(tmp_path)
+    base_python, base_environment, calls_path = _fake_base_python(tmp_path)
+    environment.update(base_environment)
+
+    completed = _run_internal_main(
+        "bootstrap_remote.sh",
+        "bootstrap_main",
+        base_python,
+        [str(remote_root), str(repo_dir)],
+        environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    calls = _json_lines(calls_path)
+    report_path = calls[2][calls[2].index("--report") + 1]
+    stamp_call = calls[8]
+    assert calls == [
+        ["--version"],
+        ["-"],
+        [
+            "-m",
+            "pip",
+            "install",
+            "--dry-run",
+            "--report",
+            report_path,
+            "--upgrade-strategy",
+            "only-if-needed",
+            "-e",
+            f"{repo_dir}[gpu]",
+        ],
+        ["-", report_path],
+        ["-m", "pip", "install", "--upgrade-strategy", "only-if-needed", "uv==0.12.5"],
+        [
+            "-m",
+            "pip",
+            "install",
+            "--upgrade-strategy",
+            "only-if-needed",
+            "-e",
+            f"{repo_dir}[gpu]",
+        ],
+        ["-"],
+        ["-m", "pip", "check"],
+        stamp_call,
+    ]
+    assert stamp_call[0] == "-"
+    assert Path(stamp_call[1]).parent == remote_root
+    assert stamp_call[2] == hashlib.sha256(b"locked").hexdigest()
+    assert json.loads(stamp_call[3]) == {
+        "cuda_runtime": "12.4",
+        "torch": "2.5.0",
+        "torchvision": "0.20.0",
+    }
+    stamp = json.loads(
+        (remote_root / ".trustsr-bootstrap-provenance.json").read_text(encoding="utf-8")
+    )
+    assert stamp["base_fingerprint"] == json.loads(stamp_call[3])
+    assert stamp["uv_lock_sha256"] == hashlib.sha256(b"locked").hexdigest()
+
+
+@pytest.mark.parametrize("package", ("torch", "torchvision", "triton", "nvidia-cudnn-cu12"))
+def test_bootstrap_rejects_protected_resolution_before_project_install_or_stamp(
+    tmp_path: Path, package: str
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
+    repo_dir = tmp_path / "repository"
+    remote_root.mkdir(parents=True)
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    environment, _ = _environment(tmp_path)
+    base_python, base_environment, calls_path = _fake_base_python(tmp_path)
+    environment.update(base_environment)
+    environment["FAKE_PROTECTED_PACKAGE"] = package
+
+    completed = _run_internal_main(
+        "bootstrap_remote.sh",
+        "bootstrap_main",
+        base_python,
+        [str(remote_root), str(repo_dir)],
+        environment,
+    )
+
+    assert completed.returncode != 0
+    assert "protected cuda package" in completed.stderr.lower()
+    calls = _json_lines(calls_path)
+    assert len(calls) == 4
+    assert calls[-1][0] == "-"
+    assert not any(call[:3] == ["-m", "pip", "check"] for call in calls)
+    assert not any("uv==0.12.5" in call for call in calls)
+    assert not (remote_root / ".trustsr-bootstrap-provenance.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("post_variable", "changed_value"),
+    (
+        ("FAKE_POST_TORCH_VERSION", "2.5.1"),
+        ("FAKE_POST_TORCHVISION_VERSION", "0.20.1"),
+        ("FAKE_POST_CUDA_RUNTIME", "12.5"),
+    ),
+)
+def test_bootstrap_rejects_exact_runtime_fingerprint_mismatch_before_stamp(
+    tmp_path: Path, post_variable: str, changed_value: str
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
+    repo_dir = tmp_path / "repository"
+    remote_root.mkdir(parents=True)
+    repo_dir.mkdir()
+    (repo_dir / "uv.lock").write_text("locked", encoding="utf-8")
+    environment, _ = _environment(tmp_path)
+    base_python, base_environment, calls_path = _fake_base_python(tmp_path)
+    environment.update(base_environment)
+    environment[post_variable] = changed_value
+
+    completed = _run_internal_main(
+        "bootstrap_remote.sh",
+        "bootstrap_main",
+        base_python,
+        [str(remote_root), str(repo_dir)],
+        environment,
+    )
+
+    assert completed.returncode != 0
+    assert "fingerprint changed" in completed.stderr.lower()
+    calls = _json_lines(calls_path)
+    assert calls[-1] == ["-"]
+    assert ["-m", "pip", "check"] not in calls
+    assert not (remote_root / ".trustsr-bootstrap-provenance.json").exists()
+
+
 def test_stage_runner_contract_uses_the_fixed_base_module_cli_without_a_prefix() -> None:
     """A prefix command or a console-script launcher would use the wrong runtime."""
     contents = (SCRIPTS / "run_remote.sh").read_text(encoding="utf-8")
@@ -385,6 +673,67 @@ def test_stage_runner_contract_uses_the_fixed_base_module_cli_without_a_prefix()
     assert "-m trustsr.cli.ldsr_gpu" in contents
     assert "conda-env" not in contents
     assert "trustsr-ldsr-gpu" not in contents
+
+
+def test_stage_runner_executes_exact_cli_argv_and_environment(tmp_path: Path) -> None:
+    remote_root = tmp_path / "root" / "rivermind-fs" / "phase1b"
+    (remote_root / "repo").mkdir(parents=True)
+    environment, _ = _environment(tmp_path)
+    base_python = tmp_path / "run-python"
+    arguments_path = tmp_path / "run-arguments"
+    environment_path = tmp_path / "run-environment.json"
+    _make_executable(
+        base_python,
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\0' \"$@\" > \"$RUN_ARGUMENTS\"\n"
+        f"{sys.executable} - \"$RUN_ENVIRONMENT\" <<'PY'\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(sys.argv[1]).write_text(json.dumps({\n"
+        "    'cwd': os.getcwd(),\n"
+        "    'TRUSTSR_DATA_CACHE_DIR': os.environ.get('TRUSTSR_DATA_CACHE_DIR'),\n"
+        "    'TRUSTSR_SEN2SR_MODEL_DIR': os.environ.get('TRUSTSR_SEN2SR_MODEL_DIR'),\n"
+        "    'TRUSTSR_LDSR_MODEL_DIR': os.environ.get('TRUSTSR_LDSR_MODEL_DIR'),\n"
+        "    'TRUSTSR_ARTIFACT_ROOT': os.environ.get('TRUSTSR_ARTIFACT_ROOT'),\n"
+        "}), encoding='utf-8')\n"
+        "PY\n",
+    )
+    environment["RUN_ARGUMENTS"] = str(arguments_path)
+    environment["RUN_ENVIRONMENT"] = str(environment_path)
+
+    completed = _run_internal_main(
+        "run_remote.sh",
+        "run_main",
+        base_python,
+        [str(remote_root), "preflight"],
+        environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert _nul_arguments(arguments_path) == [
+        "-m",
+        "trustsr.cli.ldsr_gpu",
+        "preflight",
+        "--project-root",
+        str(remote_root / "repo"),
+        "--dataset-cache-dir",
+        str(remote_root / "data/opensr"),
+        "--ldsr-model-dir",
+        str(remote_root / "models/ldsr-s2"),
+        "--sen2srlite-model-dir",
+        str(remote_root / "models/sen2srlite"),
+        "--artifacts-dir",
+        str(remote_root / "artifacts"),
+        "--prediction-cache-dir",
+        str(remote_root / "artifacts/cache/predictions"),
+    ]
+    assert json.loads(environment_path.read_text(encoding="utf-8")) == {
+        "cwd": str(remote_root / "repo"),
+        "TRUSTSR_DATA_CACHE_DIR": str(remote_root / "data/opensr"),
+        "TRUSTSR_SEN2SR_MODEL_DIR": str(remote_root / "models/sen2srlite"),
+        "TRUSTSR_LDSR_MODEL_DIR": str(remote_root / "models/ldsr-s2"),
+        "TRUSTSR_ARTIFACT_ROOT": str(remote_root / "artifacts"),
+    }
 
 
 @pytest.mark.parametrize("escaping_directory", ("data", "models", "artifacts"))

@@ -151,7 +151,7 @@ provenance 使用 JSON 标量，至少记录：
 compute capability 是数值 `major.minor` 且不低于 `8.0`、初始空闲显存至少 18 GiB，且没有外部 CUDA compute 进程；随后原样记录：
 
 - 主机 UTC 时间和 TrustSR Git 提交；
-- GPU 名称、UUID、总显存、驱动版本和 compute capability；
+- GPU 名称、UUID、总显存、驱动版本、compute capability 和已验证的 CUDA 可见设备数；
 - 容器 CPU/内存限制；
 - Python、Conda、uv、PyTorch、CUDA runtime、CUDA toolkit 和 `opensr-model` 版本；
 - `pip freeze`/环境锁摘要；

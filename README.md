@@ -67,11 +67,12 @@ onto the verified persistent data disk and run the following commands *on that
 instance*. The only accepted production root is
 `/root/rivermind-fs/trustsr-phase1b`; bootstrap refuses any other resolved
 location and requires at least 15 GiB free before it changes anything. Do not
-run a stage until `/root/rivermind-fs` is an actual mountpoint. Before model
-construction, the workflow requires CUDA, exactly one visible GPU, a numeric
+run a stage until `/root/rivermind-fs` is an actual mountpoint; both remote
+entry points enforce that mount before writing or installing. Before model
+construction, the workflow requires CUDA, exactly one CUDA-visible device, a numeric
 `major.minor` compute capability of at least `8.0`, at least 18 GiB free VRAM,
 and no foreign CUDA compute process. The manifest preserves the actual GPU name,
-UUID, driver, memory, and capability. Compare durations only among runs on the
+UUID, driver, memory, capability, and validated visible-device count. Compare durations only among runs on the
 recorded same hardware; deterministic hashes, repeatability, and quality metrics
 remain comparable scientific gates.
 

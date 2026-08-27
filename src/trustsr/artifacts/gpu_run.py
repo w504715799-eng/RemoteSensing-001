@@ -29,7 +29,6 @@ _GPU_COMMAND = [
     "--format=csv,noheader,nounits",
 ]
 _NVCC_COMMAND = ["nvcc", "--version"]
-_CONDA_COMMAND = ["conda", "--version"]
 _COMPUTE_PROCESS_COMMAND = [
     "nvidia-smi",
     "--query-compute-apps=pid",
@@ -50,6 +49,7 @@ class GPUHardwareSnapshot:
     memory_free_mib: int
     compute_capability: str
     compute_pids: tuple[int, ...]
+    visible_device_count: int
 
     def gpu_record(self) -> dict[str, JsonScalar]:
         return {
@@ -59,6 +59,7 @@ class GPUHardwareSnapshot:
             "memory_total_mib": self.memory_total_mib,
             "memory_free_mib": self.memory_free_mib,
             "compute_capability": self.compute_capability,
+            "visible_device_count": self.visible_device_count,
         }
 
 
@@ -135,11 +136,15 @@ def capture_gpu_hardware(
     *,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     cuda_available: Callable[[], bool] = torch.cuda.is_available,
+    cuda_device_count: Callable[[], int] = torch.cuda.device_count,
     current_pid: int | None = None,
 ) -> GPUHardwareSnapshot:
     """Capture and validate the single allowed pre-construction GPU state."""
     if not cuda_available():
         raise RuntimeError("CUDA is required for the LDSR-S2 GPU workflow")
+    visible_device_count = cuda_device_count()
+    if type(visible_device_count) is not int or visible_device_count != 1:
+        raise RuntimeError("LDSR-S2 GPU workflow requires exactly one CUDA-visible device")
     rows = [line.strip() for line in _run_required_text(command_runner, _GPU_COMMAND).splitlines()]
     rows = [line for line in rows if line]
     if len(rows) != 1:
@@ -168,6 +173,7 @@ def capture_gpu_hardware(
         memory_free_mib=free,
         compute_capability=compute_capability,
         compute_pids=pids,
+        visible_device_count=visible_device_count,
     )
 
 
@@ -239,10 +245,12 @@ def collect_gpu_environment(
     """
     reviewed_root = resolve_project_root(project_root)
     snapshot = hardware_snapshot or capture_gpu_hardware(command_runner=command_runner)
-    uv_command = [str(Path(sys.executable).absolute().parent / "uv"), "--version"]
+    runtime_bin = Path(sys.executable).absolute().parent
+    conda_command = [str(runtime_bin / "conda"), "--version"]
+    uv_command = [str(runtime_bin / "uv"), "--version"]
     runtime: dict[str, JsonScalar] = {
         "python": platform.python_version(),
-        "conda": _command_version("conda", _run_text(command_runner, _CONDA_COMMAND)),
+        "conda": _command_version("conda", _run_text(command_runner, conda_command)),
         "uv": _command_version("uv", _run_text(command_runner, uv_command)),
         "torch": _package_version("torch"),
         "cuda_toolkit": _parse_nvcc_version(_run_text(command_runner, _NVCC_COMMAND)),

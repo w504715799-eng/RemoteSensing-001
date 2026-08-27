@@ -59,14 +59,18 @@ create_derived_directory() {
   done
 }
 
-if [[ $# -ne 2 ]]; then
-  die 'argument count; usage: run_remote.sh REMOTE_ROOT preflight|single|benchmark|manifest'
-fi
+run_main() {
+  base_python="$1"
+  shift
+  if [[ $# -ne 2 ]]; then
+    die 'argument count; usage: run_remote.sh REMOTE_ROOT preflight|single|benchmark|manifest'
+  fi
 
-remote_root="$1"
-stage="$2"
-base_python=/opt/conda/bin/python
-validate_path "$remote_root" || die 'remote root'
+  mountpoint -q -- /root/rivermind-fs || die 'persistent mountpoint is unavailable: /root/rivermind-fs'
+
+  remote_root="$1"
+  stage="$2"
+  validate_path "$remote_root" || die 'remote root'
 [[ "$remote_root" == /* ]] || die 'remote root must be absolute'
 reject_symlink_components "$remote_root"
 resolved_root="$(realpath -e -- "$remote_root")" || die 'remote root'
@@ -121,3 +125,8 @@ exec "$base_python" -m trustsr.cli.ldsr_gpu "$stage" \
   --sen2srlite-model-dir "$TRUSTSR_SEN2SR_MODEL_DIR" \
   --artifacts-dir "$TRUSTSR_ARTIFACT_ROOT" \
   --prediction-cache-dir "${TRUSTSR_ARTIFACT_ROOT}/cache/predictions"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main /opt/conda/bin/python "$@"
+fi

@@ -43,6 +43,7 @@ def test_hardware_snapshot_accepts_single_gpu_with_supported_capability_before_m
     snapshot = capture_gpu_hardware(
         command_runner=runner,
         cuda_available=lambda: True,
+        cuda_device_count=lambda: 1,
         current_pid=os.getpid(),
     )
 
@@ -52,7 +53,7 @@ def test_hardware_snapshot_accepts_single_gpu_with_supported_capability_before_m
     assert snapshot.compute_capability == compute_capability
 
 
-def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_uv(
+def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_tools(
     monkeypatch, tmp_path
 ):
     calls = []
@@ -65,7 +66,9 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
     (conflicting_bin / "uv").chmod(0o755)
     monkeypatch.setenv("PATH", f"{conflicting_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.chdir(sensitive_working_directory)
-    active_uv = Path(sys.executable).absolute().parent / "uv"
+    active_bin = Path(sys.executable).absolute().parent
+    active_conda = active_bin / "conda"
+    active_uv = active_bin / "uv"
 
     def runner(argv, **kwargs):
         assert Path.cwd() == sensitive_working_directory
@@ -82,7 +85,7 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
                 "--format=csv,noheader,nounits",
             ): "",
             ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
-            ("conda", "--version"): "conda 24.7.1\n",
+            (str(active_conda), "--version"): "conda 24.7.1\n",
             (str(active_uv), "--version"): "uv 0.12.5\n",
             ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
         }
@@ -94,7 +97,11 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
     )
     monkeypatch.setattr("trustsr.artifacts.gpu_run._utc_now", lambda: "2026-08-27T00:00:00Z")
 
-    snapshot = capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+    snapshot = capture_gpu_hardware(
+        command_runner=runner,
+        cuda_available=lambda: True,
+        cuda_device_count=lambda: 1,
+    )
     result = collect_gpu_environment(
         hardware_snapshot=snapshot,
         project_root=REPOSITORY,
@@ -111,6 +118,7 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
         "memory_total_mib": 24576,
         "memory_free_mib": 20000,
         "compute_capability": "8.6",
+        "visible_device_count": 1,
     }
     assert result["limits"] == {"cpu": "max", "memory": "max"}
     assert result["runtime"]["python"]
@@ -121,6 +129,8 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
     assert result["model_provenance"]["name"] == "ldsr-s2-x4"
     assert all(isinstance(argv, list) for argv, _ in calls)
     assert all(kwargs["shell"] is False for _, kwargs in calls)
+    assert any(argv == [str(active_conda), "--version"] for argv, _ in calls)
+    assert any(argv == [str(active_uv), "--version"] for argv, _ in calls)
     text = json.dumps(result)
     assert str(sensitive_working_directory) not in text
     for forbidden in ("ssh", "password", "private", "github", "hostname", "port"):
@@ -129,9 +139,11 @@ def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_
 
 def test_collect_gpu_environment_records_versions_not_trailing_build_metadata(monkeypatch):
     """The runtime manifest must retain each tool's version token."""
-    active_uv = Path(sys.executable).absolute().parent / "uv"
+    active_bin = Path(sys.executable).absolute().parent
+    active_conda = active_bin / "conda"
+    active_uv = active_bin / "uv"
     outputs = {
-        ("conda", "--version"): "conda 26.5.3\n",
+        (str(active_conda), "--version"): "conda 26.5.3\n",
         (str(active_uv), "--version"): "uv 0.12.5 (x86_64-unknown-linux-gnu)\n",
         ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
         ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
@@ -149,6 +161,7 @@ def test_collect_gpu_environment_records_versions_not_trailing_build_metadata(mo
         memory_free_mib=20000,
         compute_capability="8.6",
         compute_pids=(),
+        visible_device_count=1,
     )
 
     runtime = collect_gpu_environment(
@@ -178,9 +191,11 @@ def test_collect_gpu_environment_marks_malformed_tool_versions_unavailable(
     monkeypatch, conda_output: str, uv_output: str, runtime_key: str
 ) -> None:
     """Malformed runtime-tool output must not enter the manifest."""
-    active_uv = Path(sys.executable).absolute().parent / "uv"
+    active_bin = Path(sys.executable).absolute().parent
+    active_conda = active_bin / "conda"
+    active_uv = active_bin / "uv"
     outputs = {
-        ("conda", "--version"): conda_output,
+        (str(active_conda), "--version"): conda_output,
         (str(active_uv), "--version"): uv_output,
         ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
         ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
@@ -198,6 +213,7 @@ def test_collect_gpu_environment_marks_malformed_tool_versions_unavailable(
         memory_free_mib=20000,
         compute_capability="8.6",
         compute_pids=(),
+        visible_device_count=1,
     )
 
     runtime = collect_gpu_environment(
@@ -254,8 +270,29 @@ def test_hardware_snapshot_fails_closed_on_an_unacceptable_initial_state(
         capture_gpu_hardware(
             command_runner=runner,
             cuda_available=lambda: cuda_available,
+            cuda_device_count=lambda: 1,
             current_pid=os.getpid(),
         )
+
+
+@pytest.mark.parametrize("device_count", [0, 2, -1, True, "1", None])
+def test_hardware_snapshot_rejects_non_single_cuda_visible_device_count_before_commands(
+    device_count: object,
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    with pytest.raises(RuntimeError, match="exactly one CUDA-visible device"):
+        capture_gpu_hardware(
+            command_runner=runner,
+            cuda_available=lambda: True,
+            cuda_device_count=lambda: device_count,
+        )
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -276,7 +313,11 @@ def test_hardware_snapshot_rejects_unsupported_or_malformed_compute_capability(
         return subprocess.CompletedProcess(argv, 0, output, "")
 
     with pytest.raises(RuntimeError, match="compute capability"):
-        capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+        capture_gpu_hardware(
+            command_runner=runner,
+            cuda_available=lambda: True,
+            cuda_device_count=lambda: 1,
+        )
 
 
 @pytest.mark.parametrize(
@@ -297,7 +338,11 @@ def test_hardware_snapshot_rejects_invalid_memory_values_before_model_constructi
         return subprocess.CompletedProcess(argv, 0, output, "")
 
     with pytest.raises(RuntimeError, match="GPU memory"):
-        capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+        capture_gpu_hardware(
+            command_runner=runner,
+            cuda_available=lambda: True,
+            cuda_device_count=lambda: 1,
+        )
 
 
 def test_hardware_snapshot_is_frozen() -> None:
@@ -309,6 +354,7 @@ def test_hardware_snapshot_is_frozen() -> None:
         memory_free_mib=20000,
         compute_capability="8.6",
         compute_pids=(),
+        visible_device_count=1,
     )
 
     with pytest.raises(AttributeError):
