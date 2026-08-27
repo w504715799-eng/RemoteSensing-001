@@ -5,22 +5,27 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
-import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import torch
 
 from trustsr.artifacts.gpu_run import (
+    GPUHardwareSnapshot,
     _atomic_json,
+    capture_gpu_hardware,
     collect_gpu_environment,
     stage_artifact_file,
     write_artifact_manifest,
 )
-from trustsr.artifacts.predictions import PredictionCache, build_identity, tensor_sha256
+from trustsr.artifacts.predictions import (
+    PredictionCache,
+    PredictionIdentity,
+    build_identity,
+    canonical_json,
+    tensor_sha256,
+)
 from trustsr.cli.benchmark_baselines import (
     EXPECTED_SPOT_V3_IDENTITIES,
     _production_environment,
@@ -39,50 +44,7 @@ _ENVIRONMENT_NAME = "environment.json"
 _SINGLE_NAME = "single.json"
 _SINGLE_RUNTIME_NAME = "single-runtime.json"
 _BENCHMARK_NAME = "spot-v3-three-models.json"
-
-
-def _active_compute_pids() -> set[int]:
-    """Return active CUDA compute PIDs using a fixed, non-shell command."""
-    try:
-        completed = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
-            check=False,
-            capture_output=True,
-            text=True,
-            shell=False,
-        )
-    except OSError as exc:
-        raise RuntimeError("cannot inspect active CUDA compute processes") from exc
-    if completed.returncode != 0:
-        raise RuntimeError("cannot inspect active CUDA compute processes")
-    pids: set[int] = set()
-    for line in completed.stdout.splitlines():
-        value = line.strip()
-        if not value or value.lower() in {"no running processes found", "none"}:
-            continue
-        try:
-            pid = int(value)
-        except ValueError as exc:
-            raise RuntimeError("nvidia-smi returned an invalid compute PID") from exc
-        if pid <= 0:
-            raise RuntimeError("nvidia-smi returned an invalid compute PID")
-        pids.add(pid)
-    return pids
-
-
-def _require_cuda_idle() -> None:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for the LDSR-S2 GPU workflow")
-    pids = _active_compute_pids()
-    if pids:
-        raise RuntimeError("another active CUDA compute process prevents this staged run")
-
-
-def _require_only_current_compute_process() -> None:
-    pids = _active_compute_pids()
-    unexpected = pids - {os.getpid()}
-    if unexpected:
-        raise RuntimeError("another active CUDA compute process appeared during model construction")
+_CACHE_INDEX_NAME = "ldsr-cache-index.json"
 
 
 def _phase_path(args: argparse.Namespace, filename: str) -> Path:
@@ -122,8 +84,15 @@ def _finite_metrics(metrics: Mapping[str, object]) -> dict[str, float]:
     return result
 
 
-def _write_environment(args: argparse.Namespace, model: LDSRS2X4) -> dict[str, object]:
-    environment: dict[str, object] = dict(collect_gpu_environment())
+def _write_environment(
+    args: argparse.Namespace, model: LDSRS2X4, snapshot: GPUHardwareSnapshot
+) -> dict[str, object]:
+    environment: dict[str, object] = dict(
+        collect_gpu_environment(
+            hardware_snapshot=snapshot,
+            project_root=getattr(args, "project_root", None),
+        )
+    )
     environment["model_provenance"] = model.provenance()
     _atomic_json(_phase_path(args, _ENVIRONMENT_NAME), environment)
     return environment
@@ -131,17 +100,15 @@ def _write_environment(args: argparse.Namespace, model: LDSRS2X4) -> dict[str, o
 
 def run_preflight(args: argparse.Namespace) -> dict[str, object]:
     """Verify CUDA and LDSR assets, then record the non-deterministic runtime."""
-    _require_cuda_idle()
+    snapshot = capture_gpu_hardware()
     model = LDSRS2X4.from_pretrained(Path(args.ldsr_model_dir), device="cuda:0")
-    _require_only_current_compute_process()
-    return _write_environment(args, model)
+    return _write_environment(args, model, snapshot)
 
 
 def run_single(args: argparse.Namespace) -> dict[str, object]:
     """Run the immutable spot-0000 repeatability gate and cache its prediction."""
-    _require_cuda_idle()
+    capture_gpu_hardware()
     model = LDSRS2X4.from_pretrained(Path(args.ldsr_model_dir), device="cuda:0")
-    _require_only_current_compute_process()
     pairs = _load_nine_pairs(args)
     pair = next(pair for pair in pairs if pair.sample_id == "spot-0000")
 
@@ -166,7 +133,7 @@ def run_single(args: argparse.Namespace) -> dict[str, object]:
         "model_provenance": provenance,
         "repeatability": repeatability.as_dict(),
         "cache_key": identity.key,
-        "metrics": _finite_metrics(compute_opensr_metrics(pair, prediction)),
+        "metrics": _finite_metrics(compute_opensr_metrics(pair, cached)),
     }
     _atomic_json(_phase_path(args, _SINGLE_NAME), result)
     _atomic_json(
@@ -182,14 +149,13 @@ def run_single(args: argparse.Namespace) -> dict[str, object]:
 
 def run_three_model_benchmark(args: argparse.Namespace) -> dict[str, object]:
     """Benchmark the fixed CPU baselines and CUDA LDSR model over all SPOT v3 samples."""
-    _require_cuda_idle()
+    capture_gpu_hardware()
     ldsr = LDSRS2X4.from_pretrained(Path(args.ldsr_model_dir), device="cuda:0")
-    _require_only_current_compute_process()
     pairs = _load_nine_pairs(args)
     sen2srlite = SEN2SRLiteX4.from_pretrained(Path(args.sen2srlite_model_dir), device="cpu")
-    environment = _production_environment()
+    environment = _production_environment(project_root=getattr(args, "project_root", None))
     environment["device"] = "cuda:0"
-    return run_benchmark(
+    result = run_benchmark(
         pairs=pairs,
         models=[BicubicX4(), sen2srlite, ldsr],
         cache_root=Path(args.prediction_cache_dir),
@@ -197,62 +163,237 @@ def run_three_model_benchmark(args: argparse.Namespace) -> dict[str, object]:
         environment=environment,
         expected_model_count=3,
     )
+    _write_ldsr_cache_index(args, pairs, ldsr.provenance())
+    return result
 
 
-def _cache_keys_from_json(value: object) -> set[str]:
-    keys: set[str] = set()
-    if isinstance(value, dict):
-        for name, item in value.items():
-            if name == "cache_key" and isinstance(item, str):
-                keys.add(item)
-            elif name == "cache_keys" and isinstance(item, list):
-                keys.update(entry for entry in item if isinstance(entry, str))
-            keys.update(_cache_keys_from_json(item))
-    elif isinstance(value, list):
-        for item in value:
-            keys.update(_cache_keys_from_json(item))
-    return keys
+def _write_ldsr_cache_index(
+    args: argparse.Namespace, pairs: Sequence[SRPair], provenance: Mapping[str, object]
+) -> Path:
+    identities = [
+        build_identity(provenance, pair.source, pair.sample_id, pair.lr) for pair in pairs
+    ]
+    identities.sort(key=lambda identity: (identity.source, identity.sample_id))
+    payload = {
+        "schema_version": 1,
+        "model_provenance": dict(provenance),
+        "identities": [
+            {
+                "source": identity.source,
+                "sample_id": identity.sample_id,
+                "lr": identity.as_dict()["lr"],
+                "cache_key": identity.key,
+            }
+            for identity in identities
+        ],
+    }
+    path = _phase_path(args, _CACHE_INDEX_NAME)
+    _atomic_json(path, payload)
+    return path
 
 
-def _named_cache_artifacts(args: argparse.Namespace, result_paths: Sequence[Path]) -> list[Path]:
-    cache_root = Path(args.prediction_cache_dir)
-    if cache_root.is_symlink():
-        raise ValueError("prediction cache root must not be a symlink")
-    named: list[Path] = []
-    for result_path in result_paths:
+def _read_json_object(path: Path, description: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read {description}: {path.name}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{description} must be a JSON object")
+    return payload
+
+
+def _cache_index_error(reason: str) -> ValueError:
+    return ValueError(f"invalid LDSR cache index: {reason}")
+
+
+def _is_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _validate_ldsr_cache_index(
+    index: dict[str, object],
+    benchmark: dict[str, object],
+    single: dict[str, object],
+) -> list[PredictionIdentity]:
+    if set(index) != {"schema_version", "model_provenance", "identities"}:
+        raise _cache_index_error("schema")
+    if index["schema_version"] != 1 or type(index["schema_version"]) is not int:
+        raise _cache_index_error("schema version")
+    provenance = index["model_provenance"]
+    if not isinstance(provenance, dict):
+        raise _cache_index_error("model provenance")
+    try:
+        canonical_json(provenance)
+    except ValueError as exc:
+        raise _cache_index_error("model provenance") from exc
+    if provenance.get("name") != "ldsr-s2-x4" or provenance.get("scale") != 4:
+        raise _cache_index_error("model provenance")
+    entries = index["identities"]
+    if not isinstance(entries, list) or len(entries) != len(EXPECTED_SPOT_V3_IDENTITIES):
+        raise _cache_index_error("must contain exactly nine identities")
+
+    identities: list[PredictionIdentity] = []
+    entry_pairs: list[tuple[str, str]] = []
+    keys: list[str] = []
+    entry_lrs: dict[tuple[str, str], dict[str, object]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "source",
+            "sample_id",
+            "lr",
+            "cache_key",
+        }:
+            raise _cache_index_error("identity schema")
+        source, sample_id, lr, key = (
+            entry["source"],
+            entry["sample_id"],
+            entry["lr"],
+            entry["cache_key"],
+        )
+        if type(source) is not str or type(sample_id) is not str or not _is_digest(key):
+            raise _cache_index_error("identity data")
+        if not isinstance(lr, dict) or set(lr) != {"shape", "dtype", "sha256"}:
+            raise _cache_index_error("LR identity schema")
+        shape, dtype, lr_sha256 = lr["shape"], lr["dtype"], lr["sha256"]
+        if (
+            not isinstance(shape, list)
+            or len(shape) != 3
+            or any(type(dimension) is not int or dimension <= 0 for dimension in shape)
+            or shape[0] != 4
+            or dtype != "torch.float32"
+            or not _is_digest(lr_sha256)
+        ):
+            raise _cache_index_error("LR identity data")
         try:
-            payload: Any = json.loads(result_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"cannot read deterministic result: {result_path.name}") from exc
-        for key in _cache_keys_from_json(payload):
-            if len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
-                raise ValueError("result named an invalid prediction cache key")
-            for suffix in (".json", ".safetensors"):
-                candidate = cache_root / f"{key}{suffix}"
-                if not candidate.is_file() or candidate.is_symlink():
-                    raise FileNotFoundError(
-                        f"missing named prediction cache artifact: {candidate.name}"
-                    )
-                named.append(candidate)
+            identity = PredictionIdentity(
+                provenance,
+                source,
+                sample_id,
+                tuple(shape),
+                dtype,
+                lr_sha256,
+            )
+        except (TypeError, ValueError) as exc:
+            raise _cache_index_error("identity data") from exc
+        if identity.key != key:
+            raise _cache_index_error("cache key is not bound to its identity")
+        identities.append(identity)
+        pair = (source, sample_id)
+        entry_pairs.append(pair)
+        keys.append(key)
+        entry_lrs[pair] = lr
+
+    if (
+        len(set(entry_pairs)) != len(entry_pairs)
+        or set(entry_pairs) != set(EXPECTED_SPOT_V3_IDENTITIES)
+        or len(set(keys)) != len(keys)
+    ):
+        raise _cache_index_error("identities must be the distinct exact SPOT v3 set")
+    if entry_pairs != sorted(entry_pairs):
+        raise _cache_index_error("identities must use deterministic order")
+
+    try:
+        benchmark_run = benchmark["run"]
+        benchmark_models = benchmark["models"]
+        if not isinstance(benchmark_run, dict) or not isinstance(benchmark_models, dict):
+            raise TypeError
+        ldsr_result = benchmark_models["ldsr-s2-x4"]
+        if not isinstance(ldsr_result, dict) or ldsr_result["provenance"] != provenance:
+            raise TypeError
+        run_samples = benchmark_run["samples"]
+        model_samples = ldsr_result["samples"]
+        if (
+            benchmark_run["sample_count"] != 9
+            or not isinstance(run_samples, list)
+            or not isinstance(model_samples, list)
+            or len(run_samples) != 9
+            or len(model_samples) != 9
+        ):
+            raise TypeError
+        benchmark_lrs = {
+            (item["source"], item["sample_id"]): item["lr"]
+            for item in run_samples
+            if isinstance(item, dict)
+        }
+        benchmark_pairs = [
+            (item["source"], item["sample_id"])
+            for item in model_samples
+            if isinstance(item, dict)
+        ]
+    except (KeyError, TypeError) as exc:
+        raise _cache_index_error("benchmark binding") from exc
+    if (
+        len(benchmark_lrs) != 9
+        or set(benchmark_lrs) != set(EXPECTED_SPOT_V3_IDENTITIES)
+        or any(benchmark_lrs[pair] != entry_lrs[pair] for pair in entry_pairs)
+        or len(benchmark_pairs) != 9
+        or len(set(benchmark_pairs)) != 9
+        or set(benchmark_pairs) != set(EXPECTED_SPOT_V3_IDENTITIES)
+    ):
+        raise _cache_index_error("benchmark binding")
+
+    first = identities[0]
+    if (
+        single.get("source") != first.source
+        or single.get("sample_id") != first.sample_id
+        or single.get("lr_sha256") != first.lr_sha256
+        or single.get("model_provenance") != provenance
+        or single.get("cache_key") != first.key
+    ):
+        raise _cache_index_error("single-result binding")
+    return identities
+
+
+def _named_cache_artifacts(
+    args: argparse.Namespace,
+    index: dict[str, object],
+    benchmark: dict[str, object],
+    single: dict[str, object],
+) -> list[Path]:
+    cache_root = Path(args.prediction_cache_dir)
+    if cache_root.is_symlink() or not cache_root.is_dir():
+        raise ValueError("prediction cache root must be an existing non-symlink directory")
+    identities = _validate_ldsr_cache_index(index, benchmark, single)
+    cache = PredictionCache(cache_root)
+    named: list[Path] = []
+    for identity in identities:
+        if cache.get(identity) is None:
+            raise FileNotFoundError(f"missing named prediction cache artifact: {identity.key}")
+        for suffix in (".json", ".safetensors"):
+            candidate = cache_root / f"{identity.key}{suffix}"
+            if not candidate.is_file() or candidate.is_symlink():
+                raise FileNotFoundError(
+                    f"missing named prediction cache artifact: {candidate.name}"
+                )
+            named.append(candidate)
     return named
 
 
 def run_manifest(args: argparse.Namespace) -> dict[str, object]:
     """Write the allowlisted manifest for current Phase 1B outputs only."""
-    _require_cuda_idle()
+    capture_gpu_hardware()
     root = Path(args.artifacts_dir)
     required = [
         _phase_path(args, _ENVIRONMENT_NAME),
         _phase_path(args, _SINGLE_NAME),
         _phase_path(args, _SINGLE_RUNTIME_NAME),
         _phase_path(args, _BENCHMARK_NAME),
+        _phase_path(args, _CACHE_INDEX_NAME),
     ]
     for path in required:
         if not path.is_file() or path.is_symlink():
             raise FileNotFoundError(f"missing allowlisted Phase 1B output: {path.name}")
+    single = _read_json_object(required[1], "single result")
+    benchmark = _read_json_object(required[3], "benchmark result")
+    index = _read_json_object(required[4], "LDSR cache index")
+    named_cache_artifacts = _named_cache_artifacts(args, index, benchmark, single)
     staged_cache_paths = [
         stage_artifact_file(root, source, Path("phase1b") / "cache" / source.name)
-        for source in _named_cache_artifacts(args, [required[1], required[3]])
+        for source in named_cache_artifacts
     ]
     paths = required + staged_cache_paths
     relative_paths: list[Path] = []
@@ -266,6 +407,7 @@ def run_manifest(args: argparse.Namespace) -> dict[str, object]:
 
 
 def _add_paths(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--dataset-cache-dir", type=Path, default=Path("data/cache/opensr-test"))
     parser.add_argument("--ldsr-model-dir", type=Path, default=Path("models/LDSR-S2"))
     parser.add_argument(

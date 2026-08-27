@@ -102,6 +102,16 @@ def test_rejects_invalid_input(value: torch.Tensor) -> None:
         LDSRS2X4(FakeBackend(), device="cpu").predict(value)
 
 
+def test_rejects_non_cpu_cuda_input_before_backend_or_device_movement() -> None:
+    backend = FakeBackend()
+    value = torch.empty((4, 128, 128), dtype=torch.float32, device="meta")
+
+    with pytest.raises(ValueError, match="CPU or CUDA"):
+        LDSRS2X4(backend, device="cpu").predict(value)
+
+    assert backend.calls == []
+
+
 @pytest.mark.parametrize(
     "output",
     [

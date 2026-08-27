@@ -58,6 +58,28 @@ def test_download_verifies_then_atomically_commits(tmp_path):
     assert not list(tmp_path.glob(f".{CHECKPOINT_NAME}.*.tmp"))
 
 
+def test_download_validates_the_stream_without_rereading_the_temporary_file(
+    tmp_path, monkeypatch
+):
+    payload = b"one-pass checkpoint"
+
+    def reject_reread(*_args, **_kwargs):
+        pytest.fail("a newly downloaded checkpoint must not be reopened for verification")
+
+    monkeypatch.setattr("trustsr.models.ldsr_assets.verify_asset", reject_reread)
+
+    asset = download_verified_checkpoint(
+        tmp_path,
+        opener=FakeOpener(payload),
+        expected_size=len(payload),
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+    assert asset.path.read_bytes() == payload
+    assert asset.size == len(payload)
+    assert asset.sha256 == hashlib.sha256(payload).hexdigest()
+
+
 def test_download_hash_failure_never_commits_final_file(tmp_path):
     with pytest.raises(AssetIntegrityError, match="SHA-256"):
         download_verified_checkpoint(

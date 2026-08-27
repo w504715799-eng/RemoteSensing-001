@@ -1,5 +1,6 @@
 import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,6 +57,7 @@ def _pairs(count: int = 9) -> list[SRPair]:
 
 
 PAIRS: list[SRPair] = []
+REPOSITORY = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -103,6 +105,31 @@ def test_three_models_preserve_input_order(tmp_path: Path):
         expected_model_count=3,
     )
     assert list(result["models"]) == ["a", "b", "c"]
+
+
+def test_production_environment_reads_git_from_the_reviewed_root_not_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, "reviewed-commit\n", "")
+
+    monkeypatch.setattr(benchmark.subprocess, "run", run)
+
+    environment = benchmark._production_environment(project_root=REPOSITORY)
+
+    assert environment["git_commit"] == "reviewed-commit"
+    assert calls == [
+        (
+            ["git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
 
 
 @pytest.mark.parametrize("count", [1, 3])

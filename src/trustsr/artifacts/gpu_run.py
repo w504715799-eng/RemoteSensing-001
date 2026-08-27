@@ -8,8 +8,10 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -27,8 +29,36 @@ _GPU_COMMAND = [
 ]
 _NVCC_COMMAND = ["nvcc", "--version"]
 _CONDA_COMMAND = ["conda", "--version"]
-_UV_COMMAND = ["uv", "--version"]
-_GIT_COMMAND = ["git", "rev-parse", "HEAD"]
+_COMPUTE_PROCESS_COMMAND = [
+    "nvidia-smi",
+    "--query-compute-apps=pid",
+    "--format=csv,noheader,nounits",
+]
+EXPECTED_GPU_NAME = "NVIDIA GeForce RTX 3090"
+MINIMUM_FREE_MEMORY_MIB = 18 * 1024
+
+
+@dataclass(frozen=True)
+class GPUHardwareSnapshot:
+    """Immutable pre-construction GPU state used by every compute stage."""
+
+    name: str
+    uuid: str
+    driver_version: str
+    memory_total_mib: int
+    memory_free_mib: int
+    compute_capability: str
+    compute_pids: tuple[int, ...]
+
+    def gpu_record(self) -> dict[str, JsonScalar]:
+        return {
+            "name": self.name,
+            "uuid": self.uuid,
+            "driver_version": self.driver_version,
+            "memory_total_mib": self.memory_total_mib,
+            "memory_free_mib": self.memory_free_mib,
+            "compute_capability": self.compute_capability,
+        }
 
 
 def _utc_now() -> str:
@@ -61,32 +91,73 @@ def _run_text(
     return result.stdout.strip() or "unavailable"
 
 
-def _parse_gpu(text: str) -> dict[str, JsonScalar]:
-    unavailable: dict[str, JsonScalar] = {
-        "name": "unavailable",
-        "uuid": "unavailable",
-        "driver_version": "unavailable",
-        "memory_total_mib": "unavailable",
-        "memory_free_mib": "unavailable",
-        "compute_capability": "unavailable",
-    }
-    if text == "unavailable":
-        return unavailable
-    fields = [part.strip() for part in text.splitlines()[0].split(",")]
-    if len(fields) != 6:
-        return unavailable
+def _run_required_text(
+    command_runner: Callable[..., subprocess.CompletedProcess[str]], argv: list[str]
+) -> str:
+    try:
+        result = command_runner(argv, check=False, capture_output=True, text=True, shell=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"required hardware command failed: {argv[0]}") from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"required hardware command failed: {argv[0]}")
+    return result.stdout.strip()
+
+
+def _parse_compute_pids(text: str) -> tuple[int, ...]:
+    pids: set[int] = set()
+    for line in text.splitlines():
+        value = line.strip()
+        if not value or value.lower() in {"no running processes found", "none"}:
+            continue
+        try:
+            pid = int(value)
+        except ValueError as exc:
+            raise RuntimeError("nvidia-smi returned an invalid compute PID") from exc
+        if pid <= 0:
+            raise RuntimeError("nvidia-smi returned an invalid compute PID")
+        pids.add(pid)
+    return tuple(sorted(pids))
+
+
+def capture_gpu_hardware(
+    *,
+    command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    cuda_available: Callable[[], bool] = torch.cuda.is_available,
+    current_pid: int | None = None,
+) -> GPUHardwareSnapshot:
+    """Capture and validate the single allowed pre-construction GPU state."""
+    if not cuda_available():
+        raise RuntimeError("CUDA is required for the LDSR-S2 GPU workflow")
+    rows = [line.strip() for line in _run_required_text(command_runner, _GPU_COMMAND).splitlines()]
+    rows = [line for line in rows if line]
+    if len(rows) != 1:
+        raise RuntimeError("LDSR-S2 GPU workflow requires exactly one GPU")
+    fields = [part.strip() for part in rows[0].split(",")]
+    if len(fields) != 6 or any(not field for field in fields):
+        raise RuntimeError("nvidia-smi returned invalid GPU identity data")
     try:
         total, free = int(fields[3]), int(fields[4])
-    except ValueError:
-        return unavailable
-    return {
-        "name": fields[0],
-        "uuid": fields[1],
-        "driver_version": fields[2],
-        "memory_total_mib": total,
-        "memory_free_mib": free,
-        "compute_capability": fields[5],
-    }
+    except ValueError as exc:
+        raise RuntimeError("nvidia-smi returned invalid GPU memory data") from exc
+    if total <= 0 or free < 0 or free > total:
+        raise RuntimeError("nvidia-smi returned invalid GPU memory data")
+    if fields[0] != EXPECTED_GPU_NAME:
+        raise RuntimeError(f"expected exactly one RTX 3090 ({EXPECTED_GPU_NAME})")
+    if free < MINIMUM_FREE_MEMORY_MIB:
+        raise RuntimeError("RTX 3090 must have at least 18 GiB initial free VRAM")
+    pids = _parse_compute_pids(_run_required_text(command_runner, _COMPUTE_PROCESS_COMMAND))
+    own_pid = os.getpid() if current_pid is None else current_pid
+    if set(pids) - {own_pid}:
+        raise RuntimeError("a foreign CUDA compute process prevents this staged run")
+    return GPUHardwareSnapshot(
+        name=fields[0],
+        uuid=fields[1],
+        driver_version=fields[2],
+        memory_total_mib=total,
+        memory_free_mib=free,
+        compute_capability=fields[5],
+        compute_pids=pids,
+    )
 
 
 def _parse_nvcc_version(text: str) -> str:
@@ -105,34 +176,57 @@ def _command_version(text: str) -> str:
     return parts[-1] if parts else "unavailable"
 
 
-def _repository_lock() -> Path:
-    for directory in Path(__file__).resolve().parents:
-        candidate = directory / "uv.lock"
-        if candidate.is_file():
-            return candidate
-    return Path("uv.lock")
+def resolve_project_root(project_root: Path | str | None = None) -> Path:
+    """Resolve the reviewed checkout independently of the process cwd."""
+    if project_root is None:
+        candidates = Path(__file__).resolve().parents
+    else:
+        candidates = (Path(project_root),)
+    for candidate in candidates:
+        try:
+            root = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        lock = root / "uv.lock"
+        pyproject = root / "pyproject.toml"
+        package = root / "src" / "trustsr"
+        if (
+            root != Path(root.anchor)
+            and lock.is_file()
+            and not lock.is_symlink()
+            and pyproject.is_file()
+            and not pyproject.is_symlink()
+            and package.is_dir()
+            and not package.is_symlink()
+        ):
+            return root
+    raise ValueError("project root must identify the reviewed TrustSR checkout")
 
 
-def _lock_sha256() -> str:
+def _lock_sha256(project_root: Path) -> str:
     try:
-        return hashlib.sha256(_repository_lock().read_bytes()).hexdigest()
+        return hashlib.sha256((project_root / "uv.lock").read_bytes()).hexdigest()
     except OSError:
         return "unavailable"
 
 
 def collect_gpu_environment(
     *,
+    hardware_snapshot: GPUHardwareSnapshot | None = None,
+    project_root: Path | str | None = None,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, JsonScalar]:
     """Collect only an allowlisted, scalar GPU runtime record.
 
     Commands are fixed argv arrays so caller input can never become shell input.
     """
-    gpu = _parse_gpu(_run_text(command_runner, _GPU_COMMAND))
+    reviewed_root = resolve_project_root(project_root)
+    snapshot = hardware_snapshot or capture_gpu_hardware(command_runner=command_runner)
+    uv_command = [str(Path(sys.executable).absolute().parent / "uv"), "--version"]
     runtime: dict[str, JsonScalar] = {
         "python": platform.python_version(),
         "conda": _command_version(_run_text(command_runner, _CONDA_COMMAND)),
-        "uv": _command_version(_run_text(command_runner, _UV_COMMAND)),
+        "uv": _command_version(_run_text(command_runner, uv_command)),
         "torch": _package_version("torch"),
         "cuda_toolkit": _parse_nvcc_version(_run_text(command_runner, _NVCC_COMMAND)),
         "cuda_runtime": torch.version.cuda or "unavailable",
@@ -142,9 +236,11 @@ def collect_gpu_environment(
     return {
         "schema_version": 1,
         "run_started_utc": _utc_now(),
-        "git_commit": _run_text(command_runner, _GIT_COMMAND),
+        "git_commit": _run_text(
+            command_runner, ["git", "-C", str(reviewed_root), "rev-parse", "HEAD"]
+        ),
         "runtime": runtime,
-        "gpu": gpu,
+        "gpu": snapshot.gpu_record(),
         "limits": {
             "cpu": _read_cgroup_limit("cpu.max"),
             "memory": _read_cgroup_limit("memory.max"),
@@ -154,7 +250,7 @@ def collect_gpu_environment(
             "cudnn_benchmark": torch.backends.cudnn.benchmark,
             "cudnn_deterministic": torch.backends.cudnn.deterministic,
         },
-        "dependency_lock_sha256": _lock_sha256(),
+        "dependency_lock_sha256": _lock_sha256(reviewed_root),
         "model_provenance": {
             "name": "ldsr-s2-x4",
             "scale": 4,

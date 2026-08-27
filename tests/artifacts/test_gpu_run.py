@@ -1,23 +1,38 @@
 import hashlib
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from trustsr.artifacts.gpu_run import (
+    EXPECTED_GPU_NAME,
+    GPUHardwareSnapshot,
+    capture_gpu_hardware,
     collect_gpu_environment,
     verify_artifact_manifest,
     write_artifact_manifest,
 )
 
+REPOSITORY = Path(__file__).resolve().parents[2]
 
-def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monkeypatch, tmp_path):
+
+def test_collect_gpu_environment_binds_reviewed_root_snapshot_and_active_prefix_uv(
+    monkeypatch, tmp_path
+):
     calls = []
-    lock_digest = hashlib.sha256(Path("uv.lock").read_bytes()).hexdigest()
+    lock_digest = hashlib.sha256((REPOSITORY / "uv.lock").read_bytes()).hexdigest()
     sensitive_working_directory = tmp_path / "sensitive-working-directory"
     sensitive_working_directory.mkdir()
+    conflicting_bin = tmp_path / "conflicting-bin"
+    conflicting_bin.mkdir()
+    (conflicting_bin / "uv").write_text("#!/bin/sh\necho 'uv 99.0.0'\n")
+    (conflicting_bin / "uv").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{conflicting_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.chdir(sensitive_working_directory)
+    active_uv = Path(sys.executable).absolute().parent / "uv"
 
     def runner(argv, **kwargs):
         assert Path.cwd() == sensitive_working_directory
@@ -27,11 +42,16 @@ def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monk
                 "nvidia-smi",
                 "--query-gpu=name,uuid,driver_version,memory.total,memory.free,compute_cap",
                 "--format=csv,noheader,nounits",
-            ): "NVIDIA A100, GPU-uuid, 555.1, 81920, 80000, 8.0\n",
+            ): f"{EXPECTED_GPU_NAME}, GPU-uuid, 555.1, 24576, 20000, 8.6\n",
+            (
+                "nvidia-smi",
+                "--query-compute-apps=pid",
+                "--format=csv,noheader,nounits",
+            ): "",
             ("nvcc", "--version"): "Cuda compilation tools, release 12.4, V12.4.1\n",
             ("conda", "--version"): "conda 24.7.1\n",
-            ("uv", "--version"): "uv 0.5.4\n",
-            ("git", "rev-parse", "HEAD"): "abc123\n",
+            (str(active_uv), "--version"): "uv 0.12.5\n",
+            ("git", "-C", str(REPOSITORY.resolve()), "rev-parse", "HEAD"): "reviewed-commit\n",
         }
         return subprocess.CompletedProcess(argv, 0, outputs[tuple(argv)], "")
 
@@ -41,21 +61,27 @@ def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monk
     )
     monkeypatch.setattr("trustsr.artifacts.gpu_run._utc_now", lambda: "2026-08-27T00:00:00Z")
 
-    result = collect_gpu_environment(command_runner=runner)
+    snapshot = capture_gpu_hardware(command_runner=runner, cuda_available=lambda: True)
+    result = collect_gpu_environment(
+        hardware_snapshot=snapshot,
+        project_root=REPOSITORY,
+        command_runner=runner,
+    )
 
     assert result["schema_version"] == 1
     assert result["run_started_utc"] == "2026-08-27T00:00:00Z"
-    assert result["git_commit"] == "abc123"
+    assert result["git_commit"] == "reviewed-commit"
     assert result["gpu"] == {
-        "name": "NVIDIA A100",
+        "name": EXPECTED_GPU_NAME,
         "uuid": "GPU-uuid",
         "driver_version": "555.1",
-        "memory_total_mib": 81920,
-        "memory_free_mib": 80000,
-        "compute_capability": "8.0",
+        "memory_total_mib": 24576,
+        "memory_free_mib": 20000,
+        "compute_capability": "8.6",
     }
     assert result["limits"] == {"cpu": "max", "memory": "max"}
     assert result["runtime"]["python"]
+    assert result["runtime"]["uv"] == "0.12.5"
     assert result["runtime"]["cuda_toolkit"] == "12.4"
     assert result["runtime"]["opensr_model"] == "opensr-model-version"
     assert result["dependency_lock_sha256"] == lock_digest
@@ -66,6 +92,71 @@ def test_collect_gpu_environment_uses_fixed_commands_and_safe_scalar_fields(monk
     assert str(sensitive_working_directory) not in text
     for forbidden in ("ssh", "password", "private", "github", "hostname", "port"):
         assert forbidden not in text.lower()
+
+
+@pytest.mark.parametrize(
+    ("gpu_output", "process_output", "cuda_available", "message"),
+    [
+        (
+            "\n".join(
+                [
+                    f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
+                    f"{EXPECTED_GPU_NAME}, GPU-two, 555.1, 24576, 20000, 8.6",
+                ]
+            ),
+            "",
+            True,
+            "exactly one GPU",
+        ),
+        ("NVIDIA A100, GPU-one, 555.1, 81920, 80000, 8.0", "", True, "RTX 3090"),
+        (
+            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 18431, 8.6",
+            "",
+            True,
+            "18 GiB",
+        ),
+        (
+            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
+            str(os.getpid() + 1),
+            True,
+            "foreign",
+        ),
+        (
+            f"{EXPECTED_GPU_NAME}, GPU-one, 555.1, 24576, 20000, 8.6",
+            "",
+            False,
+            "CUDA",
+        ),
+    ],
+)
+def test_hardware_snapshot_fails_closed_on_an_unacceptable_initial_state(
+    gpu_output, process_output, cuda_available, message
+):
+    def runner(argv, **_kwargs):
+        output = process_output if "--query-compute-apps=pid" in argv else gpu_output
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    with pytest.raises(RuntimeError, match=message):
+        capture_gpu_hardware(
+            command_runner=runner,
+            cuda_available=lambda: cuda_available,
+            current_pid=os.getpid(),
+        )
+
+
+def test_hardware_snapshot_is_frozen() -> None:
+    snapshot = GPUHardwareSnapshot(
+        name=EXPECTED_GPU_NAME,
+        uuid="GPU-one",
+        driver_version="555.1",
+        memory_total_mib=24576,
+        memory_free_mib=20000,
+        compute_capability="8.6",
+        compute_pids=(),
+    )
+
+    with pytest.raises(AttributeError):
+        snapshot.memory_free_mib = 1
 
 
 def test_artifact_manifest_is_sorted_confined_and_verifies_contents(tmp_path: Path):

@@ -147,6 +147,8 @@ class LDSRS2X4:
     def predict(self, lr: torch.Tensor) -> torch.Tensor:
         if not isinstance(lr, torch.Tensor) or lr.dtype != torch.float32:
             raise ValueError("expected float32 tensor")
+        if lr.device.type not in {"cpu", "cuda"}:
+            raise ValueError("input tensor device must be CPU or CUDA")
         if tuple(lr.shape) != (4, 128, 128):
             raise ValueError("expected RGBN tensor with shape (4, 128, 128)")
         if not torch.isfinite(lr).all():

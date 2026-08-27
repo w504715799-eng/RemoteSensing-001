@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -8,7 +7,14 @@ import pytest
 import torch
 
 import trustsr.cli.ldsr_gpu as gpu
-from trustsr.artifacts import build_identity, tensor_sha256, verify_artifact_manifest
+from trustsr.artifacts import (
+    PredictionCache,
+    build_identity,
+    canonical_json,
+    tensor_sha256,
+    verify_artifact_manifest,
+)
+from trustsr.artifacts.gpu_run import EXPECTED_GPU_NAME, GPUHardwareSnapshot
 from trustsr.contracts import SRPair
 from trustsr.evaluation.repeatability import RepeatabilityError
 
@@ -48,14 +54,26 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         sen2srlite_model_dir=tmp_path / "models" / "sen2sr",
         artifacts_dir=tmp_path / "artifacts",
         prediction_cache_dir=tmp_path / "artifacts" / "cache" / "predictions",
+        project_root=Path(__file__).resolve().parents[2],
     )
 
 
 @pytest.fixture(autouse=True)
 def safe_gpu(monkeypatch):
+    snapshot = GPUHardwareSnapshot(
+        name=EXPECTED_GPU_NAME,
+        uuid="GPU-test",
+        driver_version="555.1",
+        memory_total_mib=24576,
+        memory_free_mib=20000,
+        compute_capability="8.6",
+        compute_pids=(),
+    )
     monkeypatch.setattr(gpu.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(gpu, "_active_compute_pids", lambda: set())
-    monkeypatch.setattr(gpu, "collect_gpu_environment", lambda: {"schema_version": 1})
+    monkeypatch.setattr(gpu, "capture_gpu_hardware", lambda: snapshot, raising=False)
+    monkeypatch.setattr(
+        gpu, "collect_gpu_environment", lambda **_kwargs: {"schema_version": 1}
+    )
 
 
 def test_preflight_constructs_one_model_without_loading_dataset(tmp_path, monkeypatch):
@@ -121,6 +139,38 @@ def test_single_runs_two_predictions_writes_separate_runtime_and_verified_cache(
     ).exists()
 
 
+def test_single_computes_metrics_from_the_verified_cached_tensor(tmp_path, monkeypatch):
+    model = FakeModel()
+    cached = torch.zeros((4, 8, 12), dtype=torch.float32)
+
+    class RecordingCache:
+        def __init__(self, _root):
+            self.stored = None
+
+        def put(self, _identity, prediction):
+            self.stored = prediction
+
+        def get(self, _identity):
+            assert self.stored is not None
+            assert torch.equal(self.stored, cached)
+            return cached
+
+    def metrics(_pair, prediction):
+        assert prediction is cached
+        return {key: 0.0 for key in gpu.METRIC_KEYS}
+
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", lambda *args, **kwargs: model)
+    monkeypatch.setattr(gpu, "load_opensr_pairs", lambda *args, **kwargs: _pairs())
+    monkeypatch.setattr(gpu, "PredictionCache", RecordingCache)
+    monkeypatch.setattr(gpu, "compute_opensr_metrics", metrics)
+    monkeypatch.setattr(gpu.torch.cuda, "reset_peak_memory_stats", lambda: None)
+    monkeypatch.setattr(gpu.torch.cuda, "max_memory_allocated", lambda: 0)
+
+    gpu.run_single(_args(tmp_path))
+
+    assert model.calls == 2
+
+
 def test_single_refuses_to_write_when_repeatability_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", lambda *args, **kwargs: FakeModel())
     monkeypatch.setattr(gpu, "load_opensr_pairs", lambda *args, **kwargs: _pairs())
@@ -136,36 +186,79 @@ def test_single_refuses_to_write_when_repeatability_fails(tmp_path, monkeypatch)
     assert not (tmp_path / "artifacts/phase1b/single.json").exists()
 
 
-def test_preflight_blocks_foreign_compute_process_before_model_construction(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "handler",
+    [gpu.run_preflight, gpu.run_single, gpu.run_three_model_benchmark],
+)
+@pytest.mark.parametrize(
+    "hardware_error",
+    [
+        "requires exactly one GPU",
+        "expected exactly one RTX 3090",
+        "at least 18 GiB initial free VRAM",
+        "a foreign CUDA compute process prevents this staged run",
+    ],
+)
+def test_each_compute_stage_rejects_bad_hardware_before_constructor_or_download(
+    tmp_path, monkeypatch, handler, hardware_error
+):
     constructed = False
 
-    def factory(*args, **kwargs):
+    def fail_capture():
+        raise RuntimeError(hardware_error)
+
+    def factory(*_args, **_kwargs):
         nonlocal constructed
         constructed = True
         return FakeModel()
 
+    monkeypatch.setattr(gpu, "capture_gpu_hardware", fail_capture)
     monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", factory)
-    monkeypatch.setattr(gpu, "_active_compute_pids", lambda: {os.getpid() + 1})
+    monkeypatch.setattr(gpu, "load_opensr_pairs", lambda *_args, **_kwargs: pytest.fail("no data"))
 
-    with pytest.raises(RuntimeError, match="another active"):
-        gpu.run_preflight(_args(tmp_path))
+    with pytest.raises(RuntimeError, match=hardware_error):
+        handler(_args(tmp_path))
     assert not constructed
 
 
-def test_preflight_allows_only_current_process_after_model_construction(tmp_path, monkeypatch):
-    calls = 0
+def test_preflight_environment_preserves_the_single_preconstruction_snapshot(
+    tmp_path, monkeypatch
+):
+    snapshot = GPUHardwareSnapshot(
+        name=EXPECTED_GPU_NAME,
+        uuid="GPU-preconstruction",
+        driver_version="555.1",
+        memory_total_mib=24576,
+        memory_free_mib=19000,
+        compute_capability="8.6",
+        compute_pids=(),
+    )
+    captures = 0
+    recorded = []
 
-    def pids():
-        nonlocal calls
-        calls += 1
-        return set() if calls == 1 else {os.getpid()}
+    def capture():
+        nonlocal captures
+        captures += 1
+        return snapshot
 
-    monkeypatch.setattr(gpu, "_active_compute_pids", pids)
-    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", lambda *args, **kwargs: FakeModel())
+    def collect(**kwargs):
+        recorded.append(kwargs)
+        return {"schema_version": 1, "gpu": snapshot.gpu_record()}
 
-    gpu.run_preflight(_args(tmp_path))
+    monkeypatch.setattr(gpu, "capture_gpu_hardware", capture)
+    monkeypatch.setattr(gpu, "collect_gpu_environment", collect)
+    monkeypatch.setattr(gpu.LDSRS2X4, "from_pretrained", lambda *_args, **_kwargs: FakeModel())
 
-    assert calls == 2
+    result = gpu.run_preflight(_args(tmp_path))
+
+    assert captures == 1
+    assert recorded == [
+        {
+            "hardware_snapshot": snapshot,
+            "project_root": Path(__file__).resolve().parents[2],
+        }
+    ]
+    assert result["gpu"]["uuid"] == "GPU-preconstruction"
 
 
 def test_benchmark_uses_exact_order_three_models_and_cuda_environment(tmp_path, monkeypatch):
@@ -187,7 +280,7 @@ def test_benchmark_uses_exact_order_three_models_and_cuda_environment(tmp_path, 
     monkeypatch.setattr(
         gpu,
         "_production_environment",
-        lambda: {
+        lambda **_kwargs: {
             "dataset": "spot",
             "dataset_version": "v3",
             "git_commit": "test",
@@ -198,7 +291,7 @@ def test_benchmark_uses_exact_order_three_models_and_cuda_environment(tmp_path, 
         },
     )
 
-    gpu.run_three_model_benchmark(_args(tmp_path))
+    result = gpu.run_three_model_benchmark(_args(tmp_path))
 
     assert [model.name for model in called["models"]] == [
         "bicubic-x4",
@@ -208,6 +301,24 @@ def test_benchmark_uses_exact_order_three_models_and_cuda_environment(tmp_path, 
     assert called["expected_model_count"] == 3
     assert called["environment"]["device"] == "cuda:0"
     assert called["result_path"] == tmp_path / "artifacts/phase1b/spot-v3-three-models.json"
+    index_path = tmp_path / "artifacts/phase1b/ldsr-cache-index.json"
+    index = json.loads(index_path.read_text())
+    assert index["schema_version"] == 1
+    assert index["model_provenance"] == ldsr.provenance()
+    assert [(entry["source"], entry["sample_id"]) for entry in index["identities"]] == [
+        ("opensr-test/spot/v3", f"spot-{item:04d}") for item in range(9)
+    ]
+    assert len({entry["cache_key"] for entry in index["identities"]}) == 9
+    for pair, entry in zip(_pairs(), index["identities"], strict=True):
+        identity = build_identity(ldsr.provenance(), pair.source, pair.sample_id, pair.lr)
+        assert entry == {
+            "source": pair.source,
+            "sample_id": pair.sample_id,
+            "lr": identity.as_dict()["lr"],
+            "cache_key": identity.key,
+        }
+    assert index_path.read_bytes() == canonical_json(index) + b"\n"
+    assert result == {"models": {}}
 
 
 def test_parser_has_only_staged_commands_and_no_scientific_sampling_flags():
@@ -309,13 +420,78 @@ def test_main_single_routes_dataset_model_artifact_and_independent_cache_overrid
     assert (cache / f"{result['cache_key']}.safetensors").is_file()
 
 
-def _write_required_manifest_inputs(args: argparse.Namespace, key: str) -> None:
+def _write_required_manifest_inputs(
+    args: argparse.Namespace,
+) -> tuple[dict[str, object], list[str]]:
+    pairs = _pairs()
+    provenance = FakeModel().provenance()
+    identities = [
+        build_identity(provenance, pair.source, pair.sample_id, pair.lr) for pair in pairs
+    ]
+    index: dict[str, object] = {
+        "schema_version": 1,
+        "model_provenance": provenance,
+        "identities": [
+            {
+                "source": identity.source,
+                "sample_id": identity.sample_id,
+                "lr": identity.as_dict()["lr"],
+                "cache_key": identity.key,
+            }
+            for identity in identities
+        ],
+    }
     phase = args.artifacts_dir / "phase1b"
     phase.mkdir(parents=True)
     (phase / "environment.json").write_text("{}")
-    (phase / "single.json").write_text(json.dumps({"cache_key": key}))
+    (phase / "single.json").write_text(
+        json.dumps(
+            {
+                "source": pairs[0].source,
+                "sample_id": pairs[0].sample_id,
+                "lr_sha256": identities[0].lr_sha256,
+                "model_provenance": provenance,
+                "cache_key": identities[0].key,
+            }
+        )
+    )
     (phase / "single-runtime.json").write_text("{}")
-    (phase / "spot-v3-three-models.json").write_text("{}")
+    (phase / "spot-v3-three-models.json").write_text(
+        json.dumps(
+            {
+                "run": {
+                    "sample_count": 9,
+                    "samples": [
+                        {
+                            "source": identity.source,
+                            "sample_id": identity.sample_id,
+                            "lr": identity.as_dict()["lr"],
+                        }
+                        for identity in identities
+                    ],
+                },
+                "models": {
+                    "ldsr-s2-x4": {
+                        "provenance": provenance,
+                        "samples": [
+                            {"source": pair.source, "sample_id": pair.sample_id}
+                            for pair in pairs
+                        ],
+                    }
+                },
+            }
+        )
+    )
+    (phase / "ldsr-cache-index.json").write_bytes(canonical_json(index) + b"\n")
+    return index, [identity.key for identity in identities]
+
+
+def _write_prediction_cache(args: argparse.Namespace) -> None:
+    cache = PredictionCache(args.prediction_cache_dir)
+    provenance = FakeModel().provenance()
+    for pair in _pairs():
+        identity = build_identity(provenance, pair.source, pair.sample_id, pair.lr)
+        cache.put(identity, torch.zeros_like(pair.hr))
 
 
 def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_root(
@@ -323,13 +499,11 @@ def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_ro
 ):
     args = _args(tmp_path)
     args.prediction_cache_dir = tmp_path / "independent-cache"
-    key = "a" * 64
     old_key = "b" * 64
-    _write_required_manifest_inputs(args, key)
-    args.prediction_cache_dir.mkdir()
-    for name in (key, old_key):
-        (args.prediction_cache_dir / f"{name}.json").write_text(f"{name}-metadata")
-        (args.prediction_cache_dir / f"{name}.safetensors").write_bytes(name.encode())
+    _, keys = _write_required_manifest_inputs(args)
+    _write_prediction_cache(args)
+    (args.prediction_cache_dir / f"{old_key}.json").write_text("old-metadata")
+    (args.prediction_cache_dir / f"{old_key}.safetensors").write_bytes(b"old")
 
     monkeypatch.setattr(
         sys,
@@ -337,6 +511,8 @@ def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_ro
         [
             "trustsr-ldsr-gpu",
             "manifest",
+            "--project-root",
+            str(args.project_root),
             "--dataset-cache-dir",
             str(args.dataset_cache_dir),
             "--ldsr-model-dir",
@@ -355,8 +531,10 @@ def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_ro
     manifest_path = args.artifacts_dir / "phase1b/artifact-manifest.json"
     manifest = json.loads(manifest_path.read_text())
     paths = [entry["path"] for entry in manifest["files"]]
-    assert f"phase1b/cache/{key}.json" in paths
-    assert f"phase1b/cache/{key}.safetensors" in paths
+    assert "phase1b/ldsr-cache-index.json" in paths
+    assert {f"phase1b/cache/{key}.json" for key in keys}.issubset(paths)
+    assert {f"phase1b/cache/{key}.safetensors" for key in keys}.issubset(paths)
+    assert len([path for path in paths if path.startswith("phase1b/cache/")]) == 18
     assert old_key not in "".join(paths)
     assert all(not Path(path).is_absolute() for path in paths)
     verify_artifact_manifest(
@@ -366,16 +544,52 @@ def test_main_manifest_stages_only_named_cache_entries_from_independent_cache_ro
 
 @pytest.mark.parametrize(
     "missing_name",
-    ["environment.json", "single.json", "single-runtime.json", "spot-v3-three-models.json"],
+    [
+        "environment.json",
+        "single.json",
+        "single-runtime.json",
+        "spot-v3-three-models.json",
+        "ldsr-cache-index.json",
+    ],
 )
 def test_manifest_rejects_each_missing_required_output(tmp_path, missing_name):
     args = _args(tmp_path)
-    key = "a" * 64
-    _write_required_manifest_inputs(args, key)
-    (args.prediction_cache_dir).mkdir(parents=True)
-    for suffix in (".json", ".safetensors"):
-        (args.prediction_cache_dir / f"{key}{suffix}").write_text("cache")
+    _write_required_manifest_inputs(args)
+    _write_prediction_cache(args)
     (args.artifacts_dir / "phase1b" / missing_name).unlink()
 
     with pytest.raises(FileNotFoundError, match="allowlisted"):
         gpu.run_manifest(args)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "duplicate", "extra", "invalid_key", "invalid_lr", "wrong_provenance"],
+)
+def test_manifest_rejects_unbound_or_nonexact_ldsr_cache_identity_data_before_staging(
+    tmp_path, mutation
+):
+    args = _args(tmp_path)
+    index, _ = _write_required_manifest_inputs(args)
+    _write_prediction_cache(args)
+    identities = index["identities"]
+    assert isinstance(identities, list)
+    if mutation == "missing":
+        identities.pop()
+    elif mutation == "duplicate":
+        identities[-1] = dict(identities[0])
+    elif mutation == "extra":
+        identities.append(dict(identities[-1]))
+    elif mutation == "invalid_key":
+        identities[0]["cache_key"] = "0" * 64
+    elif mutation == "invalid_lr":
+        identities[0]["lr"] = {**identities[0]["lr"], "sha256": "0" * 64}
+    else:
+        index["model_provenance"] = {"name": "ldsr-s2-x4", "scale": 4, "changed": True}
+    index_path = args.artifacts_dir / "phase1b/ldsr-cache-index.json"
+    index_path.write_bytes(canonical_json(index) + b"\n")
+
+    with pytest.raises(ValueError, match="cache index"):
+        gpu.run_manifest(args)
+
+    assert not (args.artifacts_dir / "phase1b/cache").exists()

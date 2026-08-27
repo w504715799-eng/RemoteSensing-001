@@ -17,6 +17,7 @@ from typing import Any
 import opensr_test
 import torch
 
+from trustsr.artifacts.gpu_run import resolve_project_root
 from trustsr.artifacts.predictions import PredictionCache, build_identity, tensor_sha256
 from trustsr.contracts import SRPair
 from trustsr.data.opensr import load_opensr_pairs
@@ -31,9 +32,13 @@ EXPECTED_SPOT_V3_IDENTITIES = tuple(
 _RUN_ENVIRONMENT_KEYS = ("git_commit", "python", "torch", "opensr_test", "device")
 
 
-def _git_commit() -> str:
+def _git_commit(project_root: Path | str | None = None) -> str:
+    reviewed_root = resolve_project_root(project_root)
     process = subprocess.run(
-        ["git", "rev-parse", "HEAD"], check=False, capture_output=True, text=True
+        ["git", "-C", str(reviewed_root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
     )
     return process.stdout.strip() if process.returncode == 0 else "unavailable"
 
@@ -202,11 +207,11 @@ def run_benchmark(
     return result
 
 
-def _production_environment() -> dict[str, str]:
+def _production_environment(*, project_root: Path | str | None = None) -> dict[str, str]:
     return {
         "dataset": "spot",
         "dataset_version": "v3",
-        "git_commit": _git_commit(),
+        "git_commit": _git_commit(project_root),
         "python": platform.python_version(),
         "torch": torch.__version__,
         "opensr_test": opensr_test.__version__,

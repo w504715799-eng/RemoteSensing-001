@@ -93,6 +93,8 @@ def download_verified_checkpoint(
 
     temporary_path: Path | None = None
     try:
+        size = 0
+        digest = hashlib.sha256()
         with opener(url) as response:
             fd, temporary_name = tempfile.mkstemp(
                 dir=model_root, prefix=f".{CHECKPOINT_NAME}.", suffix=".tmp"
@@ -100,16 +102,24 @@ def download_verified_checkpoint(
             temporary_path = Path(temporary_name)
             with os.fdopen(fd, "wb") as output:
                 while block := response.read(1024 * 1024):
+                    size += len(block)
+                    digest.update(block)
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
-        verified = verify_asset(
-            temporary_path, expected_size=expected_size, expected_sha256=expected_sha256
-        )
+        actual_sha256 = digest.hexdigest()
+        if size != expected_size:
+            raise AssetIntegrityError(
+                f"asset size {size} does not match expected size {expected_size}"
+            )
+        if actual_sha256 != expected_sha256:
+            raise AssetIntegrityError(
+                f"asset SHA-256 {actual_sha256} does not match expected SHA-256 {expected_sha256}"
+            )
         os.replace(temporary_path, final_path)
         temporary_path = None
         _fsync_directory(model_root)
-        return VerifiedAsset(final_path, verified.size, verified.sha256)
+        return VerifiedAsset(final_path, size, actual_sha256)
     finally:
         if temporary_path is not None:
             try:

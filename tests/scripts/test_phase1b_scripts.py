@@ -35,8 +35,11 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
     _make_executable(
         fake_bin / "realpath",
         "#!/usr/bin/env bash\nvalue=\"${!#}\"\n"
-        "case \"$value\" in /root|/root/*) printf '%s\\n' \"$value\" ;; *) "
-        "printf '/root/rivermind-data/test-root\\n' ;; esac\n",
+        "if [[ -n \"${FAKE_REMOTE_ROOT:-}\" && \"$value\" == \"$FAKE_REMOTE_ROOT\" ]]; then\n"
+        "  printf '/root/rivermind-data/test-root\\n'\n"
+        "else\n"
+        "  /usr/bin/realpath -e -- \"$value\"\n"
+        "fi\n",
     )
     _make_executable(
         fake_bin / "conda",
@@ -81,6 +84,7 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "COMMAND_LOG": str(log),
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "REAL_PYTHON": sys.executable,
+        "FAKE_REMOTE_ROOT": str(tmp_path / "root" / "rivermind-data" / "phase1b"),
     }
     return environment, log
 
@@ -319,13 +323,14 @@ def test_bootstrap_refuses_to_mutate_each_incompatible_existing_prefix(
 
 def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_command(tmp_path: Path) -> None:
     remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
     _make_executable(
         executable,
-        "#!/usr/bin/env bash\nprintf 'stage %s data=%s sen2=%s ldsr=%s artifacts=%s\\n' \"$*\" \\\n"
+        "#!/usr/bin/env bash\nprintf 'stage %s data=%s sen2=%s ldsr=%s artifacts=%s cwd=%s\\n' \"$*\" \\\n"
         "  \"$TRUSTSR_DATA_CACHE_DIR\" \"$TRUSTSR_SEN2SR_MODEL_DIR\" \"$TRUSTSR_LDSR_MODEL_DIR\" \\\n"
-        "  \"$TRUSTSR_ARTIFACT_ROOT\" >> \"$COMMAND_LOG\"\n",
+        "  \"$TRUSTSR_ARTIFACT_ROOT\" \"$PWD\" >> \"$COMMAND_LOG\"\n",
     )
     environment, log = _environment(tmp_path)
 
@@ -340,11 +345,12 @@ def test_stage_runner_exports_fixed_paths_and_invokes_exactly_one_matching_comma
     assert completed.returncode == 0, completed.stderr
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
-    assert lines[0].startswith("stage benchmark --dataset-cache-dir")
+    assert lines[0].startswith(f"stage benchmark --project-root {remote_root}/repo")
     assert f"data={remote_root}/data/opensr" in lines[0]
     assert f"sen2={remote_root}/models/sen2srlite" in lines[0]
     assert f"ldsr={remote_root}/models/ldsr-s2" in lines[0]
     assert f"artifacts={remote_root}/artifacts" in lines[0]
+    assert f"cwd={remote_root}/repo" in lines[0]
 
 
 @pytest.mark.parametrize("stage", ("preflight", "single", "benchmark", "manifest"))
@@ -352,6 +358,7 @@ def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
     stage: str, tmp_path: Path
 ) -> None:
     remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    (remote_root / "repo").mkdir(parents=True)
     executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
     executable.parent.mkdir(parents=True)
     _make_executable(
@@ -373,6 +380,8 @@ def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
     assert completed.returncode == 0, completed.stderr
     assert _nul_arguments(stage_arguments) == [
         stage,
+        "--project-root",
+        f"{remote_root}/repo",
         "--dataset-cache-dir",
         f"{remote_root}/data/opensr",
         "--ldsr-model-dir",
@@ -384,6 +393,39 @@ def test_stage_runner_maps_each_stage_to_the_exact_cli_argument_array(
         "--prediction-cache-dir",
         f"{remote_root}/artifacts/cache/predictions",
     ]
+
+
+@pytest.mark.parametrize("escaping_directory", ("data", "models", "artifacts"))
+def test_stage_runner_rejects_descendant_symlink_escape_before_cli_or_outside_write(
+    tmp_path: Path, escaping_directory: str
+) -> None:
+    remote_root = tmp_path / "root" / "rivermind-data" / "phase1b"
+    (remote_root / "repo").mkdir(parents=True)
+    executable = remote_root / "conda-env" / "bin" / "trustsr-ldsr-gpu"
+    executable.parent.mkdir(parents=True)
+    _make_executable(
+        executable,
+        "#!/usr/bin/env bash\nprintf 'called' > \"$CLI_CALLED_FILE\"\n",
+    )
+    outside = tmp_path / f"outside-{escaping_directory}"
+    outside.mkdir()
+    (remote_root / escaping_directory).symlink_to(outside, target_is_directory=True)
+    cli_called = tmp_path / "cli-called"
+    environment, _ = _environment(tmp_path)
+    environment["CLI_CALLED_FILE"] = str(cli_called)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPTS / "run_remote.sh"), str(remote_root), "preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode != 0
+    assert "symlink" in completed.stderr.lower() or "escape" in completed.stderr.lower()
+    assert not cli_called.exists()
+    assert list(outside.iterdir()) == []
 
 
 def test_puller_fetches_manifest_then_only_allowlisted_files_and_verifies_digests(tmp_path: Path) -> None:
