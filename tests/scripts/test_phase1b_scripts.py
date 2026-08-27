@@ -65,7 +65,6 @@ def _environment(tmp_path: Path, *, available_kib: int = 30_000_000) -> tuple[di
         "source=\"${source#*:}\"\n"
         "if [[ -n \"${REMOTE_FIXTURE_ROOT:-}\" ]]; then\n"
         "  source=\"${source#/root/rivermind-fs/phase1b}\"\n"
-        "  source=\"${source#/root/rivermind-data/phase1b}\"\n"
         "  source=\"${REMOTE_FIXTURE_ROOT}${source}\"\n"
         "fi\n"
         "mkdir -p \"$destination\"\ncp \"$source\" \"$destination\"\n",
