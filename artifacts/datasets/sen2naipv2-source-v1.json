@@ -1,0 +1,59 @@
+{
+  "schema": "trustsr.sen2naipv2-source.v1",
+  "repository": "tacofoundation/SEN2NAIPv2",
+  "revision": "c370504201072fdb1dd388013ab8c0fc7d00a57e",
+  "license_claim": "cc0-1.0",
+  "card_sha256": "5897aed9410fef305953ff5b34e83697b466901583b880158af2902a8267a58d",
+  "bands": ["B04", "B03", "B02", "B08"],
+  "scale": 4,
+  "lr_shape": [130, 130],
+  "hr_shape": [520, 520],
+  "declared_total_bytes": 149356128592,
+  "objects": [
+    {
+      "path": "sen2naipv2-crosssensor.taco",
+      "sha256": "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5",
+      "size_bytes": 9717583850
+    },
+    {
+      "path": "sen2naipv2-histmatch.0000.part.taco",
+      "sha256": "a276024df0f81ff53770cf1b415d0f86268bd2b090a467b80e2e8b3992d08acc",
+      "size_bytes": 20000560299
+    },
+    {
+      "path": "sen2naipv2-histmatch.0001.part.taco",
+      "sha256": "c493107a10a488643346aba990717e2caa839f26a3cbde4e359c7f0f83158c4b",
+      "size_bytes": 19999654192
+    },
+    {
+      "path": "sen2naipv2-histmatch.0002.part.taco",
+      "sha256": "f922d29d7701cbcad6e41da235805c26ad11200f50acc34e77af7de38abd66ae",
+      "size_bytes": 19999987735
+    },
+    {
+      "path": "sen2naipv2-histmatch.0003.part.taco",
+      "sha256": "3faadd2e3b9b9a9611764e9e4f8c2d230667d6d75604eb26d82e5e8f1e65da26",
+      "size_bytes": 9361318942
+    },
+    {
+      "path": "sen2naipv2-unet.0000.part.taco",
+      "sha256": "b8f7a8497328e62fcb53872d2d59220a0fc84fd05f6d205bbe54b4c2d32fa6c2",
+      "size_bytes": 20000562604
+    },
+    {
+      "path": "sen2naipv2-unet.0001.part.taco",
+      "sha256": "c24c4500f779f0d9db6d7c2f568879dd3c40d26fd8e36cde1b235dfecb489e1f",
+      "size_bytes": 20000506401
+    },
+    {
+      "path": "sen2naipv2-unet.0002.part.taco",
+      "sha256": "aba2f08677464e8359e5c98d7ebe77bfab623919a7cde3c24f8e0018dc4319ce",
+      "size_bytes": 20000130510
+    },
+    {
+      "path": "sen2naipv2-unet.0003.part.taco",
+      "sha256": "8835cbf9d0d179190f495802e2b548e4cf1d45b7c18d8910b31a2449c9b49632",
+      "size_bytes": 10275824059
+    }
+  ]
+}
