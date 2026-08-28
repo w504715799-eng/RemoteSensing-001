@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-28
 
-**状态：** 待用户审查
+**状态：** 已批准（2026-08-28）
 
 **上位阶段：** `docs/superpowers/specs/2026-08-27-phase2b0-sen2naipv2-provenance.md`
 
