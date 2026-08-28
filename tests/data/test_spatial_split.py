@@ -62,6 +62,24 @@ def test_unit_sphere_search_keeps_dateline_neighbors_together() -> None:
     assert assignments[0].spatial_group_id == assignments[1].spatial_group_id
 
 
+def test_high_latitude_haversine_boundary_is_never_a_cross_split_pair() -> None:
+    samples = (
+        _sample("a", -170.0, -88.24019444444444),
+        _sample("b", -168.53672139438012, -88.24252237316091),
+    )
+
+    assignments = assign_spatial_splits(samples)
+    separated_assignments = assign_spatial_splits(samples, threshold_km=4.0)
+    separated_distances = minimum_cross_split_distances(separated_assignments)
+
+    assert assignments[0].spatial_group_id == assignments[1].spatial_group_id
+    assert minimum_cross_split_distances(assignments) == {}
+    assert separated_distances == {
+        "development:internal_test": pytest.approx(5.0, abs=1e-12)
+    }
+    assert all(distance <= 5.0 for distance in separated_distances.values())
+
+
 def test_assignments_are_sorted_deterministic_and_have_one_split_per_group() -> None:
     samples = (
         _sample("zeta", 0.0),
@@ -81,18 +99,12 @@ def test_assignments_are_sorted_deterministic_and_have_one_split_per_group() -> 
 
 
 def test_cross_split_minimum_distances_exceed_the_grouping_threshold() -> None:
-    assignments = (
-        AssignedSample(_sample("development", 0.0), "a" * 64, "development"),
-        AssignedSample(
-            _sample("calibration", math.degrees(8.0 / EARTH_RADIUS_KM)),
-            "b" * 64,
-            "calibration",
-        ),
-        AssignedSample(
-            _sample("internal-test", math.degrees(16.0 / EARTH_RADIUS_KM)),
-            "c" * 64,
-            "internal_test",
-        ),
+    assignments = assign_spatial_splits(
+        (
+            _sample("split-3", 0.0),
+            _sample("split-0", math.degrees(8.0 / EARTH_RADIUS_KM)),
+            _sample("split-1", math.degrees(16.0 / EARTH_RADIUS_KM)),
+        )
     )
 
     distances = minimum_cross_split_distances(assignments)

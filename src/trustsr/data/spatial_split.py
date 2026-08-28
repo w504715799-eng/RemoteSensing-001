@@ -15,6 +15,7 @@ from trustsr.data.crosssensor_schema import CrosssensorSample
 
 EARTH_RADIUS_KM = 6_371.0088
 _SPLITS = ("development", "calibration", "internal_test")
+_CANDIDATE_CHORD_PADDING = 64 * np.finfo(float).eps
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,11 @@ def assign_spatial_splits(
     chord_threshold = 2 * math.sin(angular_threshold / 2)
     vectors = _unit_vectors(ordered_samples)
     components = _UnionFind(len(ordered_samples))
-    candidate_pairs = cKDTree(vectors).query_pairs(chord_threshold, output_type="ndarray")
+    # Vector conversion can round a true boundary pair just outside its ideal chord.
+    # Haversine remains the authoritative predicate below, so this only broadens candidates.
+    candidate_pairs = cKDTree(vectors).query_pairs(
+        chord_threshold + _CANDIDATE_CHORD_PADDING, output_type="ndarray"
+    )
     for first_index, second_index in candidate_pairs:
         distance_km = _haversine_km(
             ordered_samples[first_index], ordered_samples[second_index]
@@ -140,9 +145,12 @@ def minimum_cross_split_distances(assignments: Sequence[AssignedSample]) -> dict
             second_samples = samples_by_split[second_split]
             if not second_samples:
                 continue
-            nearest_chords, _ = first_tree.query(_unit_vectors(second_samples), k=1)
+            _, nearest_indices = first_tree.query(_unit_vectors(second_samples), k=1)
             pair_key = ":".join(sorted((first_split, second_split)))
-            distances[pair_key] = _chord_to_arc_km(
-                float(np.min(nearest_chords))
+            distances[pair_key] = min(
+                _haversine_km(first_samples[int(nearest_index)], second_sample)
+                for second_sample, nearest_index in zip(
+                    second_samples, nearest_indices, strict=True
+                )
             )
     return distances
