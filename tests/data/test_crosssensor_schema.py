@@ -29,7 +29,7 @@ def _row(
         "days_between": 0,
         "correlation": 0.91,
         "scale_factor": 4,
-        "split": "train",
+        "tortilla:data_split": "train",
     }
 
 
@@ -55,7 +55,7 @@ def test_normalizes_a_row_to_an_immutable_crosssensor_sample() -> None:
             "days_between",
             "correlation",
             "scale_factor",
-            "split",
+            "tortilla:data_split",
         }
     )
     assert normalize_top_level([_row()], acquisition_times=[_times()], expected_count=1) == (
@@ -220,9 +220,9 @@ def test_rejects_acquisition_time_length_mismatch() -> None:
 def test_rejects_missing_or_non_train_upstream_split(value: object) -> None:
     row = _row()
     if value is None:
-        del row["split"]
+        del row["tortilla:data_split"]
     else:
-        row["split"] = value
+        row["tortilla:data_split"] = value
 
     with pytest.raises(ValueError, match="split.*train"):
         normalize_top_level([row], acquisition_times=[_times()], expected_count=1)

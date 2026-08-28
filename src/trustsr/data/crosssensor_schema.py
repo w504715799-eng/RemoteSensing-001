@@ -22,7 +22,7 @@ REQUIRED_COLUMNS = frozenset(
         "days_between",
         "correlation",
         "scale_factor",
-        "split",
+        "tortilla:data_split",
     }
 )
 
@@ -196,7 +196,7 @@ def _normalize_row(
 ) -> CrosssensorSample:
     if not isinstance(row, Mapping):
         raise ValueError(f"row {index} must be a mapping")
-    if row.get("split") != "train":
+    if row.get("tortilla:data_split") != "train":
         raise ValueError("upstream split must equal exact string train")
     missing = REQUIRED_COLUMNS - set(row)
     if missing:

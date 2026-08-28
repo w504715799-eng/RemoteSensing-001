@@ -353,7 +353,7 @@ def _top_records(column_count: int = 26) -> tuple[dict[str, object], ...]:
         "days_between": 0,
         "correlation": 0.91,
         "scale_factor": 4,
-        "split": "train",
+        "tortilla:data_split": "train",
         **{f"extra:{index}": index for index in range(13)},
     }
     selected = dict(list(columns.items())[:column_count])
@@ -388,7 +388,7 @@ def _stage_sequence_top_records() -> tuple[dict[str, object], ...]:
                 "days_between": days_between,
                 "correlation": correlation,
                 "scale_factor": 4,
-                "split": "train",
+                "tortilla:data_split": "train",
                 **{f"extra:{extra_index}": extra_index for extra_index in range(13)},
             }
         )
