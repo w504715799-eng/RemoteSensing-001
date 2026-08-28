@@ -154,6 +154,8 @@ def _inspect_raster(payload: object, time_start: str) -> _Raster:
     try:
         with MemoryFile(payload) as memory:
             with memory.open() as dataset:
+                if dataset.driver != "GTiff":
+                    raise ValueError("nested asset must use the GTiff driver")
                 if dataset.count != len(_EXPECTED_BANDS):
                     raise ValueError("GeoTIFF assets must contain exactly four bands")
                 if len(set(dataset.dtypes)) != 1:

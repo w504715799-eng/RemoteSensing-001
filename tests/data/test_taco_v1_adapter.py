@@ -117,6 +117,24 @@ def _three_band_geotiff_bytes() -> bytes:
         return memory.read()
 
 
+def _vrt_bytes() -> bytes:
+    band_template = (
+        '  <VRTRasterBand dataType="UInt16" band="{band}">'
+        "<NoDataValue>0</NoDataValue>"
+        "</VRTRasterBand>"
+    )
+    bands = "\n".join(
+        band_template.format(band=band) for band in range(1, 5)
+    )
+    return (
+        "<VRTDataset rasterXSize=\"130\" rasterYSize=\"130\">\n"
+        "  <SRS>EPSG:32618</SRS>\n"
+        "  <GeoTransform>500000,10,0,400000,0,-10</GeoTransform>\n"
+        f"{bands}\n"
+        "</VRTDataset>\n"
+    ).encode()
+
+
 def _install_reader(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -414,6 +432,23 @@ def test_extract_pair_rejects_contradictory_present_band_descriptions(
 
     with pytest.raises(ValueError, match="band descriptions"):
         taco_v1_adapter.extract_pair(Path("/cloud/source.taco"), 0, tmp_path, _BANDS)
+
+
+def test_extract_pair_rejects_a_non_geotiff_raster_before_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    hr = _geotiff_bytes(
+        width=520,
+        height=520,
+        value=120,
+        transform=Affine(2.5, 0.0, 500000.0, 0.0, -2.5, 400000.0),
+    )
+    _install_reader(monkeypatch, metadata={"taco_version": "0.4.0"}, assets=[_vrt_bytes(), hr])
+
+    with pytest.raises(ValueError, match="GTiff"):
+        taco_v1_adapter.extract_pair(Path("/cloud/source.taco"), 0, tmp_path, _BANDS)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_extract_pair_reuses_identical_cached_assets_without_writing(
