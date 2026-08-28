@@ -21,7 +21,7 @@ from trustsr.data.crosssensor_manifest import (
     ExtractedAsset,
     ManifestArtifact,
 )
-from trustsr.data.crosssensor_schema import CrosssensorSample
+from trustsr.data.crosssensor_schema import AcquisitionTimes, CrosssensorSample
 from trustsr.data.crosssensor_source import VerifiedSourceObject
 from trustsr.data.pilot_sampling import select_pilot
 from trustsr.data.provenance import DatasetSource, LfsObject
@@ -80,11 +80,18 @@ class _StageSequenceRows:
 
 
 class _StageSequenceNested:
-    def __init__(self, lr_payload: bytes, hr_payload: bytes) -> None:
-        self._payloads = (hr_payload, lr_payload)
+    def __init__(
+        self, lr_payload: bytes, hr_payload: bytes, days_between: int
+    ) -> None:
+        self._payloads = (lr_payload, hr_payload)
+        lr_time_start = {
+            -1: "2020-01-01T10:00:00Z",
+            0: "2020-01-02T10:00:00Z",
+            1: "2020-01-03T10:00:00Z",
+        }[days_between]
         self.iloc = _StageSequenceRows(
             (
-                {"stac:time_start": "2020-01-03T10:00:00Z"},
+                {"stac:time_start": lr_time_start},
                 {"stac:time_start": "2020-01-02T10:00:00Z"},
             )
         )
@@ -100,7 +107,7 @@ class _StageSequenceTop:
     def __init__(
         self,
         records: tuple[dict[str, object], ...],
-        nested: _StageSequenceNested,
+        nested: tuple[_StageSequenceNested, ...],
     ) -> None:
         self._records = records
         self._nested = nested
@@ -113,7 +120,7 @@ class _StageSequenceTop:
     def read(self, source_index: int) -> _StageSequenceNested:
         assert 0 <= source_index < len(self._records)
         self.read_calls.append(source_index)
-        return self._nested
+        return self._nested[source_index]
 
 
 class _StageSequenceReader:
@@ -345,7 +352,8 @@ def _top_records(column_count: int = 26) -> tuple[dict[str, object], ...]:
         "days_between": 0,
         "correlation": 0.91,
         "scale_factor": 4,
-        **{f"extra:{index}": index for index in range(14)},
+        "split": "train",
+        **{f"extra:{index}": index for index in range(13)},
     }
     selected = dict(list(columns.items())[:column_count])
     return tuple(selected for _ in range(8_000))
@@ -379,7 +387,8 @@ def _stage_sequence_top_records() -> tuple[dict[str, object], ...]:
                 "days_between": days_between,
                 "correlation": correlation,
                 "scale_factor": 4,
-                **{f"extra:{extra_index}": extra_index for extra_index in range(14)},
+                "split": "train",
+                **{f"extra:{extra_index}": extra_index for extra_index in range(13)},
             }
         )
     return tuple(records)
@@ -424,14 +433,24 @@ def _patch_manifest_services(
 
     monkeypatch.setattr(phase2b1a, "verify_crosssensor", verify)
 
-    def load_records(path: Path) -> tuple[dict[str, object], ...]:
+    def load_records(
+        path: Path,
+    ) -> tuple[tuple[dict[str, object], ...], tuple[AcquisitionTimes, ...]]:
         calls["reader_path"] = path
-        return _top_records(column_count)
+        records = _top_records(column_count)
+        return records, tuple(
+            AcquisitionTimes(
+                "2020-01-02T10:00:00Z", "2020-01-02T10:00:00Z"
+            )
+            for _ in records
+        )
 
-    monkeypatch.setattr(phase2b1a, "load_top_level_records", load_records)
+    monkeypatch.setattr(phase2b1a, "load_crosssensor_metadata", load_records)
 
-    def normalize(records: object, *, expected_count: int) -> tuple[str, ...]:
-        calls["normalize"] = (records, expected_count)
+    def normalize(
+        records: object, *, acquisition_times: object, expected_count: int
+    ) -> tuple[str, ...]:
+        calls["normalize"] = (records, acquisition_times, expected_count)
         return ("normalized",)
 
     monkeypatch.setattr(phase2b1a, "normalize_top_level", normalize)
@@ -549,7 +568,8 @@ def test_manifest_commits_digest_addressed_output_reuses_it_and_rejects_tamperin
         / "sen2naipv2-crosssensor.taco",
         _source().objects[0],
     )
-    assert calls["normalize"][1] == 8_000  # type: ignore[index]
+    assert len(calls["normalize"][1]) == 8_000  # type: ignore[arg-type, index]
+    assert calls["normalize"][2] == 8_000  # type: ignore[index]
     assert calls["write"] == (("assigned",), tuple(range(36)), {})
     assert calls["audit"][3] == PRODUCTION_EXPECTED_COUNTS  # type: ignore[index]
 
@@ -615,6 +635,11 @@ def _pilot_assignments() -> tuple[AssignedSample, ...]:
         for days_between in (-1, 0, 1):
             for bin_index, correlation in enumerate(correlations):
                 sample_id = f"{split}-{days_between}-{bin_index}"
+                lr_time_start = {
+                    -1: "2020-01-01T10:00:00Z",
+                    0: "2020-01-02T10:00:00Z",
+                    1: "2020-01-03T10:00:00Z",
+                }[days_between]
                 assignments.append(
                     AssignedSample(
                         sample=CrosssensorSample(
@@ -633,6 +658,8 @@ def _pilot_assignments() -> tuple[AssignedSample, ...]:
                             ),
                             raster_shape=(130, 130),
                             time_start="2020-01-02T10:00:00Z",
+                            lr_time_start=lr_time_start,
+                            hr_time_start="2020-01-02T10:00:00Z",
                             admin0="Colombia",
                             admin1=None,
                             admin2="Cali",
@@ -648,7 +675,12 @@ def _pilot_assignments() -> tuple[AssignedSample, ...]:
     return tuple(assignments)
 
 
-def _asset(relative_path: str, payload: bytes) -> ExtractedAsset:
+def _asset(
+    relative_path: str,
+    payload: bytes,
+    *,
+    time_start: str = "2020-01-02T10:00:00Z",
+) -> ExtractedAsset:
     dimensions = (4, 130, 130) if relative_path == "lr.tif" else (4, 520, 520)
     resolution = 10.0 if relative_path == "lr.tif" else 2.5
     return ExtractedAsset(
@@ -662,7 +694,7 @@ def _asset(relative_path: str, payload: bytes) -> ExtractedAsset:
         nodata=None,
         minimum=100.0,
         maximum=120.0,
-        time_start="2020-01-02T10:00:00Z",
+        time_start=time_start,
     )
 
 
@@ -709,6 +741,8 @@ def _manifest_records(
                 "geotransform": list(sample.geotransform),
                 "raster_shape": list(sample.raster_shape),
                 "time_start": sample.time_start,
+                "lr_time_start": sample.lr_time_start,
+                "hr_time_start": sample.hr_time_start,
                 "admin": {
                     "admin0": sample.admin0,
                     "admin1": sample.admin1,
@@ -825,7 +859,17 @@ def _patch_pilot_services(
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.exists():
                 target.write_bytes(payload)
-        return _asset("lr.tif", lr_payload), _asset("hr.tif", hr_payload)
+        record = next(
+            record for record in records if record["source_index"] == source_index
+        )
+        return (
+            _asset(
+                "lr.tif", lr_payload, time_start=str(record["lr_time_start"])
+            ),
+            _asset(
+                "hr.tif", hr_payload, time_start=str(record["hr_time_start"])
+            ),
+        )
 
     monkeypatch.setattr(phase2b1a, "extract_pair", extract)
 
@@ -936,6 +980,37 @@ def test_pilot_rejects_a_manifest_whose_parent_is_not_its_actual_digest(
             wrong,
             confirmed_cloud_storage=True,
         )
+
+
+def test_pilot_rejects_extracted_times_that_contradict_the_complete_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assignments = _pilot_assignments()
+    records = _manifest_records(assignments)
+    manifest, _, state = _patch_pilot_services(monkeypatch, tmp_path, records)
+
+    def inconsistent_extract(
+        taco_path: Path,
+        source_index: int,
+        output_root: Path,
+        bands: tuple[str, ...],
+    ) -> tuple[ExtractedAsset, ExtractedAsset]:
+        del taco_path, source_index, output_root, bands
+        return (
+            _asset("lr.tif", b"lr", time_start="2020-01-09T10:00:00Z"),
+            _asset("hr.tif", b"hr", time_start="2020-01-02T10:00:00Z"),
+        )
+
+    monkeypatch.setattr(phase2b1a, "extract_pair", inconsistent_extract)
+
+    with pytest.raises(ValueError, match="LR time_start.*manifest lr_time_start"):
+        phase2b1a.run_pilot(
+            tmp_path / "source.json",
+            tmp_path,
+            manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert "write" not in state["calls"]  # type: ignore[operator]
 
 
 def test_pilot_rejects_any_selection_other_than_36_before_extraction(
@@ -1123,8 +1198,14 @@ def _post_assets(
         prefix = f"pilot-v1/{assignment.split}/{sample.sample_id}"
         lr_payload = f"lr-{sample.source_index}".encode()
         hr_payload = f"hr-{sample.source_index}".encode()
-        lr = replace(_asset("lr.tif", lr_payload), relative_path=f"{prefix}/lr.tif")
-        hr = replace(_asset("hr.tif", hr_payload), relative_path=f"{prefix}/hr.tif")
+        lr = replace(
+            _asset("lr.tif", lr_payload, time_start=sample.lr_time_start),
+            relative_path=f"{prefix}/lr.tif",
+        )
+        hr = replace(
+            _asset("hr.tif", hr_payload, time_start=sample.hr_time_start),
+            relative_path=f"{prefix}/hr.tif",
+        )
         assets[sample.sample_id] = (lr, hr)
         output = tmp_path / "trustsr" / "phase2b1a" / prefix
         output.mkdir(parents=True)
@@ -1444,10 +1525,14 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     real_normalize_top_level = phase2b1a.normalize_top_level
 
     def normalize_scaled_top_level(
-        records: object, *, expected_count: int
+        records: object, *, acquisition_times: object, expected_count: int
     ) -> tuple[CrosssensorSample, ...]:
         assert expected_count == 8_000
-        return real_normalize_top_level(records, expected_count=36)  # type: ignore[arg-type]
+        return real_normalize_top_level(
+            records,
+            acquisition_times=acquisition_times,  # type: ignore[arg-type]
+            expected_count=36,
+        )  # type: ignore[arg-type]
 
     monkeypatch.setattr(phase2b1a, "normalize_top_level", normalize_scaled_top_level)
 
@@ -1484,8 +1569,14 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         "lr.tif": _synthetic_geotiff(130, 10.0, 100),
         "hr.tif": _synthetic_geotiff(520, 2.5, 120),
     }
-    nested = _StageSequenceNested(payloads["lr.tif"], payloads["hr.tif"])
-    reader = _StageSequenceReader(_StageSequenceTop(_stage_sequence_top_records(), nested))
+    stage_records = _stage_sequence_top_records()
+    nested = tuple(
+        _StageSequenceNested(
+            payloads["lr.tif"], payloads["hr.tif"], int(record["days_between"])
+        )
+        for record in stage_records
+    )
+    reader = _StageSequenceReader(_StageSequenceTop(stage_records, nested))
     monkeypatch.setattr(taco_v1_adapter, "require_tacoreader_v1", lambda: reader)
     real_atomic_write = taco_v1_adapter.atomic_write_bytes
     adapter_write_calls: list[Path] = []
@@ -1525,6 +1616,11 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     pre_records = phase2b1a.load_manifest(
         pre_manifest, expected_sha256=pre_manifest_digest
     )
+    pre_times = {
+        record["sample_id"]: (record["lr_time_start"], record["hr_time_start"])
+        for record in pre_records
+    }
+    assert len(pre_times) == 36
     interrupted_records = tuple(
         record for record in pre_records if record["pilot"] is not None
     )[:3]
@@ -1585,6 +1681,9 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         sample_id for sample_id, _, _, _ in _STAGE_SEQUENCE_STRATA
     }
     for record in selected:
+        assert (record["lr_time_start"], record["hr_time_start"]) == pre_times[
+            record["sample_id"]
+        ]
         for kind in ("lr", "hr"):
             asset = record[f"{kind}_asset"]  # type: ignore[assignment]
             relative_path = str(asset["relative_path"])  # type: ignore[index]
@@ -1596,11 +1695,7 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
             expected_dimension = 130 if kind == "lr" else 520
             expected_resolution = 10.0 if kind == "lr" else 2.5
             expected_value = 100.0 if kind == "lr" else 120.0
-            expected_time = (
-                "2020-01-02T10:00:00Z"
-                if kind == "lr"
-                else "2020-01-03T10:00:00Z"
-            )
+            expected_time = str(record[f"{kind}_time_start"])
             assert asset["size_bytes"] == len(payloads[f"{kind}.tif"])  # type: ignore[index]
             assert asset["sha256"] == hashlib.sha256(  # type: ignore[index]
                 payloads[f"{kind}.tif"]
@@ -1662,7 +1757,7 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         second_audit["reused"],
     ] == [True, True, True, True]
     assert len(transport_calls) == 1
-    assert sorted(reader.top.read_calls) == list(range(36))
+    assert sorted(reader.top.read_calls) == [index for index in range(36) for _ in range(2)]
     assert len(adapter_write_calls) == 66
     assert all(
         path.resolve().is_relative_to(storage_root.resolve())

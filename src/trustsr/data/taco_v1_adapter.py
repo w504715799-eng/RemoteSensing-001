@@ -16,6 +16,7 @@ import numpy as np
 from rasterio.io import MemoryFile
 
 from trustsr.data.crosssensor_manifest import ExtractedAsset
+from trustsr.data.crosssensor_schema import AcquisitionTimes
 from trustsr.jsonio import atomic_write_bytes
 
 _EXPECTED_BANDS = ("B04", "B03", "B02", "B08")
@@ -140,6 +141,29 @@ def _time_start(nested: object, index: int) -> str:
     if type(value) is not str or not value:
         raise ValueError("nested asset stac:time_start must be a non-empty string")
     return value
+
+
+def load_crosssensor_metadata(
+    taco_path: Path,
+) -> tuple[tuple[Mapping[str, object], ...], tuple[AcquisitionTimes, ...]]:
+    """Load top records and source-ordered LR/HR times without reading pixels."""
+    top = _load_verified_top(taco_path)
+    records = _records_from_top(top)
+    read = getattr(top, "read", None)
+    if not callable(read):
+        raise ValueError("TACO top-level table does not expose nested metadata")
+    times: list[AcquisitionTimes] = []
+    for source_index in range(len(records)):
+        nested = read(source_index)
+        if len(nested) != 2:
+            raise ValueError("each sample must contain exactly two nested metadata rows")
+        times.append(
+            AcquisitionTimes(
+                lr_time_start=_time_start(nested, 0),
+                hr_time_start=_time_start(nested, 1),
+            )
+        )
+    return records, tuple(times)
 
 
 def _validate_descriptions(descriptions: tuple[str | None, ...]) -> None:

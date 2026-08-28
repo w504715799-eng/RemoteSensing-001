@@ -35,7 +35,7 @@ from trustsr.data.spatial_split import (
     assign_spatial_splits,
     minimum_cross_split_distances,
 )
-from trustsr.data.taco_v1_adapter import extract_pair, load_top_level_records
+from trustsr.data.taco_v1_adapter import extract_pair, load_crosssensor_metadata
 from trustsr.jsonio import atomic_write_bytes, canonical_json
 
 _SOURCE_REPOSITORY = "tacofoundation/SEN2NAIPv2"
@@ -95,9 +95,11 @@ def run_manifest(
     source, object_spec = _load_frozen_source(source_path)
     taco_path = source_paths(root, object_spec).final
     verified = verify_crosssensor(taco_path, object_spec)
-    records = load_top_level_records(verified.path)
+    records, acquisition_times = load_crosssensor_metadata(verified.path)
     _require_top_level_shape(records)
-    samples = normalize_top_level(records, expected_count=8_000)
+    samples = normalize_top_level(
+        records, acquisition_times=acquisition_times, expected_count=8_000
+    )
     assignments = assign_spatial_splits(samples)
     minimum_distances = minimum_cross_split_distances(assignments)
     choices = select_pilot(assignments)
@@ -201,6 +203,10 @@ def run_pilot(
             )
             if lr_asset.relative_path != "lr.tif" or hr_asset.relative_path != "hr.tif":
                 raise ValueError("extractor must return only lr.tif and hr.tif asset paths")
+            if lr_asset.time_start != record["lr_time_start"]:
+                raise ValueError("extracted LR time_start must equal manifest lr_time_start")
+            if hr_asset.time_start != record["hr_time_start"]:
+                raise ValueError("extracted HR time_start must equal manifest hr_time_start")
             prefix = PurePosixPath("pilot-v1", choice.split, choice.sample_id)
             assets[choice.sample_id] = (
                 replace(lr_asset, relative_path=(prefix / "lr.tif").as_posix()),
@@ -474,6 +480,8 @@ def _assignments_from_records(
             geotransform=tuple(cast(Sequence[float], record["geotransform"])),  # type: ignore[arg-type]
             raster_shape=tuple(cast(Sequence[int], record["raster_shape"])),  # type: ignore[arg-type]
             time_start=cast(str, record["time_start"]),
+            lr_time_start=cast(str, record["lr_time_start"]),
+            hr_time_start=cast(str, record["hr_time_start"]),
             admin0=cast(str | None, admin["admin0"]),
             admin1=cast(str | None, admin["admin1"]),
             admin2=cast(str | None, admin["admin2"]),

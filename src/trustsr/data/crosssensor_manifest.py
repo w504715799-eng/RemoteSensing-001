@@ -9,7 +9,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
-from trustsr.data.crosssensor_schema import CrosssensorSample
+from trustsr.data.crosssensor_schema import (
+    AcquisitionTimes,
+    CrosssensorSample,
+    validate_acquisition_times,
+)
 from trustsr.data.pilot_sampling import PilotChoice, correlation_bin, select_pilot
 from trustsr.data.spatial_split import AssignedSample
 from trustsr.jsonio import atomic_write_bytes, canonical_json
@@ -35,6 +39,8 @@ _MANIFEST_FIELDS = frozenset(
         "geotransform",
         "raster_shape",
         "time_start",
+        "lr_time_start",
+        "hr_time_start",
         "admin",
         "days_between",
         "correlation",
@@ -267,7 +273,6 @@ def _validate_manifest_record(value: object) -> dict[str, object]:
     _require_string(record["crs"], "crs")
     _require_finite_float_sequence(record["geotransform"], "geotransform", 6)
     _require_positive_integer_sequence(record["raster_shape"], "raster_shape", 2)
-    _require_string(record["time_start"], "time_start")
     admin = _require_mapping(record["admin"], "admin", frozenset({"admin0", "admin1", "admin2"}))
     for label, value in admin.items():
         if value is not None:
@@ -275,6 +280,15 @@ def _validate_manifest_record(value: object) -> dict[str, object]:
     days_between = _require_integer(record["days_between"], "days_between")
     if days_between not in {-1, 0, 1}:
         raise ValueError("days_between must be one of {-1, 0, 1}")
+    validate_acquisition_times(
+        record["time_start"],
+        AcquisitionTimes(
+            lr_time_start=record["lr_time_start"],  # type: ignore[arg-type]
+            hr_time_start=record["hr_time_start"],  # type: ignore[arg-type]
+        ),
+        days_between,
+        top_label="time_start",
+    )
     correlation = _require_float(record["correlation"], "correlation")
     if _require_integer(record["scale_factor"], "scale_factor") != 4:
         raise ValueError("scale_factor must equal 4")
@@ -290,6 +304,10 @@ def _validate_manifest_record(value: object) -> dict[str, object]:
             raise ValueError("only a pilot record may contain extracted assets")
         _validate_asset_record(lr_asset)
         _validate_asset_record(hr_asset)
+        if lr_asset["time_start"] != record["lr_time_start"]:
+            raise ValueError("lr_asset time_start must equal lr_time_start")
+        if hr_asset["time_start"] != record["hr_time_start"]:
+            raise ValueError("hr_asset time_start must equal hr_time_start")
     return dict(record)
 
 
@@ -315,6 +333,8 @@ def _assignment_from_manifest_record(record: Mapping[str, object]) -> AssignedSa
             geotransform=tuple(record["geotransform"]),  # type: ignore[arg-type]
             raster_shape=tuple(record["raster_shape"]),  # type: ignore[arg-type]
             time_start=record["time_start"],  # type: ignore[arg-type]
+            lr_time_start=record["lr_time_start"],  # type: ignore[arg-type]
+            hr_time_start=record["hr_time_start"],  # type: ignore[arg-type]
             admin0=admin["admin0"],  # type: ignore[index, arg-type]
             admin1=admin["admin1"],  # type: ignore[index, arg-type]
             admin2=admin["admin2"],  # type: ignore[index, arg-type]
@@ -371,6 +391,8 @@ def _manifest_record(
         "geotransform": list(sample.geotransform),
         "raster_shape": list(sample.raster_shape),
         "time_start": sample.time_start,
+        "lr_time_start": sample.lr_time_start,
+        "hr_time_start": sample.hr_time_start,
         "admin": {"admin0": sample.admin0, "admin1": sample.admin1, "admin2": sample.admin2},
         "days_between": sample.days_between,
         "correlation": sample.correlation,

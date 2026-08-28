@@ -18,6 +18,11 @@ def _assignment(
     correlation: float,
     group_id: str,
 ) -> AssignedSample:
+    lr_time_start = {
+        -1: "2020-01-01T10:00:00Z",
+        0: "2020-01-02T10:00:00Z",
+        1: "2020-01-03T10:00:00Z",
+    }[days_between]
     return AssignedSample(
         sample=CrosssensorSample(
             source_index=0,
@@ -28,6 +33,8 @@ def _assignment(
             geotransform=(10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0),
             raster_shape=(130, 130),
             time_start="2020-01-02T10:00:00Z",
+            lr_time_start=lr_time_start,
+            hr_time_start="2020-01-02T10:00:00Z",
             admin0="Colombia",
             admin1=None,
             admin2="Cali",

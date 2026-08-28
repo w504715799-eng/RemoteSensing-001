@@ -22,6 +22,14 @@ from trustsr.data.spatial_split import AssignedSample
 from trustsr.jsonio import canonical_json
 
 
+def _time_pair(days_between: int) -> tuple[str, str]:
+    return {
+        -1: ("2020-01-01T10:00:00Z", "2020-01-02T10:00:00Z"),
+        0: ("2020-01-02T10:00:00Z", "2020-01-02T10:00:00Z"),
+        1: ("2020-01-03T10:00:00Z", "2020-01-02T10:00:00Z"),
+    }[days_between]
+
+
 def _assignment(
     sample_id: str,
     split: str,
@@ -29,6 +37,7 @@ def _assignment(
     correlation: float,
     group_id: str,
 ) -> AssignedSample:
+    lr_time_start, hr_time_start = _time_pair(days_between)
     return AssignedSample(
         sample=CrosssensorSample(
             source_index=int(sample_id.rsplit("-", maxsplit=1)[-1]),
@@ -39,6 +48,8 @@ def _assignment(
             geotransform=(10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0),
             raster_shape=(130, 130),
             time_start="2020-01-02T10:00:00Z",
+            lr_time_start=lr_time_start,
+            hr_time_start=hr_time_start,
             admin0="Colombia",
             admin1=None,
             admin2="Cali",
@@ -71,7 +82,11 @@ def _assignments() -> tuple[AssignedSample, ...]:
     return tuple(reversed(result))
 
 
-def _asset(relative_path: str = "pilot-v1/development/sample-0/lr.tif") -> ExtractedAsset:
+def _asset(
+    relative_path: str = "pilot-v1/development/sample-0/lr.tif",
+    *,
+    time_start: str = "2020-01-02T10:00:00Z",
+) -> ExtractedAsset:
     return ExtractedAsset(
         relative_path=relative_path,
         size_bytes=123,
@@ -83,7 +98,16 @@ def _asset(relative_path: str = "pilot-v1/development/sample-0/lr.tif") -> Extra
         nodata=None,
         minimum=100.0,
         maximum=120.0,
-        time_start="2020-01-02T10:00:00Z",
+        time_start=time_start,
+    )
+
+
+def _asset_pair(choice: PilotChoice) -> tuple[ExtractedAsset, ExtractedAsset]:
+    lr_time_start, hr_time_start = _time_pair(choice.days_between)
+    prefix = f"pilot-v1/{choice.split}/{choice.sample_id}"
+    return (
+        _asset(f"{prefix}/lr.tif", time_start=lr_time_start),
+        _asset(f"{prefix}/hr.tif", time_start=hr_time_start),
     )
 
 
@@ -144,6 +168,8 @@ def test_write_manifest_is_canonical_sample_sorted_and_preextraction_assets_are_
             "geotransform",
             "raster_shape",
             "time_start",
+            "lr_time_start",
+            "hr_time_start",
             "admin",
             "days_between",
             "correlation",
@@ -157,6 +183,7 @@ def test_write_manifest_is_canonical_sample_sorted_and_preextraction_assets_are_
         for record in records
     )
     assert all(record["lr_asset"] is None and record["hr_asset"] is None for record in records)
+    assert all(record["lr_time_start"] and record["hr_time_start"] for record in records)
     assert all(record["schema"] == "trustsr.sen2naipv2-sample.v1" for record in records)
     assert all(
         record["source"]
@@ -178,13 +205,7 @@ def test_write_manifest_is_canonical_sample_sorted_and_preextraction_assets_are_
 def test_write_manifest_serializes_a_pair_for_every_selected_sample(tmp_path: Path) -> None:
     assignments = _assignments()
     choices = select_pilot(assignments)
-    assets = {
-        choice.sample_id: (
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/lr.tif"),
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/hr.tif"),
-        )
-        for choice in choices
-    }
+    assets = {choice.sample_id: _asset_pair(choice) for choice in choices}
 
     artifact = write_manifest(tmp_path / "assets.jsonl", assignments, choices, assets)
     records = load_manifest(artifact.path, expected_sha256=artifact.sha256)
@@ -203,7 +224,7 @@ def test_write_manifest_serializes_a_pair_for_every_selected_sample(tmp_path: Pa
         "nodata": None,
         "minimum": 100.0,
         "maximum": 120.0,
-        "time_start": "2020-01-02T10:00:00Z",
+        "time_start": "2020-01-01T10:00:00Z",
     }
 
 
@@ -272,7 +293,13 @@ def test_write_manifest_rejects_nonrelative_asset_paths(tmp_path: Path, relative
     assignments = _assignments()
     choices = select_pilot(assignments)
     assets = {
-        choice.sample_id: (_asset(relative_path), _asset("pilot-v1/valid/hr.tif"))
+        choice.sample_id: (
+            _asset(relative_path, time_start=_time_pair(choice.days_between)[0]),
+            _asset(
+                "pilot-v1/valid/hr.tif",
+                time_start=_time_pair(choice.days_between)[1],
+            ),
+        )
         for choice in choices
     }
 
@@ -383,13 +410,7 @@ def test_build_audit_rejects_a_missing_deterministic_pilot_record(tmp_path: Path
 def test_load_manifest_rejects_partial_extraction_state(tmp_path: Path) -> None:
     assignments = _assignments()
     choices = select_pilot(assignments)
-    assets = {
-        choice.sample_id: (
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/lr.tif"),
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/hr.tif"),
-        )
-        for choice in choices
-    }
+    assets = {choice.sample_id: _asset_pair(choice) for choice in choices}
     artifact = write_manifest(tmp_path / "assets.jsonl", assignments, choices, assets)
     records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
     selected_record = next(record for record in records if record["pilot"] is not None)
@@ -404,13 +425,7 @@ def test_load_manifest_rejects_partial_extraction_state(tmp_path: Path) -> None:
 def test_build_audit_rejects_partial_extraction_state(tmp_path: Path) -> None:
     assignments = _assignments()
     choices = select_pilot(assignments)
-    assets = {
-        choice.sample_id: (
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/lr.tif"),
-            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/hr.tif"),
-        )
-        for choice in choices
-    }
+    assets = {choice.sample_id: _asset_pair(choice) for choice in choices}
     artifact = write_manifest(tmp_path / "assets.jsonl", assignments, choices, assets)
     records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
     selected_record = next(record for record in records if record["pilot"] is not None)
@@ -442,3 +457,48 @@ def test_load_manifest_rejects_digest_mismatch_and_unknown_schema(tmp_path: Path
         load_manifest(path, expected_sha256="0" * 64)
     with pytest.raises(ValueError, match="unknown manifest schema"):
         load_manifest(path, expected_sha256=hashlib.sha256(payload).hexdigest())
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda record: record.pop("lr_time_start"), "invalid fields"),
+        (
+            lambda record: record.__setitem__(
+                "lr_time_start", "2020-01-02T10:00:00"
+            ),
+            "lr_time_start.*RFC 3339.*timezone",
+        ),
+        (
+            lambda record: record.__setitem__(
+                "hr_time_start", "2020-01-04T10:00:00Z"
+            ),
+            "signed days_between",
+        ),
+    ],
+)
+def test_load_manifest_strictly_validates_complete_temporal_provenance(
+    tmp_path: Path, mutation: object, message: str
+) -> None:
+    assignments = _assignments()
+    artifact = write_manifest(
+        tmp_path / "valid.jsonl", assignments, select_pilot(assignments), {}
+    )
+    records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
+    mutation(records[0])
+    tampered = tmp_path / "tampered-time.jsonl"
+
+    with pytest.raises(ValueError, match=message):
+        load_manifest(tampered, expected_sha256=_write_canonical_records(tampered, records))
+
+
+def test_write_manifest_rejects_extracted_asset_time_mismatch(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+    assets = {choice.sample_id: _asset_pair(choice) for choice in choices}
+    first = choices[0]
+    lr, hr = assets[first.sample_id]
+    assets[first.sample_id] = (replace(lr, time_start=hr.time_start), hr)
+
+    with pytest.raises(ValueError, match="lr_asset time_start.*lr_time_start"):
+        write_manifest(tmp_path / "mismatch.jsonl", assignments, choices, assets)

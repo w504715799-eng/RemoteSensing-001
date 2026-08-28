@@ -15,6 +15,7 @@ from affine import Affine
 from rasterio.io import MemoryFile
 
 import trustsr.data.taco_v1_adapter as taco_v1_adapter
+from trustsr.data.crosssensor_schema import AcquisitionTimes
 from trustsr.jsonio import atomic_write_bytes
 
 _BANDS = ("B04", "B03", "B02", "B08")
@@ -237,6 +238,67 @@ def test_load_top_level_records_accepts_the_exact_legacy_collection_version(
         {"tortilla:id": "sample-0"},
     )
     assert reader.load_calls == ["/cloud/source.taco"]
+
+
+def test_load_crosssensor_metadata_reads_all_nested_rows_without_reading_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[b"pixel-read-must-not-happen", b"pixel-read-must-not-happen"],
+        rows=[{"stac:time_start": _LR_TIME}, {"stac:time_start": _HR_TIME}],
+    )
+
+    records, acquisition_times = taco_v1_adapter.load_crosssensor_metadata(
+        Path("/cloud/source.taco")
+    )
+
+    assert records == ({"tortilla:id": "sample-0"},)
+    assert acquisition_times == (AcquisitionTimes(_LR_TIME, _HR_TIME),)
+    assert reader.load_metadata_calls == ["/cloud/source.taco"]
+    assert reader.load_calls == ["/cloud/source.taco"]
+    assert reader.top.read_calls == [0]
+    assert _NESTED.read_calls == []
+
+
+def test_load_crosssensor_metadata_rejects_nested_row_count_without_reading_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[b"pixel-read-must-not-happen"],
+        rows=[{"stac:time_start": _LR_TIME}],
+    )
+
+    with pytest.raises(ValueError, match="exactly two nested metadata rows"):
+        taco_v1_adapter.load_crosssensor_metadata(Path("/cloud/source.taco"))
+
+    assert _NESTED.read_calls == []
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{}, {"stac:time_start": _HR_TIME}],
+        [{"stac:time_start": _LR_TIME}, {"stac:time_start": ""}],
+    ],
+)
+def test_load_crosssensor_metadata_rejects_missing_nested_time_without_reading_pixels(
+    monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, object]]
+) -> None:
+    _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[b"pixel-read-must-not-happen", b"pixel-read-must-not-happen"],
+        rows=rows,
+    )
+
+    with pytest.raises(ValueError, match="nested asset stac:time_start"):
+        taco_v1_adapter.load_crosssensor_metadata(Path("/cloud/source.taco"))
+
+    assert _NESTED.read_calls == []
 
 
 def test_extract_pair_writes_raw_geotiffs_and_records_their_source_metadata(
