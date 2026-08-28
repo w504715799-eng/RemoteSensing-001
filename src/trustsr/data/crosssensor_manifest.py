@@ -9,7 +9,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
-from trustsr.data.pilot_sampling import PilotChoice, correlation_bin
+from trustsr.data.crosssensor_schema import CrosssensorSample
+from trustsr.data.pilot_sampling import PilotChoice, correlation_bin, select_pilot
 from trustsr.data.spatial_split import AssignedSample
 from trustsr.jsonio import atomic_write_bytes, canonical_json
 
@@ -295,29 +296,57 @@ def _validate_manifest_record(value: object) -> dict[str, object]:
 def _choices_by_sample_id(
     assignments_by_sample_id: Mapping[str, AssignedSample], choices: Sequence[PilotChoice]
 ) -> dict[str, PilotChoice]:
-    result: dict[str, PilotChoice] = {}
-    for choice in choices:
-        if not isinstance(choice, PilotChoice):
-            raise ValueError("pilot choices must be PilotChoice records")
-        assignment = assignments_by_sample_id.get(choice.sample_id)
-        if assignment is None:
-            raise ValueError("pilot choice references an unknown sample")
-        if choice.sample_id in result:
-            raise ValueError("pilot choices must have unique sample IDs")
-        if (
-            choice.split != assignment.split
-            or choice.days_between != assignment.sample.days_between
-            or choice.spatial_group_id != assignment.spatial_group_id
-            or choice.correlation_bin != correlation_bin(assignment.sample.correlation)
-        ):
-            raise ValueError("pilot choice does not match its assigned sample")
-        expected_selection = hashlib.sha256(
-            b"trustsr-pilot-v1\n" + choice.sample_id.encode("utf-8")
-        ).hexdigest()
-        if choice.selection_sha256 != expected_selection:
-            raise ValueError("pilot choice has an invalid selection SHA-256")
-        result[choice.sample_id] = choice
-    return result
+    expected_choices = select_pilot(tuple(assignments_by_sample_id.values()))
+    if tuple(choices) != expected_choices:
+        raise ValueError("pilot choices must equal the deterministic pilot choices")
+    return {choice.sample_id: choice for choice in expected_choices}
+
+
+def _assignment_from_manifest_record(record: Mapping[str, object]) -> AssignedSample:
+    centroid = record["centroid"]
+    admin = record["admin"]
+    return AssignedSample(
+        sample=CrosssensorSample(
+            source_index=record["source_index"],  # type: ignore[arg-type]
+            sample_id=record["sample_id"],  # type: ignore[arg-type]
+            longitude=centroid["longitude"],  # type: ignore[index, arg-type]
+            latitude=centroid["latitude"],  # type: ignore[index, arg-type]
+            crs=record["crs"],  # type: ignore[arg-type]
+            geotransform=tuple(record["geotransform"]),  # type: ignore[arg-type]
+            raster_shape=tuple(record["raster_shape"]),  # type: ignore[arg-type]
+            time_start=record["time_start"],  # type: ignore[arg-type]
+            admin0=admin["admin0"],  # type: ignore[index, arg-type]
+            admin1=admin["admin1"],  # type: ignore[index, arg-type]
+            admin2=admin["admin2"],  # type: ignore[index, arg-type]
+            days_between=record["days_between"],  # type: ignore[arg-type]
+            correlation=record["correlation"],  # type: ignore[arg-type]
+            scale_factor=record["scale_factor"],  # type: ignore[arg-type]
+        ),
+        spatial_group_id=record["spatial_group_id"],  # type: ignore[arg-type]
+        split=record["split"],  # type: ignore[arg-type]
+    )
+
+
+def _validate_manifest_stream(records: Sequence[Mapping[str, object]]) -> None:
+    expected_choices = select_pilot(
+        tuple(_assignment_from_manifest_record(record) for record in records)
+    )
+    expected_pilots = {
+        choice.sample_id: _pilot_record(choice)
+        for choice in expected_choices
+    }
+    for record in records:
+        if record["pilot"] != expected_pilots.get(record["sample_id"]):
+            raise ValueError(
+                "manifest pilot records do not equal the deterministic pilot selection"
+            )
+    asset_sample_ids = {
+        record["sample_id"]
+        for record in records
+        if record["lr_asset"] is not None
+    }
+    if asset_sample_ids and asset_sample_ids != set(expected_pilots):
+        raise ValueError("manifest extraction state must be all-null or contain every pilot pair")
 
 
 def _manifest_record(
@@ -389,6 +418,7 @@ def write_manifest(
         )
         for assignment in sorted(assignments, key=lambda assignment: assignment.sample.sample_id)
     )
+    _validate_manifest_stream(records)
     payload = b"".join(canonical_json(record) + b"\n" for record in records)
     digest = hashlib.sha256(payload).hexdigest()
     atomic_write_bytes(path, payload)
@@ -423,6 +453,7 @@ def load_manifest(path: Path, *, expected_sha256: str) -> tuple[dict[str, object
         raise ValueError("manifest sample IDs must be unique")
     if sample_ids != sorted(sample_ids):
         raise ValueError("manifest records must be sorted by sample_id")
+    _validate_manifest_stream(records)
     return tuple(records)
 
 
@@ -468,6 +499,7 @@ def build_audit(
     sample_ids = [record["sample_id"] for record in validated_records]
     if len(sample_ids) != len(set(sample_ids)):
         raise ValueError("manifest sample IDs must be unique")
+    _validate_manifest_stream(validated_records)
     groups_to_splits: dict[str, set[str]] = {}
     for record in validated_records:
         groups_to_splits.setdefault(str(record["spatial_group_id"]), set()).add(

@@ -17,7 +17,7 @@ from trustsr.data.crosssensor_manifest import (
     write_manifest,
 )
 from trustsr.data.crosssensor_schema import CrosssensorSample
-from trustsr.data.pilot_sampling import select_pilot
+from trustsr.data.pilot_sampling import PilotChoice, select_pilot
 from trustsr.data.spatial_split import AssignedSample
 from trustsr.jsonio import canonical_json
 
@@ -85,6 +85,33 @@ def _asset(relative_path: str = "pilot-v1/development/sample-0/lr.tif") -> Extra
         maximum=120.0,
         time_start="2020-01-02T10:00:00Z",
     )
+
+
+def _expected_counts() -> ExpectedCounts:
+    return ExpectedCounts(
+        samples=36,
+        components=36,
+        development_samples=12,
+        calibration_samples=12,
+        internal_test_samples=12,
+        development_components=12,
+        calibration_components=12,
+        internal_test_components=12,
+    )
+
+
+def _minimum_distances() -> dict[str, float]:
+    return {
+        "calibration:development": 5.1,
+        "calibration:internal_test": 5.2,
+        "development:internal_test": 5.3,
+    }
+
+
+def _write_canonical_records(path: Path, records: list[dict[str, object]]) -> str:
+    payload = b"".join(canonical_json(record) + b"\n" for record in records)
+    path.write_bytes(payload)
+    return hashlib.sha256(payload).hexdigest()
 
 
 def test_write_manifest_is_canonical_sample_sorted_and_preextraction_assets_are_null(
@@ -194,6 +221,52 @@ def test_write_manifest_preserves_empty_administrative_labels(tmp_path: Path) ->
     assert changed_record["admin"]["admin1"] == ""
 
 
+def test_write_manifest_rejects_empty_pilot_choices(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="deterministic pilot choices"):
+        write_manifest(tmp_path / "manifest.jsonl", _assignments(), (), {})
+
+
+def test_write_manifest_rejects_incomplete_pilot_choices(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+
+    with pytest.raises(ValueError, match="deterministic pilot choices"):
+        write_manifest(tmp_path / "manifest.jsonl", assignments, choices[:-1], {})
+
+
+def test_write_manifest_rejects_a_valid_but_nondeterministic_pilot_choice(tmp_path: Path) -> None:
+    assignments = _assignments() + (
+        _assignment("sample-36", "development", -1, 0.8, "alternative-candidate-group"),
+    )
+    choices = list(select_pilot(assignments))
+    selected = next(
+        choice
+        for choice in choices
+        if (choice.split, choice.days_between, choice.correlation_bin) == ("development", -1, 0)
+    )
+    alternative = next(
+        assignment
+        for assignment in assignments
+        if assignment.split == "development"
+        and assignment.sample.days_between == -1
+        and assignment.sample.correlation == 0.8
+        and assignment.sample.sample_id != selected.sample_id
+    )
+    choices[choices.index(selected)] = PilotChoice(
+        sample_id=alternative.sample.sample_id,
+        split=alternative.split,
+        days_between=alternative.sample.days_between,
+        correlation_bin=0,
+        spatial_group_id=alternative.spatial_group_id,
+        selection_sha256=hashlib.sha256(
+            b"trustsr-pilot-v1\n" + alternative.sample.sample_id.encode("utf-8")
+        ).hexdigest(),
+    )
+
+    with pytest.raises(ValueError, match="deterministic pilot choices"):
+        write_manifest(tmp_path / "manifest.jsonl", assignments, choices, {})
+
+
 @pytest.mark.parametrize("relative_path", ["/pilot/lr.tif", "pilot/../lr.tif"])
 def test_write_manifest_rejects_nonrelative_asset_paths(tmp_path: Path, relative_path: str) -> None:
     assignments = _assignments()
@@ -212,25 +285,12 @@ def test_build_audit_reports_exact_synthetic_counts_and_rejects_leakage(tmp_path
     choices = select_pilot(assignments)
     artifact = write_manifest(tmp_path / "manifest.jsonl", assignments, choices, {})
     records = load_manifest(artifact.path, expected_sha256=artifact.sha256)
-    expected = ExpectedCounts(
-        samples=36,
-        components=36,
-        development_samples=12,
-        calibration_samples=12,
-        internal_test_samples=12,
-        development_components=12,
-        calibration_components=12,
-        internal_test_components=12,
-    )
+    expected = _expected_counts()
 
     audit = build_audit(
         records,
         manifest_sha256=artifact.sha256,
-        minimum_distances={
-            "calibration:development": 5.1,
-            "calibration:internal_test": 5.2,
-            "development:internal_test": 5.3,
-        },
+        minimum_distances=_minimum_distances(),
         expected=expected,
     )
 
@@ -266,22 +326,103 @@ def test_build_audit_reports_exact_synthetic_counts_and_rejects_leakage(tmp_path
         build_audit(
             records,
             manifest_sha256=artifact.sha256,
-            minimum_distances={"calibration:development": 5.0},
+            minimum_distances={
+                "calibration:development": 5.0,
+                "calibration:internal_test": 5.2,
+                "development:internal_test": 5.3,
+            },
             expected=expected,
         )
 
     records_with_shared_group = [dict(record) for record in records]
-    records_with_shared_group[0]["spatial_group_id"] = records_with_shared_group[1][
+    records_by_sample_id = {
+        record["sample_id"]: record for record in records_with_shared_group
+    }
+    records_by_sample_id["sample-12"]["spatial_group_id"] = records_by_sample_id["sample-0"][
         "spatial_group_id"
     ]
-    records_with_shared_group[0]["split"] = "development"
-    records_with_shared_group[1]["split"] = "calibration"
     with pytest.raises(ValueError, match="shared spatial group"):
         build_audit(
             records_with_shared_group,
             manifest_sha256=artifact.sha256,
-            minimum_distances={"calibration:development": 5.1},
+            minimum_distances=_minimum_distances(),
             expected=expected,
+        )
+
+
+def test_load_manifest_rejects_a_missing_deterministic_pilot_record(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+    artifact = write_manifest(tmp_path / "valid.jsonl", assignments, choices, {})
+    records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
+    selected_record = next(record for record in records if record["pilot"] is not None)
+    selected_record["pilot"] = None
+    tampered = tmp_path / "tampered.jsonl"
+
+    with pytest.raises(ValueError, match="deterministic pilot selection"):
+        load_manifest(tampered, expected_sha256=_write_canonical_records(tampered, records))
+
+
+def test_build_audit_rejects_a_missing_deterministic_pilot_record(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+    artifact = write_manifest(tmp_path / "valid.jsonl", assignments, choices, {})
+    records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
+    selected_record = next(record for record in records if record["pilot"] is not None)
+    selected_record["pilot"] = None
+
+    with pytest.raises(ValueError, match="deterministic pilot selection"):
+        build_audit(
+            records,
+            manifest_sha256=artifact.sha256,
+            minimum_distances=_minimum_distances(),
+            expected=_expected_counts(),
+        )
+
+
+def test_load_manifest_rejects_partial_extraction_state(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+    assets = {
+        choice.sample_id: (
+            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/lr.tif"),
+            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/hr.tif"),
+        )
+        for choice in choices
+    }
+    artifact = write_manifest(tmp_path / "assets.jsonl", assignments, choices, assets)
+    records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
+    selected_record = next(record for record in records if record["pilot"] is not None)
+    selected_record["lr_asset"] = None
+    selected_record["hr_asset"] = None
+    tampered = tmp_path / "partial-assets.jsonl"
+
+    with pytest.raises(ValueError, match="extraction state"):
+        load_manifest(tampered, expected_sha256=_write_canonical_records(tampered, records))
+
+
+def test_build_audit_rejects_partial_extraction_state(tmp_path: Path) -> None:
+    assignments = _assignments()
+    choices = select_pilot(assignments)
+    assets = {
+        choice.sample_id: (
+            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/lr.tif"),
+            _asset(f"pilot-v1/{choice.split}/{choice.sample_id}/hr.tif"),
+        )
+        for choice in choices
+    }
+    artifact = write_manifest(tmp_path / "assets.jsonl", assignments, choices, assets)
+    records = list(load_manifest(artifact.path, expected_sha256=artifact.sha256))
+    selected_record = next(record for record in records if record["pilot"] is not None)
+    selected_record["lr_asset"] = None
+    selected_record["hr_asset"] = None
+
+    with pytest.raises(ValueError, match="extraction state"):
+        build_audit(
+            records,
+            manifest_sha256=artifact.sha256,
+            minimum_distances=_minimum_distances(),
+            expected=_expected_counts(),
         )
 
 
