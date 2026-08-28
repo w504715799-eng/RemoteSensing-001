@@ -44,9 +44,11 @@ require_repository() {
   local value="$1"
   local resolved
   validate_raw_path "$value" || die 'repository directory'
+  [[ "$value" != *:* ]] || die 'repository directory must not contain a colon'
   reject_symlink_components "$value" || die 'repository directory must not contain a symlink'
   [[ -d "$value" && ! -L "$value" && -f "$value/pyproject.toml" && -d "$value/src/trustsr" ]] || die 'repository directory must be a checked-out project'
   resolved="$(realpath -e -- "$value")" || die 'repository directory'
+  [[ "$resolved" != *:* ]] || die 'repository directory must not contain a colon'
   printf '%s\n' "$resolved"
 }
 

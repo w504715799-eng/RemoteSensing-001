@@ -597,6 +597,43 @@ def test_runner_executes_the_phase2b1a_module_from_the_supplied_checkout(
     assert marker.read_text(encoding="utf-8") == "supplied"
 
 
+def test_runner_rejects_a_colon_bearing_checkout_before_base_python_exec(
+    tmp_path: Path,
+) -> None:
+    """A colon cannot represent one unambiguous POSIX PYTHONPATH entry."""
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+    colon_repository = tmp_path / "repository:colon"
+    repository.rename(colon_repository)
+    marker = tmp_path / "module-origin"
+    _write_stage_module(colon_repository / "src", marker, "supplied")
+    stale_source = tmp_path / "stale-source"
+    _write_stage_module(stale_source, marker, "stale")
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment["PHASE2B1A_MODULE_MARKER"] = str(marker)
+    environment["PYTHONPATH"] = str(stale_source)
+
+    completed = _invoke_internal(
+        RUNNER,
+        "run_main",
+        _passthrough_base_python(tmp_path),
+        [
+            str(storage_root),
+            str(colon_repository),
+            "manifest",
+            "--confirm-cloud-storage",
+            "--source",
+            "source.json",
+        ],
+        environment,
+    )
+
+    assert completed.returncode != 0
+    assert "repository directory" in completed.stderr.lower()
+    assert not marker.exists()
+
+
 def test_runner_passes_distinct_safe_argv_to_the_base_python_cli(tmp_path: Path) -> None:
     """Shell interpolation or a console launcher could change the requested cloud operation."""
     storage_root = tmp_path / "persistent"
