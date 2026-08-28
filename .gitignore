@@ -6,9 +6,13 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 /data/
-/artifacts/
+/artifacts/*
+!/artifacts/datasets/
 /models/
 /checkpoints/
 *.ckpt
 *.pth
 *.pt
+*.taco
+artifacts/datasets/cache/
+artifacts/datasets/pixels/

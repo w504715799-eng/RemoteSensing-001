@@ -23,6 +23,7 @@ trustsr-smoke = "trustsr.cli.smoke_baseline:main"
 trustsr-benchmark = "trustsr.cli.benchmark_baselines:main"
 trustsr-ldsr-gpu = "trustsr.cli.ldsr_gpu:main"
 trustsr-conformal-smoke = "trustsr.cli.conformal_smoke:main"
+trustsr-dataset-audit = "trustsr.cli.dataset_audit:main"
 
 [dependency-groups]
 dev = [
