@@ -15,25 +15,13 @@ from typing import Any
 import torch
 from safetensors.torch import load_file, save_file
 
+from trustsr.jsonio import canonical_json
+
 SCHEMA_VERSION = 1
 
 
 class CacheIntegrityError(RuntimeError):
     """A cache entry exists but is corrupt or does not match its identity."""
-
-
-def canonical_json(value: Any) -> bytes:
-    """Return canonical UTF-8 JSON (the representation used for identities)."""
-    try:
-        return json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise ValueError("value is not canonical JSON") from exc
 
 
 def tensor_sha256(tensor: torch.Tensor) -> str:
