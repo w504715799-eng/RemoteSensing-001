@@ -452,6 +452,37 @@ def test_extract_pair_rejects_a_vsi_descriptor_for_another_source(
         taco_v1_adapter.extract_pair(taco_path, 0, tmp_path / "sample", _BANDS)
 
 
+def test_extract_pair_accepts_submillimetre_serialization_drift_in_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lr_bytes = _geotiff_bytes(width=130, height=130, value=100)
+    hr_bytes = _geotiff_bytes(
+        width=520,
+        height=520,
+        value=120,
+        transform=Affine(
+            2.5,
+            0.0,
+            500000.00034,
+            0.0,
+            -2.5,
+            400000.00034,
+        ),
+    )
+    _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[lr_bytes, hr_bytes],
+    )
+
+    taco_v1_adapter.extract_pair(
+        Path("/cloud/source.taco"), 0, tmp_path / "sample", _BANDS
+    )
+
+    assert (tmp_path / "sample" / "lr.tif").is_file()
+    assert (tmp_path / "sample" / "hr.tif").is_file()
+
+
 @pytest.mark.parametrize(
     ("assets", "rows", "message"),
     [

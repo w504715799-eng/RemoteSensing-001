@@ -27,7 +27,8 @@ _FORMAT_VERSION = "0.4.0"
 _FORMAT_KEYS = ("taco_version", "version")
 _LR_DIMENSIONS = (130, 130)
 _HR_DIMENSIONS = (520, 520)
-_TOLERANCE = 1e-6
+_RESOLUTION_TOLERANCE_M = 1e-6
+_BOUNDS_TOLERANCE_M = 1e-3
 _VSI_SUBFILE_RE = re.compile(r"/vsisubfile/(\d+)_(\d+),(.+)")
 
 
@@ -300,7 +301,9 @@ def _raster_kind(raster: _Raster) -> str:
     else:
         raise ValueError("GeoTIFF dimensions must be either 130x130 or 520x520")
     if not all(
-        math.isclose(value, expected_resolution, rel_tol=0.0, abs_tol=_TOLERANCE)
+        math.isclose(
+            value, expected_resolution, rel_tol=0.0, abs_tol=_RESOLUTION_TOLERANCE_M
+        )
         for value in raster.resolution
     ):
         raise ValueError(f"{kind.upper()} GeoTIFF resolution is not {expected_resolution:g} m")
@@ -320,7 +323,7 @@ def _validate_pair_geometry(lr: _Raster, hr: _Raster) -> None:
     if lr.crs != hr.crs:
         raise ValueError("LR and HR GeoTIFF CRS values must match")
     if not all(
-        math.isclose(left, right, rel_tol=0.0, abs_tol=_TOLERANCE)
+        math.isclose(left, right, rel_tol=0.0, abs_tol=_BOUNDS_TOLERANCE_M)
         for left, right in zip(lr.bounds, hr.bounds, strict=True)
     ):
         raise ValueError("LR and HR GeoTIFF bounds must match")
