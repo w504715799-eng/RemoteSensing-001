@@ -183,11 +183,11 @@ def validate_acquisition_times(
         acquisition_times.hr_time_start, "hr_time_start"
     )
     signed_days = (
-        lr_datetime.astimezone(UTC).date()
-        - hr_datetime.astimezone(UTC).date()
+        hr_datetime.astimezone(UTC).date()
+        - lr_datetime.astimezone(UTC).date()
     ).days
     if signed_days != days_between:
-        raise ValueError("LR minus HR UTC calendar dates must equal signed days_between")
+        raise ValueError("HR minus LR UTC calendar dates must equal signed days_between")
     return top_value, AcquisitionTimes(lr_value, hr_value)
 
 

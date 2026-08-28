@@ -86,9 +86,9 @@ class _StageSequenceNested:
     ) -> None:
         self._payloads = (lr_payload, hr_payload)
         lr_time_start = {
-            -1: "2020-01-01T10:00:00Z",
+            -1: "2020-01-03T10:00:00Z",
             0: "2020-01-02T10:00:00Z",
-            1: "2020-01-03T10:00:00Z",
+            1: "2020-01-01T10:00:00Z",
         }[days_between]
         self.iloc = _StageSequenceRows(
             (
@@ -664,9 +664,9 @@ def _pilot_assignments() -> tuple[AssignedSample, ...]:
             for bin_index, correlation in enumerate(correlations):
                 sample_id = f"{split}-{days_between}-{bin_index}"
                 lr_time_start = {
-                    -1: "2020-01-01T10:00:00Z",
+                    -1: "2020-01-03T10:00:00Z",
                     0: "2020-01-02T10:00:00Z",
-                    1: "2020-01-03T10:00:00Z",
+                    1: "2020-01-01T10:00:00Z",
                 }[days_between]
                 assignments.append(
                     AssignedSample(

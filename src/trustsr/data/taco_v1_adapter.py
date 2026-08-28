@@ -8,6 +8,7 @@ import importlib.metadata
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -98,7 +99,15 @@ def _records_from_top(top: object) -> tuple[Mapping[str, object], ...]:
     records = to_dict(orient="records")
     if not isinstance(records, list) or not all(isinstance(record, Mapping) for record in records):
         raise ValueError("TACO top-level records must be mappings")
-    return tuple(dict(record) for record in records)
+    normalized: list[Mapping[str, object]] = []
+    for record in records:
+        normalized_record = dict(record)
+        if "stac:time_start" in normalized_record:
+            normalized_record["stac:time_start"] = _canonical_time_start(
+                normalized_record["stac:time_start"], "top-level stac:time_start"
+            )
+        normalized.append(normalized_record)
+    return tuple(normalized)
 
 
 def load_top_level_records(taco_path: Path) -> tuple[Mapping[str, object], ...]:
@@ -136,11 +145,20 @@ def _nested_row(nested: object, index: int) -> Mapping[str, object]:
     return row
 
 
+def _canonical_time_start(value: object, label: str) -> str:
+    if type(value) is str and value:
+        return value
+    if type(value) in {int, float} and math.isfinite(value):
+        try:
+            return datetime.fromtimestamp(value, UTC).isoformat().replace("+00:00", "Z")
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError(f"{label} must be a valid timestamp") from exc
+    raise ValueError(f"{label} must be a non-empty string or finite Unix epoch seconds")
+
+
 def _time_start(nested: object, index: int) -> str:
     value = _nested_row(nested, index).get("stac:time_start")
-    if type(value) is not str or not value:
-        raise ValueError("nested asset stac:time_start must be a non-empty string")
-    return value
+    return _canonical_time_start(value, "nested asset stac:time_start")
 
 
 def load_crosssensor_metadata(

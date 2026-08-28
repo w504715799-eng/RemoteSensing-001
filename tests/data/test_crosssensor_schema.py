@@ -196,9 +196,9 @@ def test_rejects_invalid_or_reversed_nested_acquisition_times(
         normalize_top_level([_row()], acquisition_times=[times], expected_count=1)
 
 
-def test_accepts_signed_lr_minus_hr_utc_calendar_day_relation() -> None:
+def test_accepts_signed_hr_minus_lr_utc_calendar_day_relation() -> None:
     row = _row()
-    row["days_between"] = -1
+    row["days_between"] = 1
 
     sample = normalize_top_level(
         [row],
@@ -206,7 +206,7 @@ def test_accepts_signed_lr_minus_hr_utc_calendar_day_relation() -> None:
         expected_count=1,
     )[0]
 
-    assert sample.days_between == -1
+    assert sample.days_between == 1
     assert sample.lr_time_start == "2020-01-02T10:00:00Z"
     assert sample.hr_time_start == "2020-01-03T00:30:00+00:00"
 

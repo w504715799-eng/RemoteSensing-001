@@ -262,6 +262,29 @@ def test_load_crosssensor_metadata_reads_all_nested_rows_without_reading_pixels(
     assert _NESTED.read_calls == []
 
 
+def test_load_crosssensor_metadata_normalizes_legacy_epoch_seconds_to_rfc3339(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[b"pixel-read-must-not-happen", b"pixel-read-must-not-happen"],
+        rows=[
+            {"stac:time_start": 1_577_959_200.0},
+            {"stac:time_start": 1_578_045_600.0},
+        ],
+    )
+    reader.top.rows[0]["stac:time_start"] = 1_577_959_200.0
+
+    records, acquisition_times = taco_v1_adapter.load_crosssensor_metadata(
+        Path("/cloud/source.taco")
+    )
+
+    assert records[0]["stac:time_start"] == _LR_TIME
+    assert acquisition_times == (AcquisitionTimes(_LR_TIME, _HR_TIME),)
+    assert _NESTED.read_calls == []
+
+
 def test_load_crosssensor_metadata_rejects_nested_row_count_without_reading_pixels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

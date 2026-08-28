@@ -19,9 +19,9 @@ def _assignment(
     group_id: str,
 ) -> AssignedSample:
     lr_time_start = {
-        -1: "2020-01-01T10:00:00Z",
+        -1: "2020-01-03T10:00:00Z",
         0: "2020-01-02T10:00:00Z",
-        1: "2020-01-03T10:00:00Z",
+        1: "2020-01-01T10:00:00Z",
     }[days_between]
     return AssignedSample(
         sample=CrosssensorSample(

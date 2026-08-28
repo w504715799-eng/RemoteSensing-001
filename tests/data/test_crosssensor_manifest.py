@@ -24,9 +24,9 @@ from trustsr.jsonio import canonical_json
 
 def _time_pair(days_between: int) -> tuple[str, str]:
     return {
-        -1: ("2020-01-01T10:00:00Z", "2020-01-02T10:00:00Z"),
+        -1: ("2020-01-03T10:00:00Z", "2020-01-02T10:00:00Z"),
         0: ("2020-01-02T10:00:00Z", "2020-01-02T10:00:00Z"),
-        1: ("2020-01-03T10:00:00Z", "2020-01-02T10:00:00Z"),
+        1: ("2020-01-01T10:00:00Z", "2020-01-02T10:00:00Z"),
     }[days_between]
 
 
@@ -224,7 +224,7 @@ def test_write_manifest_serializes_a_pair_for_every_selected_sample(tmp_path: Pa
         "nodata": None,
         "minimum": 100.0,
         "maximum": 120.0,
-        "time_start": "2020-01-01T10:00:00Z",
+        "time_start": "2020-01-03T10:00:00Z",
     }
 
 
