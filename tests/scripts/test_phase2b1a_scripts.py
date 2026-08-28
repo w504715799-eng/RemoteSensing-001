@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -15,7 +16,9 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 SCRIPTS = REPOSITORY / "scripts" / "phase2b1a"
 BOOTSTRAP = SCRIPTS / "bootstrap_reader.sh"
 RUNNER = SCRIPTS / "run_cloud.sh"
+README = REPOSITORY / "README.md"
 REQUIREMENTS = REPOSITORY / "requirements" / "cloud-taco-v1.txt"
+RUNTIME_REQUIREMENTS = REPOSITORY / "requirements" / "cloud-phase2b1a-runtime.txt"
 PINNED_REQUIREMENTS = (
     "tacoreader==0.4.5",
     "geopandas==1.1.4",
@@ -23,6 +26,12 @@ PINNED_REQUIREMENTS = (
     "shapely==2.1.2",
     "pyproj==3.7.2",
     "pyogrio==0.13.0",
+)
+PINNED_RUNTIME_REQUIREMENTS = (
+    "numpy==2.5.2",
+    "pandas==2.3.3",
+    "scipy==1.18.1",
+    "rasterio==1.5.1",
 )
 STORAGE_ROOT_PREFIXES = (
     "--st",
@@ -57,6 +66,7 @@ def _environment(
         fake_bin / "mountpoint",
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
+        "printf 'mountpoint\\n' >> \"$COMMAND_LOG\"\n"
         "[[ \"$*\" == \"-q -- $FAKE_MOUNT_ROOT\" ]] || exit 99\n"
         "[[ \"${FAKE_MOUNT_AVAILABLE:-1}\" == 1 ]]\n",
     )
@@ -97,13 +107,22 @@ def _fake_base_python(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
         "_fixed = {\n"
         "    'tacoreader': '0.4.5', 'geopandas': '1.1.4', 'pyarrow': '25.0.1',\n"
         "    'shapely': '2.1.2', 'pyproj': '3.7.2', 'pyogrio': '0.13.0',\n"
+        "    'numpy': '2.5.2', 'pandas': '2.3.3', 'scipy': '1.18.1',\n"
+        "    'rasterio': '1.5.1',\n"
         "}\n"
         "_overrides = json.loads(os.environ.get('FAKE_VERSION_OVERRIDES', '{}'))\n"
         "def _version(name):\n"
         "    if name in _overrides: return _overrides[name]\n"
         "    if name in _fixed: return _fixed[name]\n"
         "    return _real_version(name)\n"
-        "metadata.version = _version\n",
+        "metadata.version = _version\n"
+        "import builtins\n"
+        "_real_import = builtins.__import__\n"
+        "def _import(name, *args, **kwargs):\n"
+        "    if name == os.environ.get('FAKE_IMPORT_FAILURE'):\n"
+        "        raise ImportError(f'blocked test import: {name}')\n"
+        "    return _real_import(name, *args, **kwargs)\n"
+        "builtins.__import__ = _import\n",
         encoding="utf-8",
     )
     (modules / "tacoreader.py").write_text(
@@ -129,7 +148,7 @@ arguments = sys.argv[1:]
 with Path(os.environ['FAKE_PYTHON_CALLS']).open('a', encoding='utf-8') as stream:
     stream.write(json.dumps(arguments) + '\\n')
 if arguments == ['--version']:
-    print('Python 3.12.8')
+    print(os.environ.get('FAKE_PYTHON_VERSION', 'Python 3.12.8'))
     raise SystemExit(0)
 if arguments[:4] == ['-m', 'pip', 'install', '--dry-run']:
     report_path = Path(arguments[arguments.index('--report') + 1])
@@ -191,6 +210,14 @@ def _calls(path: Path) -> list[list[str]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _phase2b1a_readme_shell_block() -> str:
+    section = README.read_text(encoding="utf-8").split(
+        "## Phase 2B1A cloud crosssensor pilot", maxsplit=1
+    )[1]
+    fenced = section.split("```bash\n", maxsplit=1)[1]
+    return fenced.split("\n```", maxsplit=1)[0]
+
+
 def _repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repository"
     (repository / "src" / "trustsr").mkdir(parents=True)
@@ -199,7 +226,19 @@ def _repository(tmp_path: Path) -> Path:
     (repository / "requirements" / "cloud-taco-v1.txt").write_text(
         "fixture\n", encoding="utf-8"
     )
+    (repository / "requirements" / "cloud-phase2b1a-runtime.txt").write_text(
+        "runtime-fixture\n", encoding="utf-8"
+    )
+    _write_plain_stage_module(repository / "src")
     return repository
+
+
+def _write_plain_stage_module(source_root: Path) -> None:
+    package = source_root / "trustsr" / "cli"
+    package.mkdir(parents=True, exist_ok=True)
+    (package.parent / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "phase2b1a.py").write_text("VALUE = 'fixture'\n", encoding="utf-8")
 
 
 def _write_stage_module(source_root: Path, marker: Path, label: str) -> None:
@@ -232,6 +271,28 @@ def _passthrough_base_python(tmp_path: Path) -> Path:
 def test_cloud_requirements_are_an_exact_isolated_snapshot() -> None:
     """A version drift would change the reader environment used for extraction."""
     assert REQUIREMENTS.read_text(encoding="utf-8").splitlines() == list(PINNED_REQUIREMENTS)
+    assert RUNTIME_REQUIREMENTS.read_text(encoding="utf-8").splitlines() == list(
+        PINNED_RUNTIME_REQUIREMENTS
+    )
+
+
+def test_bootstrap_requires_python_312_before_any_pip_operation(tmp_path: Path) -> None:
+    """Removing the interpreter gate could resolve the pinned snapshot on another ABI."""
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+    base_python, python_environment, calls = _fake_base_python(tmp_path)
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment.update(python_environment)
+    environment["FAKE_PYTHON_VERSION"] = "Python 3.11.9"
+
+    completed = _invoke_internal(
+        BOOTSTRAP, "bootstrap_main", base_python, [str(storage_root), str(repository)], environment
+    )
+
+    assert completed.returncode != 0
+    assert "python 3.12" in completed.stderr.lower()
+    assert _calls(calls) == [["--version"]]
 
 
 def test_shell_scripts_parse_before_their_implementation_exists() -> None:
@@ -241,6 +302,86 @@ def test_shell_scripts_parse_before_their_implementation_exists() -> None:
             ["bash", "-n", str(script)], check=False, capture_output=True, text=True
         )
         assert completed.returncode == 0, completed.stderr
+
+
+def test_readme_runs_distinct_pre_and_post_manifest_stage_contract(tmp_path: Path) -> None:
+    """Reusing one manifest variable would audit the pre-extraction artifact."""
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts" / "phase2b1a"
+    scripts.mkdir(parents=True)
+    call_log = tmp_path / "readme-calls.jsonl"
+    fake = f"""#!{sys.executable}
+import json
+import os
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+with Path(os.environ['PHASE2B1A_CALL_LOG']).open('a', encoding='utf-8') as stream:
+    stream.write(json.dumps(arguments) + '\\n')
+if len(arguments) == 2:
+    raise SystemExit(0)
+stage = arguments[2]
+digests = {{
+    'download': {{'source_sha256': 'c' * 64}},
+    'manifest': {{'manifest_sha256': 'a' * 64}},
+    'pilot': {{'input_manifest_sha256': 'a' * 64, 'manifest_sha256': 'b' * 64}},
+    'audit': {{'audit_sha256': 'd' * 64, 'manifest_sha256': 'b' * 64}},
+}}
+print(json.dumps({{'stage': stage, 'digests': digests[stage], 'counts': {{}}, 'reused': False}}))
+"""
+    for name in ("bootstrap_reader.sh", "run_cloud.sh"):
+        _make_executable(scripts / name, fake)
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    block = _phase2b1a_readme_shell_block()
+    assert "/opt/conda/bin/python" in block
+    portable_block = block.replace("/opt/conda/bin/python", shlex.quote(sys.executable))
+    environment = {
+        **os.environ,
+        "PHASE2B1A_CALL_LOG": str(call_log),
+        "PHASE2B1A_STORAGE_ROOT": str(storage_root),
+        "PHASE2B1A_TRANSPORT_URL": "https://transport.example.invalid/object.taco",
+    }
+
+    completed = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", portable_block],
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    calls = _calls(call_log)
+    assert [call[2] for call in calls[1:]] == ["download", "manifest", "pilot", "audit"]
+    expected_source = checkout / "artifacts" / "datasets" / "sen2naipv2-source-v1.json"
+    for call in calls[1:]:
+        assert call[:2] == [str(storage_root), str(checkout)]
+        assert "--confirm-cloud-storage" in call
+        assert call[call.index("--source") + 1] == str(expected_source)
+    assert calls[1][calls[1].index("--transport-url") + 1] == environment[
+        "PHASE2B1A_TRANSPORT_URL"
+    ]
+    pre_manifest = (
+        storage_root / "trustsr" / "phase2b1a" / "manifests" / ("a" * 64) / "samples.jsonl"
+    )
+    post_manifest = (
+        storage_root / "trustsr" / "phase2b1a" / "manifests" / ("b" * 64) / "samples.jsonl"
+    )
+    assert calls[3][calls[3].index("--manifest") + 1] == str(pre_manifest)
+    assert calls[4][calls[4].index("--manifest") + 1] == str(post_manifest)
+    assert pre_manifest != post_manifest
+    audit_path = (
+        storage_root
+        / "trustsr"
+        / "phase2b1a"
+        / "audits"
+        / ("b" * 64)
+        / "phase2b1a-audit.json"
+    )
+    assert str(audit_path) in completed.stdout
 
 
 @pytest.mark.parametrize("script,function", ((BOOTSTRAP, "bootstrap_main"), (RUNNER, "run_main")))
@@ -324,6 +465,34 @@ def test_cloud_scripts_reject_storage_symlinks_and_the_current_home(
     assert _calls(calls) == []
 
 
+@pytest.mark.parametrize(
+    "root_alias",
+    ("/tmp/..", "//", "{home}/."),
+)
+@pytest.mark.parametrize("script,function", ((BOOTSTRAP, "bootstrap_main"), (RUNNER, "run_main")))
+def test_cloud_scripts_reject_canonical_root_aliases_before_external_commands(
+    root_alias: str, script: Path, function: str, tmp_path: Path
+) -> None:
+    """Removing post-realpath rejection could treat a lexical root alias as persistent storage."""
+    mount_root = tmp_path / "persistent"
+    mount_root.mkdir()
+    repository = _repository(tmp_path)
+    base_python, python_environment, calls = _fake_base_python(tmp_path)
+    environment, command_log = _environment(tmp_path, mount_root=mount_root)
+    environment.update(python_environment)
+    invalid_root = root_alias.format(home=environment["HOME"])
+    arguments = [invalid_root, str(repository)]
+    if function == "run_main":
+        arguments.extend(("manifest", "--confirm-cloud-storage", "--source", "source.json"))
+
+    completed = _invoke_internal(script, function, base_python, arguments, environment)
+
+    assert completed.returncode != 0
+    assert "storage root" in completed.stderr.lower()
+    assert not command_log.exists()
+    assert _calls(calls) == []
+
+
 @pytest.mark.parametrize("script,function", ((BOOTSTRAP, "bootstrap_main"), (RUNNER, "run_main")))
 def test_cloud_scripts_require_strictly_more_than_fifteen_gib(
     script: Path, function: str, tmp_path: Path
@@ -345,7 +514,8 @@ def test_cloud_scripts_require_strictly_more_than_fifteen_gib(
 
     assert completed.returncode != 0
     assert "15 gib" in completed.stderr.lower()
-    assert _calls(calls) == []
+    expected_calls = [["--version"]] if function == "bootstrap_main" else []
+    assert _calls(calls) == expected_calls
 
 
 @pytest.mark.parametrize("protected", ("torch", "torchvision", "triton", "NVIDIA.CUBLAS"))
@@ -368,9 +538,16 @@ def test_bootstrap_rejects_protected_packages_from_the_dry_run(
     assert completed.returncode != 0
     assert "protected" in completed.stderr.lower()
     observed = _calls(calls)
-    assert len(observed) == 2
-    assert observed[0][:4] == ["-m", "pip", "install", "--dry-run"]
-    assert observed[1][0] == "-"
+    assert len(observed) == 3
+    assert observed[0] == ["--version"]
+    assert observed[1][:4] == ["-m", "pip", "install", "--dry-run"]
+    assert observed[1][-4:] == [
+        "-r",
+        str(repository / "requirements" / "cloud-taco-v1.txt"),
+        "-r",
+        str(repository / "requirements" / "cloud-phase2b1a-runtime.txt"),
+    ]
+    assert observed[2][0] == "-"
     assert not Path(environment["CONDA_CALLED"]).exists()
 
 
@@ -393,7 +570,9 @@ def test_bootstrap_rejects_malformed_dry_run_distribution_names_before_install(
 
     assert completed.returncode != 0
     assert "invalid package name" in completed.stderr.lower()
-    assert len(_calls(calls)) == 2
+    observed = _calls(calls)
+    assert observed[0] == ["--version"]
+    assert len(observed) == 3
 
 
 def test_bootstrap_installs_only_after_a_clean_dry_run_and_verifies_the_reader(
@@ -413,11 +592,17 @@ def test_bootstrap_installs_only_after_a_clean_dry_run_and_verifies_the_reader(
 
     assert completed.returncode == 0, completed.stderr
     observed = _calls(calls)
-    assert observed[0][:4] == ["-m", "pip", "install", "--dry-run"]
-    assert "--report" in observed[0]
-    assert observed[0][-2:] == ["-r", str(repository / "requirements" / "cloud-taco-v1.txt")]
-    assert observed[1][0] == "-"
-    assert observed[2] == [
+    assert observed[0] == ["--version"]
+    assert observed[1][:4] == ["-m", "pip", "install", "--dry-run"]
+    assert "--report" in observed[1]
+    assert observed[1][-4:] == [
+        "-r",
+        str(repository / "requirements" / "cloud-taco-v1.txt"),
+        "-r",
+        str(repository / "requirements" / "cloud-phase2b1a-runtime.txt"),
+    ]
+    assert observed[2][0] == "-"
+    assert observed[3] == [
         "-m",
         "pip",
         "install",
@@ -425,17 +610,24 @@ def test_bootstrap_installs_only_after_a_clean_dry_run_and_verifies_the_reader(
         "only-if-needed",
         "-r",
         str(repository / "requirements" / "cloud-taco-v1.txt"),
+        "-r",
+        str(repository / "requirements" / "cloud-phase2b1a-runtime.txt"),
     ]
-    assert observed[3] == ["-m", "pip", "check"]
-    assert observed[4] == ["-", str(repository / "requirements" / "cloud-taco-v1.txt")]
+    assert observed[4] == ["-m", "pip", "check"]
+    assert observed[5] == ["-", str(repository)]
     assert not Path(environment["CONDA_CALLED"]).exists()
 
 
 @pytest.mark.parametrize(
     ("environment_name", "value"),
-    (("FAKE_VERSION_OVERRIDES", '{"pyogrio": "0.13.1"}'), ("FAKE_TACOREADER_CALLABLE", "0")),
+    (
+        ("FAKE_VERSION_OVERRIDES", '{"pyogrio": "0.13.1"}'),
+        ("FAKE_VERSION_OVERRIDES", '{"rasterio": "1.5.2"}'),
+        ("FAKE_TACOREADER_CALLABLE", "0"),
+        ("FAKE_IMPORT_FAILURE", "scipy"),
+    ),
 )
-def test_bootstrap_fails_when_an_exact_reader_contract_is_not_met(
+def test_bootstrap_fails_when_an_exact_runtime_contract_is_not_met(
     environment_name: str, value: str, tmp_path: Path
 ) -> None:
     """Missing exact-version or callable checks would admit an incompatible legacy reader."""
@@ -453,6 +645,31 @@ def test_bootstrap_fails_when_an_exact_reader_contract_is_not_met(
 
     assert completed.returncode != 0
     assert "must" in completed.stderr.lower() or "callable" in completed.stderr.lower()
+
+
+def test_bootstrap_rejects_a_stale_global_cli_when_the_checkout_module_is_missing(
+    tmp_path: Path,
+) -> None:
+    """Dropping the origin proof could bless a stale globally installed stage controller."""
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+    (repository / "src" / "trustsr" / "cli" / "phase2b1a.py").unlink()
+    stale_source = tmp_path / "stale-source"
+    _write_plain_stage_module(stale_source)
+    base_python, python_environment, _ = _fake_base_python(tmp_path)
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment.update(python_environment)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (python_environment["PYTHONPATH"], str(stale_source))
+    )
+
+    completed = _invoke_internal(
+        BOOTSTRAP, "bootstrap_main", base_python, [str(storage_root), str(repository)], environment
+    )
+
+    assert completed.returncode != 0
+    assert "checkout" in completed.stderr.lower()
 
 
 def test_runner_requires_confirmation_before_it_invokes_the_cli(tmp_path: Path) -> None:

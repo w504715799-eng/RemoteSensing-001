@@ -35,7 +35,8 @@ require_storage_root() {
   [[ -d "$value" && ! -L "$value" ]] || die 'storage root must be an existing directory'
   resolved="$(realpath -e -- "$value")" || die 'storage root'
   home="$(realpath -e -- "${HOME:?HOME must be set}")" || die 'current home cannot be resolved'
-  [[ "$resolved" != "$home" ]] || die 'storage root must not be the current home'
+  [[ "$resolved" != / && "$resolved" != /root && "$resolved" != "$home" ]] ||
+    die 'prohibited storage root'
   mountpoint -q -- "$resolved" || die "persistent mountpoint is unavailable: $resolved"
   printf '%s\n' "$resolved"
 }

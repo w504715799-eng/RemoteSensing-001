@@ -157,27 +157,59 @@ shell, and run every command from a checked-out repository on that instance:
 : "${PHASE2B1A_TRANSPORT_URL:?set this to the explicit HTTPS transport URL}"
 PHASE2B1A_SOURCE="$PWD/artifacts/datasets/sen2naipv2-source-v1.json"
 
+phase2b1a_json_digest() {
+  /opt/conda/bin/python -c 'import json, string, sys
+value = json.load(sys.stdin)["digests"][sys.argv[1]]
+if not isinstance(value, str) or len(value) != 64 or any(c not in string.hexdigits.lower() for c in value):
+    raise SystemExit("stage output did not contain a lowercase SHA-256 digest")
+print(value)' "$1"
+}
+
 scripts/phase2b1a/bootstrap_reader.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD"
 scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" download \
   --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
   --transport-url "$PHASE2B1A_TRANSPORT_URL"
-scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" manifest \
-  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE"
-scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" pilot \
-  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
-  --manifest "$PHASE2B1A_MANIFEST_PATH"
-scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" audit \
-  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
-  --manifest "$PHASE2B1A_MANIFEST_PATH"
+
+PHASE2B1A_MANIFEST_JSON="$(
+  scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" manifest \
+    --confirm-cloud-storage --source "$PHASE2B1A_SOURCE"
+)"
+PHASE2B1A_PRE_MANIFEST_SHA256="$(
+  printf '%s\n' "$PHASE2B1A_MANIFEST_JSON" | phase2b1a_json_digest manifest_sha256
+)"
+PHASE2B1A_PRE_MANIFEST_PATH="${PHASE2B1A_STORAGE_ROOT%/}/trustsr/phase2b1a/manifests/${PHASE2B1A_PRE_MANIFEST_SHA256}/samples.jsonl"
+
+PHASE2B1A_PILOT_JSON="$(
+  scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" pilot \
+    --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
+    --manifest "$PHASE2B1A_PRE_MANIFEST_PATH"
+)"
+PHASE2B1A_POST_MANIFEST_SHA256="$(
+  printf '%s\n' "$PHASE2B1A_PILOT_JSON" | phase2b1a_json_digest manifest_sha256
+)"
+PHASE2B1A_POST_MANIFEST_PATH="${PHASE2B1A_STORAGE_ROOT%/}/trustsr/phase2b1a/manifests/${PHASE2B1A_POST_MANIFEST_SHA256}/samples.jsonl"
+
+PHASE2B1A_AUDIT_JSON="$(
+  scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" audit \
+    --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
+    --manifest "$PHASE2B1A_POST_MANIFEST_PATH"
+)"
+PHASE2B1A_AUDIT_PATH="${PHASE2B1A_STORAGE_ROOT%/}/trustsr/phase2b1a/audits/${PHASE2B1A_POST_MANIFEST_SHA256}/phase2b1a-audit.json"
+printf 'Pre-extraction manifest: %s\nPost-extraction manifest: %s\nAudit: %s\n' \
+  "$PHASE2B1A_PRE_MANIFEST_PATH" "$PHASE2B1A_POST_MANIFEST_PATH" \
+  "$PHASE2B1A_AUDIT_PATH"
 ```
 
 `PHASE2B1A_STORAGE_ROOT` must be the mountpoint itself rather than a directory
 inside it; both scripts reject home, root, symlink, relative, wildcard, and
 newline paths and require strictly more than 15 GiB free. The runner deliberately
 requires `--confirm-cloud-storage` for every stage. The bootstrap reuses only
-`/opt/conda/bin/python`, first refuses any pip transaction that would alter the
-PyTorch/CUDA stack, then installs the six cloud-only pinned dependencies. It never
-creates a Conda environment. The manifest command prints its digest; set
-`PHASE2B1A_MANIFEST_PATH` to the corresponding cloud manifest before the pilot and
-audit commands. Do not place cloud credentials or a transport URL in repository
-files.
+Python 3.12 at `/opt/conda/bin/python`. It performs one combined dry-run over the
+six legacy-reader pins and four direct CLI-runtime pins, refuses any transaction
+that would alter the PyTorch/CUDA stack, and only then installs that same combined
+snapshot. It neither installs the TrustSR project nor creates a Conda environment.
+Its postcheck verifies all ten direct versions, imports the required scientific
+stack, and proves that the Phase 2B1A CLI comes from the supplied checkout. The
+pre-extraction and post-extraction manifest paths are intentionally distinct; the
+audit always consumes the latter. Do not place cloud credentials or a transport
+URL in repository files.

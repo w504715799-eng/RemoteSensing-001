@@ -35,7 +35,8 @@ require_storage_root() {
   [[ -d "$value" && ! -L "$value" ]] || die 'storage root must be an existing directory'
   resolved="$(realpath -e -- "$value")" || die 'storage root'
   home="$(realpath -e -- "${HOME:?HOME must be set}")" || die 'current home cannot be resolved'
-  [[ "$resolved" != "$home" ]] || die 'storage root must not be the current home'
+  [[ "$resolved" != / && "$resolved" != /root && "$resolved" != "$home" ]] ||
+    die 'prohibited storage root'
   mountpoint -q -- "$resolved" || die "persistent mountpoint is unavailable: $resolved"
   printf '%s\n' "$resolved"
 }
@@ -47,7 +48,12 @@ require_repository() {
   reject_symlink_components "$value" || die 'repository directory must not contain a symlink'
   [[ -d "$value" && ! -L "$value" ]] || die 'repository directory must be an existing directory'
   resolved="$(realpath -e -- "$value")" || die 'repository directory'
-  [[ -f "$resolved/requirements/cloud-taco-v1.txt" && ! -L "$resolved/requirements/cloud-taco-v1.txt" ]] || die 'repository directory must contain requirements/cloud-taco-v1.txt'
+  [[ -f "$resolved/requirements/cloud-taco-v1.txt" &&
+    ! -L "$resolved/requirements/cloud-taco-v1.txt" ]] ||
+    die 'repository directory must contain requirements/cloud-taco-v1.txt'
+  [[ -f "$resolved/requirements/cloud-phase2b1a-runtime.txt" &&
+    ! -L "$resolved/requirements/cloud-phase2b1a-runtime.txt" ]] ||
+    die 'repository directory must contain requirements/cloud-phase2b1a-runtime.txt'
   printf '%s\n' "$resolved"
 }
 
@@ -87,9 +93,11 @@ for item in installs:
 PY
 }
 
-verify_reader_contract() {
+verify_runtime_contract() {
   "$1" - "$2" <<'PY'
+import importlib
 from importlib import metadata
+from pathlib import Path
 import sys
 
 expected = {
@@ -99,6 +107,10 @@ expected = {
     "shapely": "2.1.2",
     "pyproj": "3.7.2",
     "pyogrio": "0.13.0",
+    "numpy": "2.5.2",
+    "pandas": "2.3.3",
+    "scipy": "1.18.1",
+    "rasterio": "1.5.1",
 }
 for distribution, required in expected.items():
     try:
@@ -113,6 +125,35 @@ import tacoreader
 for name in ("load", "load_metadata"):
     if not callable(getattr(tacoreader, name, None)):
         raise SystemExit(f"tacoreader.{name} must be callable")
+
+for name in ("numpy", "pandas", "scipy", "rasterio"):
+    try:
+        importlib.import_module(name)
+    except ImportError as error:
+        raise SystemExit(f"{name} must import in the Phase 2B1A base runtime: {error}") from error
+
+checkout = Path(sys.argv[1]).resolve(strict=True)
+source_root = (checkout / "src").resolve(strict=True)
+try:
+    source_root.relative_to(checkout)
+except ValueError:
+    raise SystemExit("supplied checkout src must be confined under the exact checkout") from None
+sys.path.insert(0, str(source_root))
+try:
+    phase2b1a = importlib.import_module("trustsr.cli.phase2b1a")
+except ImportError as error:
+    raise SystemExit(
+        f"trustsr.cli.phase2b1a must import from the supplied checkout: {error}"
+    ) from error
+module_file = getattr(phase2b1a, "__file__", None)
+if not isinstance(module_file, str):
+    raise SystemExit("trustsr.cli.phase2b1a from the supplied checkout must have __file__")
+try:
+    Path(module_file).resolve(strict=True).relative_to(source_root)
+except (OSError, ValueError):
+    raise SystemExit(
+        "trustsr.cli.phase2b1a must be confined under the exact supplied checkout"
+    ) from None
 PY
 }
 
@@ -120,7 +161,9 @@ bootstrap_main() {
   local base_python="$1"
   local storage_root
   local repo_dir
-  local requirements_file
+  local reader_requirements
+  local runtime_requirements
+  local python_version
   local report
   shift
   [[ $# -eq 2 ]] || die 'argument count; usage: bootstrap_reader.sh STORAGE_ROOT REPO_DIR'
@@ -128,7 +171,12 @@ bootstrap_main() {
 
   storage_root="$(require_storage_root "$1")"
   repo_dir="$(require_repository "$2")"
-  requirements_file="$repo_dir/requirements/cloud-taco-v1.txt"
+  reader_requirements="$repo_dir/requirements/cloud-taco-v1.txt"
+  runtime_requirements="$repo_dir/requirements/cloud-phase2b1a-runtime.txt"
+
+  python_version="$("$base_python" --version 2>&1)" || die 'could not inspect base Python version'
+  [[ "$python_version" =~ ^Python\ 3\.12\.[0-9]+([A-Za-z0-9.+-]*)?$ ]] ||
+    die 'base Python must be exactly Python 3.12'
 
   local available_kib
   available_kib="$(df -Pk -- "$storage_root" | awk 'NR == 2 {print $4}')"
@@ -141,11 +189,14 @@ bootstrap_main() {
   }
   trap cleanup EXIT
 
-  "$base_python" -m pip install --dry-run --report "$report" --upgrade-strategy only-if-needed -r "$requirements_file"
+  "$base_python" -m pip install --dry-run --report "$report" \
+    --upgrade-strategy only-if-needed \
+    -r "$reader_requirements" -r "$runtime_requirements"
   reject_protected_changes "$base_python" "$report"
-  "$base_python" -m pip install --upgrade-strategy only-if-needed -r "$requirements_file"
+  "$base_python" -m pip install --upgrade-strategy only-if-needed \
+    -r "$reader_requirements" -r "$runtime_requirements"
   "$base_python" -m pip check
-  verify_reader_contract "$base_python" "$requirements_file"
+  verify_runtime_contract "$base_python" "$repo_dir"
   rm -f -- "$report"
   trap - EXIT
 }
