@@ -121,8 +121,9 @@ def test_rejects_unsafe_transport_urls_before_runner_call(
     assert runner.calls == []
 
 
-def test_requires_explicit_cloud_confirmation_before_runner_call(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("confirmed_cloud_storage", [False, "false", 1, None])
+def test_requires_an_explicit_true_cloud_confirmation_before_runner_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, confirmed_cloud_storage: object
 ) -> None:
     runner = _WritingRunner(b"unexpected")
     monkeypatch.setattr(shutil, "disk_usage", _ample_space)
@@ -132,10 +133,67 @@ def test_requires_explicit_cloud_confirmation_before_runner_call(
             _source(),
             tmp_path,
             "https://downloads.example.invalid/crosssensor.taco",
-            confirmed_cloud_storage=False,
+            confirmed_cloud_storage=confirmed_cloud_storage,
             runner=runner,
         )
 
+    assert runner.calls == []
+
+
+def test_rejects_a_relative_storage_root_before_runner_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _WritingRunner(b"unexpected")
+    monkeypatch.chdir(tmp_path)
+    relative_root = Path("storage")
+    relative_root.mkdir()
+    monkeypatch.setattr(shutil, "disk_usage", _ample_space)
+
+    with pytest.raises(ValueError, match="absolute"):
+        acquire_crosssensor(
+            _source(),
+            relative_root,
+            "https://downloads.example.invalid/crosssensor.taco",
+            confirmed_cloud_storage=True,
+            runner=runner,
+        )
+
+    assert runner.calls == []
+
+
+def test_valid_final_cache_hit_skips_transport_url_and_capacity_checks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"synthetic-crosssensor"
+    source = _source(payload)
+    runner = _WritingRunner(b"unexpected")
+    final_path = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1a"
+        / "source"
+        / source.objects[0].sha256
+        / source.objects[0].path
+    )
+    final_path.parent.mkdir(parents=True)
+    final_path.write_bytes(payload)
+    monkeypatch.setattr(
+        shutil,
+        "disk_usage",
+        lambda _: shutil._ntuple_diskusage(20 * 1024**3, 0, 0),
+    )
+
+    acquired = acquire_crosssensor(
+        source,
+        tmp_path,
+        "http://downloads.example.invalid/crosssensor.taco",
+        confirmed_cloud_storage=True,
+        runner=runner,
+    )
+
+    assert acquired.path == final_path
+    assert acquired.size_bytes == len(payload)
+    assert acquired.sha256 == hashlib.sha256(payload).hexdigest()
     assert runner.calls == []
 
 

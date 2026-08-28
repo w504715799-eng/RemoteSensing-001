@@ -54,8 +54,10 @@ def require_cloud_confirmation(storage_root: Path, confirmed_cloud_storage: bool
     """Validate the explicit storage root and require destructive-write confirmation."""
     if not isinstance(storage_root, Path):
         raise TypeError("storage_root must be a pathlib.Path")
-    if not confirmed_cloud_storage:
+    if confirmed_cloud_storage is not True:
         raise ValueError("explicit cloud storage confirmation is required")
+    if not storage_root.is_absolute():
+        raise ValueError("storage_root must be an absolute path")
     if storage_root.is_symlink():
         raise ValueError("storage_root must not be a symlink")
     if not storage_root.is_dir():
@@ -194,13 +196,13 @@ def acquire_crosssensor(
 ) -> VerifiedSourceObject:
     """Acquire the one permitted source object, preserving resumable failure state."""
     object_spec = require_crosssensor_object(source)
-    _require_https_url(transport_url)
     root = require_cloud_confirmation(storage_root, confirmed_cloud_storage)
-    require_free_space(root, minimum_bytes=_MINIMUM_FREE_BYTES)
     paths = source_paths(root, object_spec)
     if paths.final.exists() or paths.final.is_symlink():
         return verify_crosssensor(paths.final, object_spec)
 
+    _require_https_url(transport_url)
+    require_free_space(root, minimum_bytes=_MINIMUM_FREE_BYTES)
     paths.partial.parent.mkdir(parents=True, exist_ok=True)
     runner(curl_arguments(transport_url, paths.partial), check=True, text=True)
     try:
