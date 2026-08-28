@@ -130,9 +130,8 @@ def _normalize_admin(value: object, label: str) -> str | None:
     value = _python_scalar(value)
     if value is None:
         return None
-    # DataFrame adapters commonly represent a missing string as NaN.
-    if type(value) is float and math.isnan(value):
-        return None
+    if type(value) is float and not math.isfinite(value):
+        raise ValueError(f"{label} must be finite")
     return _require_string(value, label, nonempty=False)
 
 

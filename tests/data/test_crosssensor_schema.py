@@ -94,6 +94,15 @@ def test_normalized_sample_cannot_be_mutated() -> None:
         sample.sample_id = "changed"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize("value", [float("nan"), np.float64(np.nan)])
+def test_rejects_nonfinite_administrative_label(value: object) -> None:
+    row = _row()
+    row["rai:admin0"] = value
+
+    with pytest.raises(ValueError, match="rai:admin0 must be finite"):
+        normalize_top_level([row], expected_count=1)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
