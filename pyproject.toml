@@ -8,6 +8,7 @@ dependencies = [
   "numpy>=2.0,<3",
   "opensr-test==1.3.3",
   "pandas>=2.2,<3",
+  "rasterio>=1.4,<2",
   "safetensors>=0.4,<1",
   "scipy>=1.14,<2",
   "sen2sr==0.8.5",
