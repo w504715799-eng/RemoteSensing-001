@@ -20,7 +20,7 @@ def _row(
         "tortilla:id": sample_id,
         "stac:crs": "EPSG:32618",
         "stac:geotransform": (10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0),
-        "stac:raster_shape": (130, 130),
+        "stac:raster_shape": (520, 520),
         "stac:time_start": "2020-01-02T10:00:00Z",
         "stac:centroid": f"POINT ({longitude} {latitude})",
         "rai:admin0": "Colombia",
@@ -66,7 +66,7 @@ def test_normalizes_a_row_to_an_immutable_crosssensor_sample() -> None:
             latitude=3.5,
             crs="EPSG:32618",
             geotransform=(10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0),
-            raster_shape=(130, 130),
+            raster_shape=(520, 520),
             time_start="2020-01-02T10:00:00Z",
             lr_time_start="2020-01-02T10:00:00Z",
             hr_time_start="2020-01-02T09:00:00-01:00",
@@ -133,7 +133,7 @@ def test_rejects_nonfinite_administrative_label(value: object) -> None:
         (lambda rows: rows[0].__setitem__("correlation", float("nan")), "correlation"),
         (lambda rows: rows[0].__setitem__("days_between", 2), "days_between"),
         (lambda rows: rows[0].__setitem__("scale_factor", 2), "scale_factor"),
-        (lambda rows: rows[0].__setitem__("stac:raster_shape", (129, 130)), "raster_shape"),
+        (lambda rows: rows[0].__setitem__("stac:raster_shape", (519, 520)), "raster_shape"),
     ],
 )
 def test_rejects_invalid_required_values(mutation: object, message: str) -> None:

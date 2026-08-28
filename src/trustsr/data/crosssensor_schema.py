@@ -118,8 +118,8 @@ def _validate_geotransform(value: object) -> tuple[float, float, float, float, f
 def _validate_raster_shape(value: object) -> tuple[int, int]:
     items = _sequence_items(value, "stac:raster_shape", 2)
     shape = tuple(_require_integer(item, "stac:raster_shape dimensions") for item in items)
-    if shape != (130, 130):
-        raise ValueError("stac:raster_shape must equal (130, 130)")
+    if shape != (520, 520):
+        raise ValueError("stac:raster_shape must equal (520, 520)")
     return shape  # type: ignore[return-value]
 
 
