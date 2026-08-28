@@ -13,9 +13,15 @@ dependencies = [
   "torch>=2.4,<3",
 ]
 
+[project.optional-dependencies]
+gpu = [
+  "opensr-model==1.1.1",
+]
+
 [project.scripts]
 trustsr-smoke = "trustsr.cli.smoke_baseline:main"
 trustsr-benchmark = "trustsr.cli.benchmark_baselines:main"
+trustsr-ldsr-gpu = "trustsr.cli.ldsr_gpu:main"
 
 [dependency-groups]
 dev = [

@@ -67,6 +67,9 @@ def _model_root(downloaded: Any, cache_dir: Path) -> Path:
 def download_verified_model(cache_dir: Path | str) -> Any:
     """Download, verify, and only then dynamically load the model manifest."""
     cache_dir = Path(cache_dir)
+    if all((cache_dir / name).is_file() for name in MODEL_ASSET_SHA256):
+        verify_model_assets(cache_dir)
+        return mlstac.load(cache_dir / "mlm.json")
     downloaded = mlstac.download(MODEL_MANIFEST_URL, cache_dir)
     root = _model_root(downloaded, cache_dir)
     verify_model_assets(root)
