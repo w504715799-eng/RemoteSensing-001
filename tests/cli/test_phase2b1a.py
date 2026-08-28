@@ -14,6 +14,7 @@ from rasterio.transform import from_origin
 
 import trustsr.cli.phase2b1a as phase2b1a
 import trustsr.data.crosssensor_source as crosssensor_source
+import trustsr.data.taco_v1_adapter as taco_v1_adapter
 from trustsr.data.crosssensor_manifest import (
     PRODUCTION_EXPECTED_COUNTS,
     ExpectedCounts,
@@ -68,6 +69,71 @@ _STAGE_SEQUENCE_STRATA = (
     ("synthetic-internal_test-1-2-2", "internal_test", 1, 0.91),
     ("synthetic-internal_test-1-3-0", "internal_test", 1, 0.94),
 )
+
+
+class _StageSequenceRows:
+    def __init__(self, rows: tuple[dict[str, object], ...]) -> None:
+        self._rows = rows
+
+    def __getitem__(self, index: int) -> dict[str, object]:
+        return self._rows[index]
+
+
+class _StageSequenceNested:
+    def __init__(self, lr_payload: bytes, hr_payload: bytes) -> None:
+        self._payloads = (hr_payload, lr_payload)
+        self.iloc = _StageSequenceRows(
+            (
+                {"stac:time_start": "2020-01-03T10:00:00Z"},
+                {"stac:time_start": "2020-01-02T10:00:00Z"},
+            )
+        )
+
+    def __len__(self) -> int:
+        return len(self._payloads)
+
+    def read(self, index: int) -> bytes:
+        return self._payloads[index]
+
+
+class _StageSequenceTop:
+    def __init__(
+        self,
+        records: tuple[dict[str, object], ...],
+        nested: _StageSequenceNested,
+    ) -> None:
+        self._records = records
+        self._nested = nested
+        self.read_calls: list[int] = []
+
+    def to_dict(self, *, orient: str) -> list[dict[str, object]]:
+        assert orient == "records"
+        return [dict(record) for record in self._records]
+
+    def read(self, source_index: int) -> _StageSequenceNested:
+        assert 0 <= source_index < len(self._records)
+        self.read_calls.append(source_index)
+        return self._nested
+
+
+class _StageSequenceReader:
+    def __init__(self, top: _StageSequenceTop) -> None:
+        self.top = top
+        self.load_metadata_calls: list[str] = []
+        self.load_calls: list[str] = []
+
+    def load_metadata(self, path: str) -> dict[str, object]:
+        self.load_metadata_calls.append(path)
+        return {"taco_version": "0.4.0"}
+
+    def load(self, path: str) -> _StageSequenceTop:
+        self.load_calls.append(path)
+        return self.top
+
+    def clear_extraction_calls(self) -> None:
+        self.top.read_calls.clear()
+        self.load_metadata_calls.clear()
+        self.load_calls.clear()
 
 
 def _source(
@@ -319,9 +385,9 @@ def _stage_sequence_top_records() -> tuple[dict[str, object], ...]:
     return tuple(records)
 
 
-def _synthetic_geotiff(dimension: int, resolution: float) -> bytes:
+def _synthetic_geotiff(dimension: int, resolution: float, value: int) -> bytes:
     transform = from_origin(500000.0, 400000.0, resolution, resolution)
-    pixels = np.full((4, dimension, dimension), 100, dtype=np.uint16)
+    pixels = np.full((4, dimension, dimension), value, dtype=np.uint16)
     with MemoryFile() as memory:
         with memory.open(
             driver="GTiff",
@@ -1337,8 +1403,6 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     )
     source_payload = b"tiny synthetic TACO v1 boundary\n"
     transport_calls: list[tuple[str, ...]] = []
-    extractor_calls: list[int] = []
-    materialized_source_indices: list[int] = []
 
     def verify_tiny_source(path: Path, object_spec: LfsObject) -> VerifiedSourceObject:
         if path.read_bytes() != source_payload:
@@ -1377,8 +1441,6 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     monkeypatch.setattr(phase2b1a, "acquire_crosssensor", acquire_tiny_source)
     monkeypatch.setattr(phase2b1a, "verify_crosssensor", verify_tiny_source)
 
-    top_records = _stage_sequence_top_records()
-    monkeypatch.setattr(phase2b1a, "load_top_level_records", lambda _path: top_records)
     real_normalize_top_level = phase2b1a.normalize_top_level
 
     def normalize_scaled_top_level(
@@ -1419,33 +1481,20 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     monkeypatch.setattr(phase2b1a, "build_audit", build_scaled_audit)
 
     payloads = {
-        "lr.tif": _synthetic_geotiff(130, 10.0),
-        "hr.tif": _synthetic_geotiff(520, 2.5),
+        "lr.tif": _synthetic_geotiff(130, 10.0, 100),
+        "hr.tif": _synthetic_geotiff(520, 2.5, 120),
     }
+    nested = _StageSequenceNested(payloads["lr.tif"], payloads["hr.tif"])
+    reader = _StageSequenceReader(_StageSequenceTop(_stage_sequence_top_records(), nested))
+    monkeypatch.setattr(taco_v1_adapter, "require_tacoreader_v1", lambda: reader)
+    real_atomic_write = taco_v1_adapter.atomic_write_bytes
+    adapter_write_calls: list[Path] = []
 
-    def extract_synthetic_pair(
-        taco_path: Path,
-        source_index: int,
-        output_root: Path,
-        bands: tuple[str, ...],
-    ) -> tuple[ExtractedAsset, ExtractedAsset]:
-        extractor_calls.append(source_index)
-        assert taco_path.read_bytes() == source_payload
-        assert bands == ("B04", "B03", "B02", "B08")
-        targets = {name: output_root / name for name in payloads}
-        if not any(target.exists() for target in targets.values()):
-            output_root.mkdir(parents=True)
-            for name, target in targets.items():
-                target.write_bytes(payloads[name])
-            materialized_source_indices.append(source_index)
-        for name, target in targets.items():
-            if target.read_bytes() != payloads[name]:
-                raise ValueError(f"existing asset {target} has different bytes")
-        return _asset("lr.tif", payloads["lr.tif"]), _asset(
-            "hr.tif", payloads["hr.tif"]
-        )
+    def counting_atomic_write(path: Path, payload: bytes) -> None:
+        adapter_write_calls.append(path)
+        real_atomic_write(path, payload)
 
-    monkeypatch.setattr(phase2b1a, "extract_pair", extract_synthetic_pair)
+    monkeypatch.setattr(taco_v1_adapter, "atomic_write_bytes", counting_atomic_write)
 
     first_download = phase2b1a.run_download(
         source_path,
@@ -1465,6 +1514,43 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         / pre_manifest_digest
         / "samples.jsonl"
     )
+    taco_path = (
+        storage_root
+        / "trustsr"
+        / "phase2b1a"
+        / "source"
+        / _SOURCE_SHA256
+        / "sen2naipv2-crosssensor.taco"
+    )
+    pre_records = phase2b1a.load_manifest(
+        pre_manifest, expected_sha256=pre_manifest_digest
+    )
+    interrupted_records = tuple(
+        record for record in pre_records if record["pilot"] is not None
+    )[:3]
+    interrupted_payloads: dict[Path, bytes] = {}
+    for record in interrupted_records:
+        output_root = (
+            storage_root
+            / "trustsr"
+            / "phase2b1a"
+            / "pilot-v1"
+            / str(record["split"])
+            / str(record["sample_id"])
+        )
+        taco_v1_adapter.extract_pair(
+            taco_path,
+            int(record["source_index"]),
+            output_root,
+            ("B04", "B03", "B02", "B08"),
+        )
+        interrupted_payloads.update(
+            (output_root / name, (output_root / name).read_bytes()) for name in payloads
+        )
+    assert len(interrupted_payloads) == 6
+    reader.clear_extraction_calls()
+    adapter_write_calls.clear()
+
     first_pilot = phase2b1a.run_pilot(
         source_path,
         storage_root,
@@ -1500,11 +1586,40 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     }
     for record in selected:
         for kind in ("lr", "hr"):
-            relative_path = str(record[f"{kind}_asset"]["relative_path"])  # type: ignore[index]
+            asset = record[f"{kind}_asset"]  # type: ignore[assignment]
+            relative_path = str(asset["relative_path"])  # type: ignore[index]
             assert relative_path == (
                 f"pilot-v1/{record['split']}/{record['sample_id']}/{kind}.tif"
             )
-            assert (storage_root / "trustsr" / "phase2b1a" / relative_path).is_file()
+            asset_path = storage_root / "trustsr" / "phase2b1a" / relative_path
+            assert asset_path.read_bytes() == payloads[f"{kind}.tif"]
+            expected_dimension = 130 if kind == "lr" else 520
+            expected_resolution = 10.0 if kind == "lr" else 2.5
+            expected_value = 100.0 if kind == "lr" else 120.0
+            expected_time = (
+                "2020-01-02T10:00:00Z"
+                if kind == "lr"
+                else "2020-01-03T10:00:00Z"
+            )
+            assert asset["size_bytes"] == len(payloads[f"{kind}.tif"])  # type: ignore[index]
+            assert asset["sha256"] == hashlib.sha256(  # type: ignore[index]
+                payloads[f"{kind}.tif"]
+            ).hexdigest()
+            assert asset["shape"] == [4, expected_dimension, expected_dimension]  # type: ignore[index]
+            assert asset["dtype"] == "uint16"  # type: ignore[index]
+            assert asset["crs"] == "EPSG:32618"  # type: ignore[index]
+            assert asset["transform"] == [  # type: ignore[index]
+                expected_resolution,
+                0.0,
+                500000.0,
+                0.0,
+                -expected_resolution,
+                400000.0,
+            ]
+            assert asset["nodata"] is None  # type: ignore[index]
+            assert asset["minimum"] == expected_value  # type: ignore[index]
+            assert asset["maximum"] == expected_value  # type: ignore[index]
+            assert asset["time_start"] == expected_time  # type: ignore[index]
 
     second_download = phase2b1a.run_download(
         source_path,
@@ -1547,8 +1662,13 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         second_audit["reused"],
     ] == [True, True, True, True]
     assert len(transport_calls) == 1
-    assert sorted(extractor_calls) == list(range(36))
-    assert sorted(materialized_source_indices) == list(range(36))
+    assert sorted(reader.top.read_calls) == list(range(36))
+    assert len(adapter_write_calls) == 66
+    assert all(
+        path.resolve().is_relative_to(storage_root.resolve())
+        for path in adapter_write_calls
+    )
+    assert all(path.read_bytes() == payload for path, payload in interrupted_payloads.items())
     assert audit_path.read_bytes() == first_audit_bytes
     assert second_audit["digests"]["audit_sha256"] == first_audit_digest  # type: ignore[index]
     assert second_audit["digests"] == first_audit["digests"]
