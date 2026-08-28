@@ -21,6 +21,8 @@ from trustsr.jsonio import atomic_write_bytes, canonical_json
 SAMPLE_SCHEMA = "trustsr.sen2naipv2-sample.v1"
 AUDIT_SCHEMA = "trustsr.phase2b1a-audit.v1"
 SOURCE_REVISION = "c370504201072fdb1dd388013ab8c0fc7d00a57e"
+SOURCE_OBJECT_NAME = "sen2naipv2-crosssensor.taco"
+SOURCE_OBJECT_SIZE_BYTES = 9_717_583_850
 SOURCE_OBJECT_SHA256 = "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5"
 _SPLITS = ("development", "calibration", "internal_test")
 _DISTANCE_KEYS = (
@@ -549,6 +551,8 @@ def build_audit(
     return {
         "schema": AUDIT_SCHEMA,
         "source_revision": SOURCE_REVISION,
+        "source_object_name": SOURCE_OBJECT_NAME,
+        "source_object_size_bytes": SOURCE_OBJECT_SIZE_BYTES,
         "source_object_sha256": SOURCE_OBJECT_SHA256,
         "manifest_sha256": manifest_sha256,
         "sample_count": actual_counts.samples,

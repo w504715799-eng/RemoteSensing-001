@@ -12,7 +12,9 @@ from typing import cast
 
 from trustsr.data.crosssensor_manifest import (
     PRODUCTION_EXPECTED_COUNTS,
+    SOURCE_OBJECT_NAME,
     SOURCE_OBJECT_SHA256,
+    SOURCE_OBJECT_SIZE_BYTES,
     SOURCE_REVISION,
     ExtractedAsset,
     ManifestArtifact,
@@ -22,6 +24,7 @@ from trustsr.data.crosssensor_manifest import (
 )
 from trustsr.data.crosssensor_schema import CrosssensorSample, normalize_top_level
 from trustsr.data.crosssensor_source import (
+    VerifiedSourceObject,
     acquire_crosssensor,
     require_cloud_confirmation,
     require_crosssensor_object,
@@ -40,9 +43,6 @@ from trustsr.jsonio import atomic_write_bytes, canonical_json
 
 _SOURCE_REPOSITORY = "tacofoundation/SEN2NAIPv2"
 _SOURCE_LICENSE = "cc0-1.0"
-_SOURCE_SIZE_BYTES = 9_717_583_850
-
-
 def build_parser() -> argparse.ArgumentParser:
     """Build the four-stage Phase 2B1A command parser."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -119,6 +119,7 @@ def run_manifest(
             minimum_distances=minimum_distances,
             expected=PRODUCTION_EXPECTED_COUNTS,
         )
+        _require_audit_source_identity(audit, verified)
         if audit["pilot_pair_count"] != 36 or audit["pilot_geotiff_count"] != 0:
             raise ValueError("pre-extraction manifest must contain 36 null-asset pilot pairs")
         _, reused = _commit_manifest(manifest_root, artifact)
@@ -173,6 +174,7 @@ def run_pilot(
         minimum_distances=minimum_cross_split_distances(assignments),
         expected=PRODUCTION_EXPECTED_COUNTS,
     )
+    _require_audit_source_identity(pre_audit, verified)
     if pre_audit["pilot_pair_count"] != 36 or pre_audit["pilot_geotiff_count"] != 0:
         raise ValueError("pilot input must audit as 36 null-asset pilot pairs")
 
@@ -290,6 +292,7 @@ def run_audit(
         minimum_distances=minimum_distances,
         expected=PRODUCTION_EXPECTED_COUNTS,
     )
+    _require_audit_source_identity(audit, verified)
     if audit["pilot_pair_count"] != 36 or audit["pilot_geotiff_count"] != 72:
         raise ValueError("audit must report exactly 36 pilot pairs and 72 GeoTIFF files")
     audit_payload = canonical_json(audit)
@@ -320,11 +323,26 @@ def _load_frozen_source(source_path: Path) -> tuple[DatasetSource, LfsObject]:
         source.repository != _SOURCE_REPOSITORY
         or source.revision != SOURCE_REVISION
         or source.license_claim != _SOURCE_LICENSE
+        or object_spec.path != SOURCE_OBJECT_NAME
         or object_spec.sha256 != SOURCE_OBJECT_SHA256
-        or object_spec.size_bytes != _SOURCE_SIZE_BYTES
+        or object_spec.size_bytes != SOURCE_OBJECT_SIZE_BYTES
     ):
         raise ValueError("source does not match the frozen crosssensor source")
     return source, object_spec
+
+
+def _require_audit_source_identity(
+    audit: Mapping[str, object], verified: VerifiedSourceObject
+) -> None:
+    if (
+        audit.get("source_revision") != SOURCE_REVISION
+        or audit.get("source_object_name") != SOURCE_OBJECT_NAME
+        or audit.get("source_object_size_bytes") != SOURCE_OBJECT_SIZE_BYTES
+        or audit.get("source_object_sha256") != SOURCE_OBJECT_SHA256
+        or verified.size_bytes != SOURCE_OBJECT_SIZE_BYTES
+        or verified.sha256 != SOURCE_OBJECT_SHA256
+    ):
+        raise ValueError("audit source identity does not match the frozen source")
 
 
 def _phase_root(storage_root: Path) -> Path:

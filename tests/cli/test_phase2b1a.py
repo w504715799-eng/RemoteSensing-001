@@ -28,6 +28,7 @@ from trustsr.data.provenance import DatasetSource, LfsObject
 from trustsr.data.spatial_split import AssignedSample
 
 _SOURCE_REVISION = "c370504201072fdb1dd388013ab8c0fc7d00a57e"
+_SOURCE_NAME = "sen2naipv2-crosssensor.taco"
 _SOURCE_SHA256 = "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5"
 _SOURCE_SIZE = 9_717_583_850
 
@@ -507,6 +508,8 @@ def _patch_manifest_services(
         return {
             "schema": "trustsr.phase2b1a-audit.v1",
             "source_revision": _SOURCE_REVISION,
+            "source_object_name": _SOURCE_NAME,
+            "source_object_size_bytes": _SOURCE_SIZE,
             "source_object_sha256": _SOURCE_SHA256,
             "manifest_sha256": manifest_sha256,
             "sample_count": 8_000,
@@ -835,6 +838,10 @@ def _patch_pilot_services(
         if preaudit_error is not None:
             raise ValueError(preaudit_error)
         return {
+            "source_revision": _SOURCE_REVISION,
+            "source_object_name": _SOURCE_NAME,
+            "source_object_size_bytes": _SOURCE_SIZE,
+            "source_object_sha256": _SOURCE_SHA256,
             "sample_count": 8_000,
             "component_count": 6_695,
             "pilot_pair_count": 36,
@@ -1229,6 +1236,8 @@ def _patch_audit_services(
     audit_payload = {
         "schema": "trustsr.phase2b1a-audit.v1",
         "source_revision": _SOURCE_REVISION,
+        "source_object_name": _SOURCE_NAME,
+        "source_object_size_bytes": _SOURCE_SIZE,
         "source_object_sha256": _SOURCE_SHA256,
         "manifest_sha256": manifest.parent.name,
         "sample_count": 8_000,
@@ -1352,6 +1361,60 @@ def test_audit_rehashes_72_files_writes_canonical_digest_addressed_output_and_re
             confirmed_cloud_storage=True,
         )
     assert audit_path.read_bytes() == b"tampered"
+
+
+def test_audit_rejects_a_payload_with_inconsistent_frozen_source_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catch an audit writer that records source bytes differing from the verified source."""
+    assignments = _pilot_assignments()
+    records = _manifest_records(assignments, _post_assets(tmp_path, assignments))
+    manifest, expected_audit, _ = _patch_audit_services(monkeypatch, tmp_path, records)
+    expected_audit["source_object_size_bytes"] = _SOURCE_SIZE - 1
+
+    with pytest.raises(ValueError, match="audit source identity"):
+        phase2b1a.run_audit(
+            tmp_path / "source.json",
+            tmp_path,
+            manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert not (
+        tmp_path
+        / "trustsr"
+        / "phase2b1a"
+        / "audits"
+        / manifest.parent.name
+    ).exists()
+
+
+def test_audit_rejects_a_verified_source_that_disagrees_with_frozen_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catch a future verifier that returns bytes inconsistent with the frozen audit."""
+    assignments = _pilot_assignments()
+    records = _manifest_records(assignments, _post_assets(tmp_path, assignments))
+    manifest, _, _ = _patch_audit_services(monkeypatch, tmp_path, records)
+    monkeypatch.setattr(
+        phase2b1a,
+        "verify_crosssensor",
+        lambda path, spec: VerifiedSourceObject(path, _SOURCE_SIZE - 1, spec.sha256),
+    )
+
+    with pytest.raises(ValueError, match="audit source identity"):
+        phase2b1a.run_audit(
+            tmp_path / "source.json",
+            tmp_path,
+            manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert not (
+        tmp_path
+        / "trustsr"
+        / "phase2b1a"
+        / "audits"
+        / manifest.parent.name
+    ).exists()
 
 
 def test_audit_rejects_execution_before_all_72_files_exist(
@@ -1537,6 +1600,7 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     monkeypatch.setattr(phase2b1a, "normalize_top_level", normalize_scaled_top_level)
 
     real_build_audit = phase2b1a.build_audit
+    audit_source_identities: list[tuple[object, object, object, object]] = []
     synthetic_expected = ExpectedCounts(
         samples=36,
         components=36,
@@ -1556,12 +1620,21 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         expected: object,
     ) -> dict[str, object]:
         assert expected == PRODUCTION_EXPECTED_COUNTS
-        return real_build_audit(
+        audit = real_build_audit(
             records,  # type: ignore[arg-type]
             manifest_sha256=manifest_sha256,
             minimum_distances=minimum_distances,  # type: ignore[arg-type]
             expected=synthetic_expected,
         )
+        audit_source_identities.append(
+            (
+                audit["source_revision"],
+                audit["source_object_name"],
+                audit["source_object_size_bytes"],
+                audit["source_object_sha256"],
+            )
+        )
+        return audit
 
     monkeypatch.setattr(phase2b1a, "build_audit", build_scaled_audit)
 
@@ -1611,7 +1684,7 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
         / "phase2b1a"
         / "source"
         / _SOURCE_SHA256
-        / "sen2naipv2-crosssensor.taco"
+        / _SOURCE_NAME
     )
     pre_records = phase2b1a.load_manifest(
         pre_manifest, expected_sha256=pre_manifest_digest
@@ -1671,6 +1744,22 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     )
     first_audit_bytes = audit_path.read_bytes()
     first_audit_digest = hashlib.sha256(first_audit_bytes).hexdigest()
+    first_audit_payload = json.loads(first_audit_bytes)
+    assert {
+        key: first_audit_payload[key]
+        for key in (
+            "source_revision",
+            "source_object_name",
+            "source_object_size_bytes",
+            "source_object_sha256",
+        )
+    } == {
+        "source_revision": _SOURCE_REVISION,
+        "source_object_name": _SOURCE_NAME,
+        "source_object_size_bytes": _SOURCE_SIZE,
+        "source_object_sha256": _SOURCE_SHA256,
+    }
+    assert type(first_audit_payload["source_object_size_bytes"]) is int
 
     post_records = phase2b1a.load_manifest(
         post_manifest, expected_sha256=post_manifest_digest
@@ -1767,6 +1856,9 @@ def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_cont
     assert audit_path.read_bytes() == first_audit_bytes
     assert second_audit["digests"]["audit_sha256"] == first_audit_digest  # type: ignore[index]
     assert second_audit["digests"] == first_audit["digests"]
+    assert audit_source_identities == [
+        (_SOURCE_REVISION, _SOURCE_NAME, _SOURCE_SIZE, _SOURCE_SHA256)
+    ] * 6
 
     tampered_manifest = b"tampered manifest\n"
     pre_manifest.write_bytes(tampered_manifest)

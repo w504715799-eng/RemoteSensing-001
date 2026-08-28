@@ -324,6 +324,8 @@ def test_build_audit_reports_exact_synthetic_counts_and_rejects_leakage(tmp_path
     assert audit == {
         "schema": "trustsr.phase2b1a-audit.v1",
         "source_revision": "c370504201072fdb1dd388013ab8c0fc7d00a57e",
+        "source_object_name": "sen2naipv2-crosssensor.taco",
+        "source_object_size_bytes": 9_717_583_850,
         "source_object_sha256": "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5",
         "manifest_sha256": artifact.sha256,
         "sample_count": 36,
