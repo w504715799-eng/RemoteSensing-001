@@ -144,3 +144,40 @@ protected arguments, then verifies local file digests from the local checked-out
 code. Only after that verification succeeds should the operator stop the
 instance, using the cloud provider console. No shutdown action belongs in these
 scripts.
+
+## Phase 2B1A cloud crosssensor pilot
+
+Phase 2B1A uses a cloud instance only for the legacy-reader installation and the
+real crosssensor object. It does not use GPU computation. Start an instance with a
+network connection and a persistent filesystem, set the two required values in the
+shell, and run every command from a checked-out repository on that instance:
+
+```bash
+: "${PHASE2B1A_STORAGE_ROOT:?set this to the persistent filesystem mountpoint}"
+: "${PHASE2B1A_TRANSPORT_URL:?set this to the explicit HTTPS transport URL}"
+PHASE2B1A_SOURCE="$PWD/artifacts/datasets/sen2naipv2-source-v1.json"
+
+scripts/phase2b1a/bootstrap_reader.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD"
+scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" download \
+  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
+  --transport-url "$PHASE2B1A_TRANSPORT_URL"
+scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" manifest \
+  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE"
+scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" pilot \
+  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
+  --manifest "$PHASE2B1A_MANIFEST_PATH"
+scripts/phase2b1a/run_cloud.sh "$PHASE2B1A_STORAGE_ROOT" "$PWD" audit \
+  --confirm-cloud-storage --source "$PHASE2B1A_SOURCE" \
+  --manifest "$PHASE2B1A_MANIFEST_PATH"
+```
+
+`PHASE2B1A_STORAGE_ROOT` must be the mountpoint itself rather than a directory
+inside it; both scripts reject home, root, symlink, relative, wildcard, and
+newline paths and require strictly more than 15 GiB free. The runner deliberately
+requires `--confirm-cloud-storage` for every stage. The bootstrap reuses only
+`/opt/conda/bin/python`, first refuses any pip transaction that would alter the
+PyTorch/CUDA stack, then installs the six cloud-only pinned dependencies. It never
+creates a Conda environment. The manifest command prints its digest; set
+`PHASE2B1A_MANIFEST_PATH` to the corresponding cloud manifest before the pilot and
+audit commands. Do not place cloud credentials or a transport URL in repository
+files.
