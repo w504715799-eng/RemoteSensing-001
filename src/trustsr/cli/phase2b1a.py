@@ -183,29 +183,34 @@ def run_pilot(
         _require_confined(root, output_root)
         _require_absent_or_complete_pair(output_root)
 
-    assets: dict[str, tuple[ExtractedAsset, ExtractedAsset]] = {}
-    for choice in choices:
-        record = selected_records[choice.sample_id]
-        output_root = outputs[choice.sample_id]
-        lr_asset, hr_asset = extract_pair(
-            verified.path,
-            cast(int, record["source_index"]),
-            output_root,
-            source.bands,
-        )
-        if lr_asset.relative_path != "lr.tif" or hr_asset.relative_path != "hr.tif":
-            raise ValueError("extractor must return only lr.tif and hr.tif asset paths")
-        prefix = PurePosixPath("pilot-v1", choice.split, choice.sample_id)
-        assets[choice.sample_id] = (
-            replace(lr_asset, relative_path=(prefix / "lr.tif").as_posix()),
-            replace(hr_asset, relative_path=(prefix / "hr.tif").as_posix()),
-        )
-
     manifest_root = phase_root / "manifests"
-    with tempfile.TemporaryDirectory(prefix=".candidate-", dir=manifest_root) as temporary:
-        candidate_path = Path(temporary) / "samples.jsonl"
-        artifact = write_manifest(candidate_path, assignments, choices, assets)
-        _, reused = _commit_manifest(manifest_root, artifact)
+    reusable = _find_reusable_post_manifest(root, input_digest, records)
+    if reusable is not None:
+        artifact = reusable
+        reused = True
+    else:
+        assets: dict[str, tuple[ExtractedAsset, ExtractedAsset]] = {}
+        for choice in choices:
+            record = selected_records[choice.sample_id]
+            output_root = outputs[choice.sample_id]
+            lr_asset, hr_asset = extract_pair(
+                verified.path,
+                cast(int, record["source_index"]),
+                output_root,
+                source.bands,
+            )
+            if lr_asset.relative_path != "lr.tif" or hr_asset.relative_path != "hr.tif":
+                raise ValueError("extractor must return only lr.tif and hr.tif asset paths")
+            prefix = PurePosixPath("pilot-v1", choice.split, choice.sample_id)
+            assets[choice.sample_id] = (
+                replace(lr_asset, relative_path=(prefix / "lr.tif").as_posix()),
+                replace(hr_asset, relative_path=(prefix / "hr.tif").as_posix()),
+            )
+
+        with tempfile.TemporaryDirectory(prefix=".candidate-", dir=manifest_root) as temporary:
+            candidate_path = Path(temporary) / "samples.jsonl"
+            artifact = write_manifest(candidate_path, assignments, choices, assets)
+            _, reused = _commit_manifest(manifest_root, artifact)
 
     return {
         "stage": "pilot",
@@ -217,7 +222,7 @@ def run_pilot(
         "counts": {
             "samples": len(records),
             "pilot_pairs": len(choices),
-            "pilot_geotiffs": len(assets) * 2,
+            "pilot_geotiffs": len(choices) * 2,
         },
         "reused": reused,
     }
@@ -369,6 +374,88 @@ def _load_digest_manifest(
     if resolved.parent.name != actual_sha256:
         raise ValueError("manifest parent must equal its actual SHA-256")
     return actual_sha256, load_manifest(resolved, expected_sha256=actual_sha256)
+
+
+def _find_reusable_post_manifest(
+    storage_root: Path,
+    input_manifest_sha256: str,
+    input_records: Sequence[Mapping[str, object]],
+) -> ManifestArtifact | None:
+    manifest_root = _phase_root(storage_root) / "manifests"
+    matches: list[ManifestArtifact] = []
+    for directory in sorted(manifest_root.iterdir(), key=lambda path: path.name):
+        if directory.name == input_manifest_sha256:
+            continue
+        candidate = directory / "samples.jsonl"
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("existing manifest tree contains an invalid digest directory")
+        if tuple(directory.iterdir()) != (candidate,):
+            raise ValueError("existing manifest digest directory is incomplete or invalid")
+        digest, records = _load_digest_manifest(storage_root, candidate)
+        _require_matching_post_manifest(input_records, records)
+        _verify_post_manifest_assets(storage_root, records)
+        matches.append(ManifestArtifact(candidate, candidate.stat().st_size, digest))
+    if len(matches) > 1:
+        raise ValueError("multiple matching post-extraction manifests are ambiguous")
+    return matches[0] if matches else None
+
+
+def _require_matching_post_manifest(
+    input_records: Sequence[Mapping[str, object]],
+    candidate_records: Sequence[Mapping[str, object]],
+) -> None:
+    if len(input_records) != len(candidate_records):
+        raise ValueError("post-extraction manifest does not match its input manifest")
+    asset_fields = {"lr_asset", "hr_asset"}
+    for input_record, candidate_record in zip(
+        input_records, candidate_records, strict=True
+    ):
+        if any(
+            candidate_record[field] != value
+            for field, value in input_record.items()
+            if field not in asset_fields
+        ):
+            raise ValueError("post-extraction manifest does not match its input manifest")
+        selected = input_record["pilot"] is not None
+        if selected != (
+            candidate_record["lr_asset"] is not None
+            and candidate_record["hr_asset"] is not None
+        ):
+            raise ValueError(
+                "post-extraction manifest must contain every deterministic asset pair"
+            )
+
+
+def _verify_post_manifest_assets(
+    storage_root: Path, records: Sequence[Mapping[str, object]]
+) -> None:
+    phase_root = _phase_root(storage_root)
+    asset_count = 0
+    for record in records:
+        if record["pilot"] is None:
+            continue
+        sample_id = cast(str, record["sample_id"])
+        split = cast(str, record["split"])
+        _require_safe_component(sample_id)
+        for kind in ("lr", "hr"):
+            asset = cast(Mapping[str, object], record[f"{kind}_asset"])
+            expected_relative = PurePosixPath(
+                "pilot-v1", split, sample_id, f"{kind}.tif"
+            ).as_posix()
+            if asset["relative_path"] != expected_relative:
+                raise ValueError("asset relative_path must use the exact pilot sample layout")
+            asset_path = phase_root / expected_relative
+            _require_confined(storage_root, asset_path)
+            if asset_path.is_symlink() or not asset_path.is_file():
+                raise ValueError("reusable pilot manifest requires all 72 confined GeoTIFF files")
+            size_bytes, sha256 = _hash_file(asset_path)
+            if size_bytes != asset["size_bytes"]:
+                raise ValueError("asset byte size does not match the post-extraction manifest")
+            if sha256 != asset["sha256"]:
+                raise ValueError("asset SHA-256 does not match the post-extraction manifest")
+            asset_count += 1
+    if asset_count != 72:
+        raise ValueError("reusable pilot manifest requires all 72 confined GeoTIFF files")
 
 
 def _assignments_from_records(
