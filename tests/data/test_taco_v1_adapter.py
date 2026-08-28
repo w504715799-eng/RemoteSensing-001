@@ -33,7 +33,9 @@ class _Rows:
 
 
 class _Table:
-    def __init__(self, rows: list[dict[str, object]], assets: list[bytes] | None = None) -> None:
+    def __init__(
+        self, rows: list[dict[str, object]], assets: list[bytes | str] | None = None
+    ) -> None:
         self.rows = rows
         self.assets = assets
         self.iloc = _Rows(rows)
@@ -46,7 +48,7 @@ class _Table:
         assert orient == "records"
         return self.rows
 
-    def read(self, index: int) -> _Table | bytes:
+    def read(self, index: int) -> _Table | bytes | str:
         self.read_calls.append(index)
         if self.assets is None:
             return _NESTED
@@ -140,7 +142,7 @@ def _install_reader(
     monkeypatch: pytest.MonkeyPatch,
     *,
     metadata: dict[str, object],
-    assets: list[bytes],
+    assets: list[bytes | str],
     rows: list[dict[str, object]] | None = None,
 ) -> _Reader:
     global _NESTED
@@ -372,6 +374,82 @@ def test_extract_pair_writes_raw_geotiffs_and_records_their_source_metadata(
     assert hr_asset.minimum == 120.0
     assert hr_asset.maximum == 120.0
     assert hr_asset.time_start == _HR_TIME
+
+
+def test_extract_pair_reads_exact_bytes_from_a_valid_legacy_vsi_descriptor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lr_bytes = _geotiff_bytes(width=130, height=130, value=100)
+    hr_bytes = _geotiff_bytes(
+        width=520,
+        height=520,
+        value=120,
+        transform=Affine(2.5, 0.0, 500000.0, 0.0, -2.5, 400000.0),
+    )
+    taco_path = tmp_path / "source.taco"
+    prefix = b"legacy-taco-header"
+    lr_offset = len(prefix)
+    hr_offset = lr_offset + len(lr_bytes)
+    taco_path.write_bytes(prefix + lr_bytes + hr_bytes)
+    descriptors = [
+        f"/vsisubfile/{lr_offset}_{len(lr_bytes)},{taco_path}",
+        f"/vsisubfile/{hr_offset}_{len(hr_bytes)},{taco_path}",
+    ]
+    rows = [
+        {
+            "internal:subfile": descriptors[0],
+            "tortilla:offset": lr_offset,
+            "tortilla:length": len(lr_bytes),
+            "tortilla:file_format": "GTiff",
+            "stac:time_start": _LR_TIME,
+        },
+        {
+            "internal:subfile": descriptors[1],
+            "tortilla:offset": hr_offset,
+            "tortilla:length": len(hr_bytes),
+            "tortilla:file_format": "GTiff",
+            "stac:time_start": _HR_TIME,
+        },
+    ]
+    _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=descriptors,
+        rows=rows,
+    )
+
+    taco_v1_adapter.extract_pair(taco_path, 0, tmp_path / "sample", _BANDS)
+
+    assert (tmp_path / "sample" / "lr.tif").read_bytes() == lr_bytes
+    assert (tmp_path / "sample" / "hr.tif").read_bytes() == hr_bytes
+
+
+def test_extract_pair_rejects_a_vsi_descriptor_for_another_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    taco_path = tmp_path / "verified.taco"
+    other_path = tmp_path / "other.taco"
+    taco_path.write_bytes(b"verified")
+    other_path.write_bytes(b"other")
+    descriptor = f"/vsisubfile/0_5,{other_path}"
+    _install_reader(
+        monkeypatch,
+        metadata={"taco_version": "0.4.0"},
+        assets=[descriptor, b"unused"],
+        rows=[
+            {
+                "internal:subfile": descriptor,
+                "tortilla:offset": 0,
+                "tortilla:length": 5,
+                "tortilla:file_format": "GTiff",
+                "stac:time_start": _LR_TIME,
+            },
+            {"stac:time_start": _HR_TIME},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="verified TACO source"):
+        taco_v1_adapter.extract_pair(taco_path, 0, tmp_path / "sample", _BANDS)
 
 
 @pytest.mark.parametrize(

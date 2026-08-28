@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import importlib.metadata
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ _FORMAT_KEYS = ("taco_version", "version")
 _LR_DIMENSIONS = (130, 130)
 _HR_DIMENSIONS = (520, 520)
 _TOLERANCE = 1e-6
+_VSI_SUBFILE_RE = re.compile(r"/vsisubfile/(\d+)_(\d+),(.+)")
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,55 @@ def _canonical_time_start(value: object, label: str) -> str:
 def _time_start(nested: object, index: int) -> str:
     value = _nested_row(nested, index).get("stac:time_start")
     return _canonical_time_start(value, "nested asset stac:time_start")
+
+
+def _metadata_integer(row: Mapping[str, object], key: str, *, minimum: int) -> int:
+    value = row.get(key)
+    if isinstance(value, np.generic):
+        value = value.item()
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"nested asset {key} must be an integer no smaller than {minimum}")
+    return value
+
+
+def _read_asset_payload(taco_path: Path, nested: object, index: int) -> bytes:
+    value = nested.read(index)
+    if isinstance(value, bytes):
+        return value
+    if type(value) is not str:
+        raise ValueError("TACO nested asset must be bytes or a local VSI subfile descriptor")
+
+    row = _nested_row(nested, index)
+    if row.get("tortilla:file_format") != "GTiff":
+        raise ValueError("VSI nested asset tortilla:file_format must equal GTiff")
+    if row.get("internal:subfile") != value:
+        raise ValueError("VSI nested asset must equal its internal:subfile metadata")
+    match = _VSI_SUBFILE_RE.fullmatch(value)
+    if match is None:
+        raise ValueError("TACO nested asset is not a valid local VSI subfile descriptor")
+
+    offset = int(match.group(1))
+    length = int(match.group(2))
+    if offset != _metadata_integer(row, "tortilla:offset", minimum=0):
+        raise ValueError("VSI offset does not match nested asset metadata")
+    if length != _metadata_integer(row, "tortilla:length", minimum=1):
+        raise ValueError("VSI length does not match nested asset metadata")
+    try:
+        descriptor_source = Path(match.group(3)).resolve(strict=True)
+        verified_source = taco_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("VSI descriptor source must resolve to the verified TACO source") from exc
+    if descriptor_source != verified_source:
+        raise ValueError("VSI descriptor source must equal the verified TACO source")
+    if offset + length > verified_source.stat().st_size:
+        raise ValueError("VSI byte range exceeds the verified TACO source")
+
+    with verified_source.open("rb") as stream:
+        stream.seek(offset)
+        payload = stream.read(length)
+    if len(payload) != length:
+        raise ValueError("VSI byte range could not be read completely")
+    return payload
 
 
 def load_crosssensor_metadata(
@@ -319,7 +370,10 @@ def extract_pair(
     if len(nested) != 2:
         raise ValueError("selected sample must contain exactly two nested assets")
     rasters = tuple(
-        _inspect_raster(nested.read(index), _time_start(nested, index)) for index in range(2)
+        _inspect_raster(
+            _read_asset_payload(taco_path, nested, index), _time_start(nested, index)
+        )
+        for index in range(2)
     )
     lr, hr = _pair_by_dimensions(rasters)  # type: ignore[arg-type]
     _validate_pair_geometry(lr, hr)
