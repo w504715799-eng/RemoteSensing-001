@@ -71,6 +71,16 @@ _ASSET_FIELDS = frozenset(
 )
 
 
+def audit_source_identity() -> dict[str, object]:
+    """Return the frozen source evidence required in every canonical audit."""
+    return {
+        "source_revision": SOURCE_REVISION,
+        "source_object_name": SOURCE_OBJECT_NAME,
+        "source_object_size_bytes": SOURCE_OBJECT_SIZE_BYTES,
+        "source_object_sha256": SOURCE_OBJECT_SHA256,
+    }
+
+
 @dataclass(frozen=True)
 class ExpectedCounts:
     """Frozen expected sample and connected-component totals for one manifest."""
@@ -550,10 +560,7 @@ def build_audit(
     pilot_geotiff_count = 2 * sum(record["lr_asset"] is not None for record in validated_records)
     return {
         "schema": AUDIT_SCHEMA,
-        "source_revision": SOURCE_REVISION,
-        "source_object_name": SOURCE_OBJECT_NAME,
-        "source_object_size_bytes": SOURCE_OBJECT_SIZE_BYTES,
-        "source_object_sha256": SOURCE_OBJECT_SHA256,
+        **audit_source_identity(),
         "manifest_sha256": manifest_sha256,
         "sample_count": actual_counts.samples,
         "component_count": actual_counts.components,

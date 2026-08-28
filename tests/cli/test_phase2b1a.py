@@ -630,6 +630,31 @@ def test_manifest_rejects_wrong_production_counts_before_commit(
     ).exists()
 
 
+def test_manifest_rejects_inconsistent_audit_evidence_before_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catch a source-evidence preflight placed after manifest writes or commits."""
+    digest, calls = _patch_manifest_services(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        phase2b1a,
+        "audit_source_identity",
+        lambda: {
+            "source_revision": _SOURCE_REVISION,
+            "source_object_name": _SOURCE_NAME,
+            "source_object_size_bytes": _SOURCE_SIZE - 1,
+            "source_object_sha256": _SOURCE_SHA256,
+        },
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="audit source identity"):
+        phase2b1a.run_manifest(
+            tmp_path / "source.json", tmp_path, confirmed_cloud_storage=True
+        )
+    assert "write" not in calls
+    assert not (tmp_path / "trustsr" / "phase2b1a" / "manifests" / digest).exists()
+
+
 def _pilot_assignments() -> tuple[AssignedSample, ...]:
     correlations = (0.8, 0.89, 0.91, 0.94)
     assignments: list[AssignedSample] = []
@@ -1058,6 +1083,43 @@ def test_pilot_rejects_a_pre_manifest_with_wrong_production_counts_before_extrac
     assert state["calls"]["extract"] == []  # type: ignore[index]
 
 
+def test_pilot_rejects_inconsistent_audit_evidence_before_output_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catch an audit-evidence preflight placed after pilot output side effects."""
+    records = _manifest_records(_pilot_assignments())
+    manifest, _, state = _patch_pilot_services(monkeypatch, tmp_path, records)
+    output_preflights: list[Path] = []
+    monkeypatch.setattr(
+        phase2b1a,
+        "audit_source_identity",
+        lambda: {
+            "source_revision": _SOURCE_REVISION,
+            "source_object_name": _SOURCE_NAME,
+            "source_object_size_bytes": _SOURCE_SIZE - 1,
+            "source_object_sha256": _SOURCE_SHA256,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        phase2b1a,
+        "_require_absent_or_complete_pair",
+        output_preflights.append,
+    )
+
+    with pytest.raises(ValueError, match="audit source identity"):
+        phase2b1a.run_pilot(
+            tmp_path / "source.json",
+            tmp_path,
+            manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert output_preflights == []
+    assert state["calls"]["extract"] == []  # type: ignore[index]
+    assert "write" not in state["calls"]  # type: ignore[operator]
+    assert not (tmp_path / "trustsr" / "phase2b1a" / "pilot-v1").exists()
+
+
 def test_pilot_rejects_unsafe_sample_id_before_writing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1363,14 +1425,21 @@ def test_audit_rehashes_72_files_writes_canonical_digest_addressed_output_and_re
     assert audit_path.read_bytes() == b"tampered"
 
 
+@pytest.mark.parametrize(
+    "source_size",
+    (_SOURCE_SIZE - 1, float(_SOURCE_SIZE), True, False),
+    ids=("wrong-value", "float", "true", "false"),
+)
 def test_audit_rejects_a_payload_with_inconsistent_frozen_source_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    source_size: object,
 ) -> None:
-    """Catch an audit writer that records source bytes differing from the verified source."""
+    """Catch an audit writer that records invalid source bytes or representation."""
     assignments = _pilot_assignments()
     records = _manifest_records(assignments, _post_assets(tmp_path, assignments))
     manifest, expected_audit, _ = _patch_audit_services(monkeypatch, tmp_path, records)
-    expected_audit["source_object_size_bytes"] = _SOURCE_SIZE - 1
+    expected_audit["source_object_size_bytes"] = source_size
 
     with pytest.raises(ValueError, match="audit source identity"):
         phase2b1a.run_audit(
@@ -1388,8 +1457,15 @@ def test_audit_rejects_a_payload_with_inconsistent_frozen_source_evidence(
     ).exists()
 
 
+@pytest.mark.parametrize(
+    "source_size",
+    (_SOURCE_SIZE - 1, float(_SOURCE_SIZE), True, False),
+    ids=("wrong-value", "float", "true", "false"),
+)
 def test_audit_rejects_a_verified_source_that_disagrees_with_frozen_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    source_size: object,
 ) -> None:
     """Catch a future verifier that returns bytes inconsistent with the frozen audit."""
     assignments = _pilot_assignments()
@@ -1398,7 +1474,7 @@ def test_audit_rejects_a_verified_source_that_disagrees_with_frozen_evidence(
     monkeypatch.setattr(
         phase2b1a,
         "verify_crosssensor",
-        lambda path, spec: VerifiedSourceObject(path, _SOURCE_SIZE - 1, spec.sha256),
+        lambda path, spec: VerifiedSourceObject(path, source_size, spec.sha256),
     )
 
     with pytest.raises(ValueError, match="audit source identity"):

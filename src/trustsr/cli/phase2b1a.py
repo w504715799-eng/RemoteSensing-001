@@ -18,6 +18,7 @@ from trustsr.data.crosssensor_manifest import (
     SOURCE_REVISION,
     ExtractedAsset,
     ManifestArtifact,
+    audit_source_identity,
     build_audit,
     load_manifest,
     write_manifest,
@@ -95,6 +96,7 @@ def run_manifest(
     source, object_spec = _load_frozen_source(source_path)
     taco_path = source_paths(root, object_spec).final
     verified = verify_crosssensor(taco_path, object_spec)
+    _require_audit_source_identity(audit_source_identity(), verified)
     records, acquisition_times = load_crosssensor_metadata(verified.path)
     _require_top_level_shape(records)
     samples = normalize_top_level(
@@ -151,6 +153,7 @@ def run_pilot(
     source, object_spec = _load_frozen_source(source_path)
     taco_path = source_paths(root, object_spec).final
     verified = verify_crosssensor(taco_path, object_spec)
+    _require_audit_source_identity(audit_source_identity(), verified)
     input_digest, records = _load_digest_manifest(root, manifest_path)
     if any(record["lr_asset"] is not None or record["hr_asset"] is not None for record in records):
         raise ValueError("pilot input must be a pre-extraction manifest with null assets")
@@ -248,6 +251,7 @@ def run_audit(
     _, object_spec = _load_frozen_source(source_path)
     taco_path = source_paths(root, object_spec).final
     verified = verify_crosssensor(taco_path, object_spec)
+    _require_audit_source_identity(audit_source_identity(), verified)
     manifest_digest, records = _load_digest_manifest(root, manifest_path)
     selected_records = tuple(record for record in records if record["pilot"] is not None)
     if len(selected_records) != 36 or any(
@@ -337,8 +341,10 @@ def _require_audit_source_identity(
     if (
         audit.get("source_revision") != SOURCE_REVISION
         or audit.get("source_object_name") != SOURCE_OBJECT_NAME
-        or audit.get("source_object_size_bytes") != SOURCE_OBJECT_SIZE_BYTES
+        or type(audit.get("source_object_size_bytes")) is not int
+        or audit["source_object_size_bytes"] != SOURCE_OBJECT_SIZE_BYTES
         or audit.get("source_object_sha256") != SOURCE_OBJECT_SHA256
+        or type(verified.size_bytes) is not int
         or verified.size_bytes != SOURCE_OBJECT_SIZE_BYTES
         or verified.sha256 != SOURCE_OBJECT_SHA256
     ):
