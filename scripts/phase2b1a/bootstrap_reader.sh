@@ -71,6 +71,10 @@ if not isinstance(installs, list):
 def normalize(name: object) -> str:
     if not isinstance(name, str):
         raise SystemExit("pip dry-run report has an invalid package name")
+    if name != name.strip() or not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", name
+    ):
+        raise SystemExit("pip dry-run report has an invalid package name")
     return re.sub(r"[-_.]+", "-", name).lower()
 
 blocked = {"torch", "torchvision", "triton"}

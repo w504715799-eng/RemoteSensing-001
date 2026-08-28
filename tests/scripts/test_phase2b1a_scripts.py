@@ -24,6 +24,19 @@ PINNED_REQUIREMENTS = (
     "pyproj==3.7.2",
     "pyogrio==0.13.0",
 )
+STORAGE_ROOT_PREFIXES = (
+    "--st",
+    "--sto",
+    "--stor",
+    "--stora",
+    "--storag",
+    "--storage",
+    "--storage-",
+    "--storage-r",
+    "--storage-ro",
+    "--storage-roo",
+    "--storage-root",
+)
 
 
 def _make_executable(path: Path, body: str) -> None:
@@ -189,6 +202,33 @@ def _repository(tmp_path: Path) -> Path:
     return repository
 
 
+def _write_stage_module(source_root: Path, marker: Path, label: str) -> None:
+    """Write a runnable stage module whose import origin is externally observable."""
+    package = source_root / "trustsr" / "cli"
+    package.mkdir(parents=True, exist_ok=True)
+    (package.parent / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "phase2b1a.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        f"Path(os.environ['PHASE2B1A_MODULE_MARKER']).write_text({label!r}, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+
+def _passthrough_base_python(tmp_path: Path) -> Path:
+    """Run the passed module in a fresh real Python process without package installation."""
+    launcher = tmp_path / "passthrough-base-python"
+    _make_executable(
+        launcher,
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import sys\n"
+        f"os.execvpe({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]], os.environ)\n",
+    )
+    return launcher
+
+
 def test_cloud_requirements_are_an_exact_isolated_snapshot() -> None:
     """A version drift would change the reader environment used for extraction."""
     assert REQUIREMENTS.read_text(encoding="utf-8").splitlines() == list(PINNED_REQUIREMENTS)
@@ -334,6 +374,28 @@ def test_bootstrap_rejects_protected_packages_from_the_dry_run(
     assert not Path(environment["CONDA_CALLED"]).exists()
 
 
+@pytest.mark.parametrize("malformed", ("", " torch ", "..."))
+def test_bootstrap_rejects_malformed_dry_run_distribution_names_before_install(
+    malformed: str, tmp_path: Path
+) -> None:
+    """An unparseable report name cannot establish that protected packages are untouched."""
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+    base_python, python_environment, calls = _fake_base_python(tmp_path)
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment.update(python_environment)
+    environment["FAKE_DRY_RUN_PACKAGE"] = malformed
+
+    completed = _invoke_internal(
+        BOOTSTRAP, "bootstrap_main", base_python, [str(storage_root), str(repository)], environment
+    )
+
+    assert completed.returncode != 0
+    assert "invalid package name" in completed.stderr.lower()
+    assert len(_calls(calls)) == 2
+
+
 def test_bootstrap_installs_only_after_a_clean_dry_run_and_verifies_the_reader(
     tmp_path: Path,
 ) -> None:
@@ -444,6 +506,95 @@ def test_runner_refuses_a_forwarded_storage_root_override(tmp_path: Path) -> Non
     assert completed.returncode != 0
     assert "override" in completed.stderr.lower()
     assert _calls(calls) == []
+
+
+@pytest.mark.parametrize(
+    ("prefix", "uses_equals"),
+    tuple((prefix, False) for prefix in STORAGE_ROOT_PREFIXES)
+    + tuple((prefix, True) for prefix in STORAGE_ROOT_PREFIXES),
+)
+def test_runner_refuses_every_argparse_storage_root_abbreviation(
+    prefix: str, uses_equals: bool, tmp_path: Path
+) -> None:
+    """An argparse prefix must not replace the wrapper's mount-validated root."""
+    from trustsr.cli.phase2b1a import build_parser
+
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    unvalidated = tmp_path / "unvalidated"
+    override = (
+        (f"{prefix}={unvalidated}",)
+        if uses_equals
+        else (prefix, str(unvalidated))
+    )
+    parser_arguments = [
+        "manifest",
+        "--source",
+        "source.json",
+        "--storage-root",
+        str(storage_root),
+        "--confirm-cloud-storage",
+        *override,
+    ]
+    assert build_parser().parse_args(parser_arguments).storage_root == unvalidated
+
+    repository = _repository(tmp_path)
+    base_python, python_environment, calls = _fake_base_python(tmp_path)
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment.update(python_environment)
+    completed = _invoke_internal(
+        RUNNER,
+        "run_main",
+        base_python,
+        [
+            str(storage_root),
+            str(repository),
+            "manifest",
+            "--confirm-cloud-storage",
+            "--source",
+            "source.json",
+            *override,
+        ],
+        environment,
+    )
+
+    assert completed.returncode != 0
+    assert "override" in completed.stderr.lower()
+    assert _calls(calls) == []
+
+
+def test_runner_executes_the_phase2b1a_module_from_the_supplied_checkout(
+    tmp_path: Path,
+) -> None:
+    """A stale globally installed module must not run instead of the reviewed checkout."""
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+    marker = tmp_path / "module-origin"
+    _write_stage_module(repository / "src", marker, "supplied")
+    stale_source = tmp_path / "stale-source"
+    _write_stage_module(stale_source, marker, "stale")
+    environment, _ = _environment(tmp_path, mount_root=storage_root)
+    environment["PHASE2B1A_MODULE_MARKER"] = str(marker)
+    environment["PYTHONPATH"] = str(stale_source)
+
+    completed = _invoke_internal(
+        RUNNER,
+        "run_main",
+        _passthrough_base_python(tmp_path),
+        [
+            str(storage_root),
+            str(repository),
+            "manifest",
+            "--confirm-cloud-storage",
+            "--source",
+            "source.json",
+        ],
+        environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert marker.read_text(encoding="utf-8") == "supplied"
 
 
 def test_runner_passes_distinct_safe_argv_to_the_base_python_cli(tmp_path: Path) -> None:

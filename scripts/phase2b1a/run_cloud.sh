@@ -73,7 +73,7 @@ run_main() {
   for argument in "$@"; do
     case "$argument" in
       --confirm-cloud-storage) confirmed=true ;;
-      --storage-root|--storage-root=*) die 'stage arguments must not override storage root' ;;
+      --st*) die 'stage arguments must not override storage root' ;;
     esac
   done
   [[ "$confirmed" == true ]] || die 'stage arguments must include --confirm-cloud-storage'
@@ -83,7 +83,8 @@ run_main() {
   (( available_kib > 15 * 1024 * 1024 )) || die 'more than 15 GiB of free disk space is required'
 
   cd -- "$repo_dir"
-  exec "$base_python" -m trustsr.cli.phase2b1a "$stage" --storage-root "$storage_root" "$@"
+  PYTHONPATH="$repo_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
+    exec "$base_python" -m trustsr.cli.phase2b1a "$stage" --storage-root "$storage_root" "$@"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
