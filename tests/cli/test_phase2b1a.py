@@ -7,11 +7,16 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
 
 import trustsr.cli.phase2b1a as phase2b1a
+import trustsr.data.crosssensor_source as crosssensor_source
 from trustsr.data.crosssensor_manifest import (
     PRODUCTION_EXPECTED_COUNTS,
+    ExpectedCounts,
     ExtractedAsset,
     ManifestArtifact,
 )
@@ -24,6 +29,45 @@ from trustsr.data.spatial_split import AssignedSample
 _SOURCE_REVISION = "c370504201072fdb1dd388013ab8c0fc7d00a57e"
 _SOURCE_SHA256 = "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5"
 _SOURCE_SIZE = 9_717_583_850
+
+_STAGE_SEQUENCE_STRATA = (
+    ("synthetic-development--1-0-0", "development", -1, 0.8),
+    ("synthetic-development--1-1-1", "development", -1, 0.89),
+    ("synthetic-development--1-2-0", "development", -1, 0.91),
+    ("synthetic-development--1-3-1", "development", -1, 0.94),
+    ("synthetic-development-0-0-0", "development", 0, 0.8),
+    ("synthetic-development-0-1-2", "development", 0, 0.89),
+    ("synthetic-development-0-2-0", "development", 0, 0.91),
+    ("synthetic-development-0-3-2", "development", 0, 0.94),
+    ("synthetic-development-1-0-0", "development", 1, 0.8),
+    ("synthetic-development-1-1-1", "development", 1, 0.89),
+    ("synthetic-development-1-2-5", "development", 1, 0.91),
+    ("synthetic-development-1-3-0", "development", 1, 0.94),
+    ("synthetic-calibration--1-0-8", "calibration", -1, 0.8),
+    ("synthetic-calibration--1-1-7", "calibration", -1, 0.89),
+    ("synthetic-calibration--1-2-4", "calibration", -1, 0.91),
+    ("synthetic-calibration--1-3-2", "calibration", -1, 0.94),
+    ("synthetic-calibration-0-0-5", "calibration", 0, 0.8),
+    ("synthetic-calibration-0-1-4", "calibration", 0, 0.89),
+    ("synthetic-calibration-0-2-5", "calibration", 0, 0.91),
+    ("synthetic-calibration-0-3-1", "calibration", 0, 0.94),
+    ("synthetic-calibration-1-0-2", "calibration", 1, 0.8),
+    ("synthetic-calibration-1-1-6", "calibration", 1, 0.89),
+    ("synthetic-calibration-1-2-0", "calibration", 1, 0.91),
+    ("synthetic-calibration-1-3-1", "calibration", 1, 0.94),
+    ("synthetic-internal_test--1-0-3", "internal_test", -1, 0.8),
+    ("synthetic-internal_test--1-1-4", "internal_test", -1, 0.89),
+    ("synthetic-internal_test--1-2-9", "internal_test", -1, 0.91),
+    ("synthetic-internal_test--1-3-4", "internal_test", -1, 0.94),
+    ("synthetic-internal_test-0-0-0", "internal_test", 0, 0.8),
+    ("synthetic-internal_test-0-1-2", "internal_test", 0, 0.89),
+    ("synthetic-internal_test-0-2-0", "internal_test", 0, 0.91),
+    ("synthetic-internal_test-0-3-8", "internal_test", 0, 0.94),
+    ("synthetic-internal_test-1-0-2", "internal_test", 1, 0.8),
+    ("synthetic-internal_test-1-1-1", "internal_test", 1, 0.89),
+    ("synthetic-internal_test-1-2-2", "internal_test", 1, 0.91),
+    ("synthetic-internal_test-1-3-0", "internal_test", 1, 0.94),
+)
 
 
 def _source(
@@ -239,6 +283,59 @@ def _top_records(column_count: int = 26) -> tuple[dict[str, object], ...]:
     }
     selected = dict(list(columns.items())[:column_count])
     return tuple(selected for _ in range(8_000))
+
+
+def _stage_sequence_top_records() -> tuple[dict[str, object], ...]:
+    records: list[dict[str, object]] = []
+    for index, (sample_id, _, days_between, correlation) in enumerate(
+        _STAGE_SEQUENCE_STRATA
+    ):
+        longitude = float(-170 + (index % 12) * 30)
+        latitude = float(-70 + (index // 12) * 70)
+        records.append(
+            {
+                "tortilla:id": sample_id,
+                "stac:crs": "EPSG:32618",
+                "stac:geotransform": (
+                    10.0,
+                    0.0,
+                    500000.0,
+                    0.0,
+                    -10.0,
+                    400000.0,
+                ),
+                "stac:raster_shape": (130, 130),
+                "stac:time_start": "2020-01-02T10:00:00Z",
+                "stac:centroid": f"POINT ({longitude} {latitude})",
+                "rai:admin0": "Synthetic",
+                "rai:admin1": None,
+                "rai:admin2": None,
+                "days_between": days_between,
+                "correlation": correlation,
+                "scale_factor": 4,
+                **{f"extra:{extra_index}": extra_index for extra_index in range(14)},
+            }
+        )
+    return tuple(records)
+
+
+def _synthetic_geotiff(dimension: int, resolution: float) -> bytes:
+    transform = from_origin(500000.0, 400000.0, resolution, resolution)
+    pixels = np.full((4, dimension, dimension), 100, dtype=np.uint16)
+    with MemoryFile() as memory:
+        with memory.open(
+            driver="GTiff",
+            width=dimension,
+            height=dimension,
+            count=4,
+            dtype="uint16",
+            crs="EPSG:32618",
+            transform=transform,
+            compress="deflate",
+        ) as dataset:
+            dataset.write(pixels)
+            dataset.descriptions = ("B04", "B03", "B02", "B08")
+        return memory.read()
 
 
 def _patch_manifest_services(
@@ -594,7 +691,7 @@ def _patch_pilot_services(
     input_digest = input_manifest.parent.name
     post_payload = b'{"synthetic":"post-extraction"}\n'
     post_digest = hashlib.sha256(post_payload).hexdigest()
-    calls: dict[str, object] = {"extract": []}
+    calls: dict[str, object] = {"extract": [], "post_records": None}
     monkeypatch.setattr(phase2b1a, "load_dataset_source", lambda _: _source())
     monkeypatch.setattr(
         phase2b1a,
@@ -605,6 +702,8 @@ def _patch_pilot_services(
     def load(path: Path, *, expected_sha256: str) -> tuple[dict[str, object], ...]:
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
             raise ValueError("manifest SHA-256 does not match the expected digest")
+        if expected_sha256 == post_digest and calls["post_records"] is not None:
+            return calls["post_records"]  # type: ignore[return-value]
         return records
 
     monkeypatch.setattr(phase2b1a, "load_manifest", load)
@@ -671,6 +770,9 @@ def _patch_pilot_services(
         assets: dict[str, tuple[ExtractedAsset, ExtractedAsset]],
     ) -> ManifestArtifact:
         calls["write"] = (assignments, choices, assets)
+        calls["post_records"] = _manifest_records(
+            tuple(assignments), assets  # type: ignore[arg-type]
+        )
         path.write_bytes(post_payload)
         return ManifestArtifact(path, len(post_payload), post_digest)
 
@@ -732,10 +834,11 @@ def test_pilot_rebases_all_72_assets_and_reuses_the_digest_addressed_post_manife
         confirmed_cloud_storage=True,
     )
     assert second == {**first, "reused": True}
+    assert len(state["calls"]["extract"]) == 36  # type: ignore[index]
 
     first_output = state["calls"]["extract"][0][2] / "lr.tif"  # type: ignore[index]
     first_output.write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="different bytes"):
+    with pytest.raises(ValueError, match="byte size|SHA-256"):
         phase2b1a.run_pilot(
             tmp_path / "source.json",
             tmp_path,
@@ -743,6 +846,7 @@ def test_pilot_rebases_all_72_assets_and_reuses_the_digest_addressed_post_manife
             confirmed_cloud_storage=True,
         )
     assert first_output.read_bytes() == b"tampered"
+    assert len(state["calls"]["extract"]) == 36  # type: ignore[index]
 
 
 def test_pilot_rejects_a_manifest_whose_parent_is_not_its_actual_digest(
@@ -852,6 +956,96 @@ def test_pilot_rejects_a_partial_existing_pair_before_any_extraction(
     assert state["calls"]["extract"] == []  # type: ignore[index]
     assert (partial / "lr.tif").read_bytes() == b"partial"
     assert not (partial / "hr.tif").exists()
+
+
+def test_pilot_resumes_complete_pairs_before_the_post_manifest_is_committed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assignments = _pilot_assignments()
+    records = _manifest_records(assignments)
+    manifest, _, state = _patch_pilot_services(monkeypatch, tmp_path, records)
+    completed = assignments[:3]
+    for assignment in completed:
+        sample = assignment.sample
+        output_root = (
+            tmp_path
+            / "trustsr"
+            / "phase2b1a"
+            / "pilot-v1"
+            / assignment.split
+            / sample.sample_id
+        )
+        output_root.mkdir(parents=True)
+        (output_root / "lr.tif").write_bytes(f"lr-{sample.source_index}".encode())
+        (output_root / "hr.tif").write_bytes(f"hr-{sample.source_index}".encode())
+
+    result = phase2b1a.run_pilot(
+        tmp_path / "source.json",
+        tmp_path,
+        manifest,
+        confirmed_cloud_storage=True,
+    )
+
+    assert result["reused"] is False
+    assert len(state["calls"]["extract"]) == 36  # type: ignore[index]
+    for assignment in assignments:
+        sample = assignment.sample
+        output_root = (
+            tmp_path
+            / "trustsr"
+            / "phase2b1a"
+            / "pilot-v1"
+            / assignment.split
+            / sample.sample_id
+        )
+        assert (output_root / "lr.tif").read_bytes() == (
+            f"lr-{sample.source_index}".encode()
+        )
+        assert (output_root / "hr.tif").read_bytes() == (
+            f"hr-{sample.source_index}".encode()
+        )
+
+
+def test_pilot_never_replaces_a_different_complete_pair_without_a_post_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assignments = _pilot_assignments()
+    records = _manifest_records(assignments)
+    manifest, _, state = _patch_pilot_services(monkeypatch, tmp_path, records)
+    for assignment in assignments:
+        sample = assignment.sample
+        output_root = (
+            tmp_path
+            / "trustsr"
+            / "phase2b1a"
+            / "pilot-v1"
+            / assignment.split
+            / sample.sample_id
+        )
+        output_root.mkdir(parents=True)
+        (output_root / "lr.tif").write_bytes(f"lr-{sample.source_index}".encode())
+        (output_root / "hr.tif").write_bytes(f"hr-{sample.source_index}".encode())
+    tampered_root = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1a"
+        / "pilot-v1"
+        / assignments[0].split
+        / assignments[0].sample.sample_id
+    )
+    tampered_payload = b"tampered complete pair"
+    (tampered_root / "lr.tif").write_bytes(tampered_payload)
+
+    with pytest.raises(ValueError, match="different bytes"):
+        phase2b1a.run_pilot(
+            tmp_path / "source.json",
+            tmp_path,
+            manifest,
+            confirmed_cloud_storage=True,
+        )
+
+    assert (tampered_root / "lr.tif").read_bytes() == tampered_payload
+    assert "write" not in state["calls"]  # type: ignore[operator]
 
 
 def _post_assets(
@@ -1130,3 +1324,262 @@ def test_pilot_rejects_an_output_tree_symlinked_outside_storage_before_extractio
         )
     assert state["calls"]["extract"] == []  # type: ignore[index]
     assert tuple(outside.iterdir()) == ()
+
+
+def test_phase2b1a_synthetic_stage_sequence_preserves_restart_and_integrity_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage_root = tmp_path / "storage"
+    storage_root.mkdir()
+    source_path = storage_root / "source.json"
+    source_path.write_bytes(
+        (Path(__file__).parents[2] / "artifacts/datasets/sen2naipv2-source-v1.json").read_bytes()
+    )
+    source_payload = b"tiny synthetic TACO v1 boundary\n"
+    transport_calls: list[tuple[str, ...]] = []
+    extractor_calls: list[int] = []
+    materialized_source_indices: list[int] = []
+
+    def verify_tiny_source(path: Path, object_spec: LfsObject) -> VerifiedSourceObject:
+        if path.read_bytes() != source_payload:
+            raise ValueError("synthetic source bytes do not match")
+        return VerifiedSourceObject(path, object_spec.size_bytes, object_spec.sha256)
+
+    def fake_transport(arguments: tuple[str, ...], **options: object) -> None:
+        assert options == {"check": True, "text": True}
+        partial_path = Path(arguments[arguments.index("--output") + 1])
+        partial_path.write_bytes(source_payload)
+        transport_calls.append(arguments)
+
+    real_acquire = phase2b1a.acquire_crosssensor
+
+    def acquire_tiny_source(
+        source: DatasetSource,
+        root: Path,
+        transport_url: str,
+        *,
+        confirmed_cloud_storage: bool,
+    ) -> VerifiedSourceObject:
+        return real_acquire(
+            source,
+            root,
+            transport_url,
+            confirmed_cloud_storage=confirmed_cloud_storage,
+            runner=fake_transport,
+        )
+
+    monkeypatch.setattr(crosssensor_source, "verify_crosssensor", verify_tiny_source)
+    monkeypatch.setattr(
+        crosssensor_source,
+        "require_free_space",
+        lambda _root, *, minimum_bytes: None,
+    )
+    monkeypatch.setattr(phase2b1a, "acquire_crosssensor", acquire_tiny_source)
+    monkeypatch.setattr(phase2b1a, "verify_crosssensor", verify_tiny_source)
+
+    top_records = _stage_sequence_top_records()
+    monkeypatch.setattr(phase2b1a, "load_top_level_records", lambda _path: top_records)
+    real_normalize_top_level = phase2b1a.normalize_top_level
+
+    def normalize_scaled_top_level(
+        records: object, *, expected_count: int
+    ) -> tuple[CrosssensorSample, ...]:
+        assert expected_count == 8_000
+        return real_normalize_top_level(records, expected_count=36)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(phase2b1a, "normalize_top_level", normalize_scaled_top_level)
+
+    real_build_audit = phase2b1a.build_audit
+    synthetic_expected = ExpectedCounts(
+        samples=36,
+        components=36,
+        development_samples=12,
+        calibration_samples=12,
+        internal_test_samples=12,
+        development_components=12,
+        calibration_components=12,
+        internal_test_components=12,
+    )
+
+    def build_scaled_audit(
+        records: object,
+        *,
+        manifest_sha256: str,
+        minimum_distances: object,
+        expected: object,
+    ) -> dict[str, object]:
+        assert expected == PRODUCTION_EXPECTED_COUNTS
+        return real_build_audit(
+            records,  # type: ignore[arg-type]
+            manifest_sha256=manifest_sha256,
+            minimum_distances=minimum_distances,  # type: ignore[arg-type]
+            expected=synthetic_expected,
+        )
+
+    monkeypatch.setattr(phase2b1a, "build_audit", build_scaled_audit)
+
+    payloads = {
+        "lr.tif": _synthetic_geotiff(130, 10.0),
+        "hr.tif": _synthetic_geotiff(520, 2.5),
+    }
+
+    def extract_synthetic_pair(
+        taco_path: Path,
+        source_index: int,
+        output_root: Path,
+        bands: tuple[str, ...],
+    ) -> tuple[ExtractedAsset, ExtractedAsset]:
+        extractor_calls.append(source_index)
+        assert taco_path.read_bytes() == source_payload
+        assert bands == ("B04", "B03", "B02", "B08")
+        targets = {name: output_root / name for name in payloads}
+        if not any(target.exists() for target in targets.values()):
+            output_root.mkdir(parents=True)
+            for name, target in targets.items():
+                target.write_bytes(payloads[name])
+            materialized_source_indices.append(source_index)
+        for name, target in targets.items():
+            if target.read_bytes() != payloads[name]:
+                raise ValueError(f"existing asset {target} has different bytes")
+        return _asset("lr.tif", payloads["lr.tif"]), _asset(
+            "hr.tif", payloads["hr.tif"]
+        )
+
+    monkeypatch.setattr(phase2b1a, "extract_pair", extract_synthetic_pair)
+
+    first_download = phase2b1a.run_download(
+        source_path,
+        storage_root,
+        "https://download.invalid/synthetic.taco",
+        confirmed_cloud_storage=True,
+    )
+    first_manifest = phase2b1a.run_manifest(
+        source_path, storage_root, confirmed_cloud_storage=True
+    )
+    pre_manifest_digest = str(first_manifest["digests"]["manifest_sha256"])  # type: ignore[index]
+    pre_manifest = (
+        storage_root
+        / "trustsr"
+        / "phase2b1a"
+        / "manifests"
+        / pre_manifest_digest
+        / "samples.jsonl"
+    )
+    first_pilot = phase2b1a.run_pilot(
+        source_path,
+        storage_root,
+        pre_manifest,
+        confirmed_cloud_storage=True,
+    )
+    post_manifest_digest = str(first_pilot["digests"]["manifest_sha256"])  # type: ignore[index]
+    post_manifest = pre_manifest.parent.parent / post_manifest_digest / "samples.jsonl"
+    first_audit = phase2b1a.run_audit(
+        source_path,
+        storage_root,
+        post_manifest,
+        confirmed_cloud_storage=True,
+    )
+    audit_path = (
+        storage_root
+        / "trustsr"
+        / "phase2b1a"
+        / "audits"
+        / post_manifest_digest
+        / "phase2b1a-audit.json"
+    )
+    first_audit_bytes = audit_path.read_bytes()
+    first_audit_digest = hashlib.sha256(first_audit_bytes).hexdigest()
+
+    post_records = phase2b1a.load_manifest(
+        post_manifest, expected_sha256=post_manifest_digest
+    )
+    selected = tuple(record for record in post_records if record["pilot"] is not None)
+    assert len(selected) == 36
+    assert {record["sample_id"] for record in selected} == {
+        sample_id for sample_id, _, _, _ in _STAGE_SEQUENCE_STRATA
+    }
+    for record in selected:
+        for kind in ("lr", "hr"):
+            relative_path = str(record[f"{kind}_asset"]["relative_path"])  # type: ignore[index]
+            assert relative_path == (
+                f"pilot-v1/{record['split']}/{record['sample_id']}/{kind}.tif"
+            )
+            assert (storage_root / "trustsr" / "phase2b1a" / relative_path).is_file()
+
+    second_download = phase2b1a.run_download(
+        source_path,
+        storage_root,
+        "https://download.invalid/synthetic.taco",
+        confirmed_cloud_storage=True,
+    )
+    second_manifest = phase2b1a.run_manifest(
+        source_path, storage_root, confirmed_cloud_storage=True
+    )
+    second_pilot = phase2b1a.run_pilot(
+        source_path,
+        storage_root,
+        pre_manifest,
+        confirmed_cloud_storage=True,
+    )
+    second_audit = phase2b1a.run_audit(
+        source_path,
+        storage_root,
+        post_manifest,
+        confirmed_cloud_storage=True,
+    )
+
+    assert [
+        first_download["stage"],
+        first_manifest["stage"],
+        first_pilot["stage"],
+        first_audit["stage"],
+    ] == ["download", "manifest", "pilot", "audit"]
+    assert [
+        first_download["reused"],
+        first_manifest["reused"],
+        first_pilot["reused"],
+        first_audit["reused"],
+    ] == [False, False, False, False]
+    assert [
+        second_download["reused"],
+        second_manifest["reused"],
+        second_pilot["reused"],
+        second_audit["reused"],
+    ] == [True, True, True, True]
+    assert len(transport_calls) == 1
+    assert sorted(extractor_calls) == list(range(36))
+    assert sorted(materialized_source_indices) == list(range(36))
+    assert audit_path.read_bytes() == first_audit_bytes
+    assert second_audit["digests"]["audit_sha256"] == first_audit_digest  # type: ignore[index]
+    assert second_audit["digests"] == first_audit["digests"]
+
+    tampered_manifest = b"tampered manifest\n"
+    pre_manifest.write_bytes(tampered_manifest)
+    with pytest.raises(ValueError, match="parent.*actual SHA-256"):
+        phase2b1a.run_pilot(
+            source_path,
+            storage_root,
+            pre_manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert pre_manifest.read_bytes() == tampered_manifest
+
+    first_asset = storage_root / "trustsr" / "phase2b1a" / str(
+        selected[0]["lr_asset"]["relative_path"]  # type: ignore[index]
+    )
+    tampered_asset = b"x" * len(first_asset.read_bytes())
+    first_asset.write_bytes(tampered_asset)
+    with pytest.raises(ValueError, match="SHA-256"):
+        phase2b1a.run_audit(
+            source_path,
+            storage_root,
+            post_manifest,
+            confirmed_cloud_storage=True,
+        )
+    assert first_asset.read_bytes() == tampered_asset
+
+    created_paths = tuple(tmp_path.rglob("*"))
+    assert created_paths
+    assert all(
+        path.resolve().is_relative_to(storage_root.resolve()) for path in created_paths
+    )
