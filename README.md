@@ -27,6 +27,18 @@ is reviewed.
 The SPOT run is a development smoke test, not a final scientific result. Conda is
 reserved for a later cloud-GPU phase; use `uv run` for this checkpoint.
 
+## Phase 2A synthetic conformal smoke
+
+Run the deterministic CPU-only conformal smoke command with:
+
+```bash
+uv run trustsr-conformal-smoke --alpha 0.27 --window 1
+```
+
+This command uses no real satellite data and provides no paper evidence or cross-sensor
+guarantee. In schema `trustsr.conformal-smoke.v1`, a JSON `null` calibration threshold
+means the internal threshold is `-inf`, the valid all-abstain sentinel.
+
 ## Phase 1A
 
 Run the deterministic CPU comparison of bicubic interpolation and the verified
