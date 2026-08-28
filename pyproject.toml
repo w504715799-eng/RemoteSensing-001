@@ -8,7 +8,9 @@ dependencies = [
   "numpy>=2.0,<3",
   "opensr-test==1.3.3",
   "pandas>=2.2,<3",
+  "rasterio>=1.4,<2",
   "safetensors>=0.4,<1",
+  "scipy>=1.14,<2",
   "sen2sr==0.8.5",
   "torch>=2.4,<3",
 ]
@@ -24,6 +26,7 @@ trustsr-benchmark = "trustsr.cli.benchmark_baselines:main"
 trustsr-ldsr-gpu = "trustsr.cli.ldsr_gpu:main"
 trustsr-conformal-smoke = "trustsr.cli.conformal_smoke:main"
 trustsr-dataset-audit = "trustsr.cli.dataset_audit:main"
+trustsr-phase2b1a = "trustsr.cli.phase2b1a:main"
 
 [dependency-groups]
 dev = [
