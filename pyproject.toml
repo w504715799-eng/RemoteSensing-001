@@ -4,14 +4,18 @@ version = "0.1.0"
 description = "Risk-controlled Sentinel-2 super-resolution experiments"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "mlstac==0.4.9",
   "numpy>=2.0,<3",
   "opensr-test==1.3.3",
   "pandas>=2.2,<3",
+  "safetensors>=0.4,<1",
+  "sen2sr==0.8.5",
   "torch>=2.4,<3",
 ]
 
 [project.scripts]
 trustsr-smoke = "trustsr.cli.smoke_baseline:main"
+trustsr-benchmark = "trustsr.cli.benchmark_baselines:main"
 
 [dependency-groups]
 dev = [
