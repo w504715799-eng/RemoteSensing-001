@@ -37,6 +37,9 @@ def _commit_audit(
 ) -> tuple[Path, bool]:
     phase_root = storage_root / "trustsr" / "phase2b2a"
     audit_parent = phase_root / "input-audits"
+    for component in (storage_root / "trustsr", phase_root, audit_parent):
+        if component.is_symlink() or (component.exists() and not component.is_dir()):
+            raise ValueError("Phase 2B2-A audit output path is invalid")
     audit_directory = audit_parent / manifest_sha256
     audit_path = audit_directory / "phase2b2a-input-audit.json"
     if audit_directory.exists() or audit_directory.is_symlink():

@@ -211,3 +211,24 @@ def test_existing_audit_must_be_the_identical_single_regular_file(
             POST_MANIFEST_SHA256,
             confirmed_cloud_storage=True,
         )
+
+
+def test_audit_commit_rejects_symlinked_output_parent_before_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state = _patch_valid_services(monkeypatch, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    phase_root = tmp_path / "trustsr" / "phase2b2a"
+    phase_root.mkdir(parents=True)
+    (phase_root / "input-audits").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="audit output path"):
+        phase2b2a.run_audit_inputs(
+            tmp_path,
+            state.manifest,
+            POST_MANIFEST_SHA256,
+            confirmed_cloud_storage=True,
+        )
+
+    assert tuple(outside.iterdir()) == ()
