@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter
 from collections.abc import Sequence
+from pathlib import Path
 
 from trustsr.artifacts.predictions import tensor_sha256
 from trustsr.data.crosssensor_manifest import SOURCE_OBJECT_SHA256
@@ -133,3 +136,41 @@ def build_input_audit(
     }
     canonical_json(result)
     return result
+
+
+def load_input_audit(path: Path, *, expected_sha256: str) -> dict[str, object]:
+    """Load one exact canonical Phase 2B2-A input audit."""
+
+    if not isinstance(path, Path):
+        raise TypeError("input audit path must be a pathlib.Path")
+    _require_digest(expected_sha256, "input audit SHA-256")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("input audit must be an existing regular file")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError("input audit SHA-256 does not match the expected value")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("input audit must be canonical JSON") from exc
+    if not isinstance(payload, dict) or canonical_json(payload) != raw:
+        raise ValueError("input audit must use exact canonical JSON bytes")
+    expected = {
+        "schema": AUDIT_SCHEMA,
+        "post_manifest_sha256": POST_MANIFEST_SHA256,
+        "phase2b1b_audit_sha256": PHASE2B1B_AUDIT_SHA256,
+        "base_manifest_sha256": BASE_MANIFEST_SHA256,
+        "source_object_sha256": SOURCE_OBJECT_SHA256,
+        "smoke_pair_count": 12,
+        "smoke_geotiff_count": 24,
+        "repeated_load_equal": True,
+        "model_inference_run": False,
+        "gpu_used": False,
+        "real_pixels_local": False,
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        raise ValueError("frozen input audit contract does not match")
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list) or len(pairs) != 12:
+        raise ValueError("frozen input audit must contain exactly 12 pairs")
+    return payload

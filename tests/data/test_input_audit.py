@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 import torch
@@ -16,7 +19,8 @@ from trustsr.data.crosssensor_pairs import (
     CrosssensorPairMetadata,
     LoadedCrosssensorPair,
 )
-from trustsr.data.input_audit import build_input_audit
+from trustsr.data.input_audit import build_input_audit, load_input_audit
+from trustsr.jsonio import canonical_json
 
 
 def _loaded_pairs() -> tuple[LoadedCrosssensorPair, ...]:
@@ -134,3 +138,55 @@ def test_input_audit_rejects_non_frozen_metadata_policy(
 
     with pytest.raises(ValueError, match=message):
         build_input_audit(pairs, pairs)
+
+
+def _write_audit(tmp_path: Path, audit: dict[str, object] | None = None) -> tuple[Path, str]:
+    payload = canonical_json(audit or build_input_audit(_loaded_pairs(), _loaded_pairs()))
+    path = tmp_path / "phase2b2a-input-audit.json"
+    path.write_bytes(payload)
+    return path, hashlib.sha256(payload).hexdigest()
+
+
+def test_load_input_audit_accepts_exact_canonical_bytes(tmp_path: Path) -> None:
+    path, digest = _write_audit(tmp_path)
+
+    loaded = load_input_audit(path, expected_sha256=digest)
+
+    assert loaded["schema"] == "trustsr.phase2b2a-input-audit.v1"
+    assert loaded["post_manifest_sha256"] == POST_MANIFEST_SHA256
+    assert loaded["repeated_load_equal"] is True
+
+
+def test_load_input_audit_rejects_wrong_digest(tmp_path: Path) -> None:
+    path, _ = _write_audit(tmp_path)
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        load_input_audit(path, expected_sha256="0" * 64)
+
+
+def test_load_input_audit_rejects_noncanonical_or_symlink(tmp_path: Path) -> None:
+    path, _ = _write_audit(tmp_path)
+    path.write_bytes(path.read_bytes() + b"\n")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="canonical"):
+        load_input_audit(path, expected_sha256=digest)
+
+    real, digest = _write_audit(tmp_path)
+    moved = tmp_path / "real-audit.json"
+    real.rename(moved)
+    link = tmp_path / "audit-link.json"
+    link.symlink_to(moved)
+    with pytest.raises(ValueError, match="regular file"):
+        load_input_audit(link, expected_sha256=digest)
+
+
+@pytest.mark.parametrize("field", ["schema", "post_manifest_sha256"])
+def test_load_input_audit_rejects_changed_schema_or_upstream(
+    tmp_path: Path, field: str
+) -> None:
+    audit = deepcopy(build_input_audit(_loaded_pairs(), _loaded_pairs()))
+    audit[field] = "changed"
+    path, digest = _write_audit(tmp_path, audit)
+
+    with pytest.raises(ValueError, match="frozen input audit"):
+        load_input_audit(path, expected_sha256=digest)
