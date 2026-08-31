@@ -19,6 +19,7 @@ from trustsr.data.crosssensor_pairs import (
     POST_MANIFEST_SHA256,
     load_crosssensor_pair,
     load_crosssensor_records,
+    select_development_smoke_records,
     select_input_smoke_records,
 )
 
@@ -70,6 +71,31 @@ def test_smoke_selection_rejects_a_missing_or_duplicate_required_cell() -> None:
     duplicate = records + [{**records[0], "sample_id": "duplicate"}]
     with pytest.raises(ValueError, match="exactly one record"):
         select_input_smoke_records(duplicate)
+
+
+def test_development_smoke_selection_filters_after_canonical_selection() -> None:
+    selected = select_development_smoke_records(_eligible_records())
+
+    assert len(selected) == 4
+    assert [record["split"] for record in selected] == ["development"] * 4
+    assert [record["correlation_bin"] for record in selected] == [0, 1, 2, 3]
+
+
+def test_development_smoke_selection_is_input_order_independent() -> None:
+    records = _eligible_records()
+
+    assert select_development_smoke_records(tuple(reversed(records))) == (
+        select_development_smoke_records(records)
+    )
+
+
+def test_development_smoke_selection_rejects_unvalidated_four_row_shortcut() -> None:
+    development_only = [
+        record for record in _eligible_records() if record["split"] == "development"
+    ]
+
+    with pytest.raises(ValueError, match="exactly one record"):
+        select_development_smoke_records(development_only)
 
 
 @pytest.mark.parametrize(

@@ -106,6 +106,25 @@ def select_input_smoke_records(
     return selected
 
 
+def select_development_smoke_records(
+    records: Sequence[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    """Filter the canonical 12-cell input smoke set to development only."""
+
+    selected = tuple(
+        record
+        for record in select_input_smoke_records(records)
+        if record["split"] == "development"
+    )
+    if len(selected) != 4 or [
+        record["correlation_bin"] for record in selected
+    ] != list(SMOKE_BINS):
+        raise ValueError("development smoke selection must contain the four canonical bins")
+    _require_unique_strings(selected, "sample_id")
+    _require_unique_strings(selected, "spatial_group_id")
+    return selected
+
+
 def load_crosssensor_records(
     storage_root: Path,
     manifest_path: Path,
