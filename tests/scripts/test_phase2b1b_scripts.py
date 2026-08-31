@@ -30,7 +30,11 @@ def _repository(tmp_path: Path, *, name: str = "repository") -> Path:
 
 
 def _environment(
-    tmp_path: Path, *, mount_root: Path, available_kib: int = 10_000_000
+    tmp_path: Path,
+    *,
+    mount_root: Path,
+    available_kib: int = 10_000_000,
+    available_inodes: int = 10_000,
 ) -> tuple[dict[str, str], Path]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
@@ -46,8 +50,18 @@ def _environment(
     _make_executable(
         fake_bin / "df",
         "#!/usr/bin/env bash\n"
-        "printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
-        "printf '/dev/fake 20000000 1 %s 1%% /persistent\\n' \"$FAKE_AVAILABLE_KIB\"\n",
+        "set -euo pipefail\n"
+        "case \"$1\" in\n"
+        "  -Pk)\n"
+        "    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
+        "    printf '/dev/fake 20000000 1 %s 1%% /persistent\\n' \"$FAKE_AVAILABLE_KIB\"\n"
+        "    ;;\n"
+        "  -Pi)\n"
+        "    printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\\n'\n"
+        "    printf '/dev/fake 20000 1 %s 1%% /persistent\\n' \"$FAKE_AVAILABLE_INODES\"\n"
+        "    ;;\n"
+        "  *) exit 98 ;;\n"
+        "esac\n",
     )
     _make_executable(
         fake_bin / "conda",
@@ -60,6 +74,7 @@ def _environment(
             **os.environ,
             "CONDA_CALLED": str(conda_called),
             "FAKE_AVAILABLE_KIB": str(available_kib),
+            "FAKE_AVAILABLE_INODES": str(available_inodes),
             "FAKE_MOUNT_ROOT": str(mount_root),
             "HOME": str(home),
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
@@ -96,11 +111,13 @@ def _invoke(
     stage: str,
     stage_arguments: list[str],
     available_kib: int = 10_000_000,
+    available_inodes: int = 10_000,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
     environment, conda_called = _environment(
         tmp_path,
         mount_root=Path(storage_root) if isinstance(storage_root, Path) else Path("/invalid"),
         available_kib=available_kib,
+        available_inodes=available_inodes,
     )
     base_python, python_environment, calls_path = _fake_base_python(tmp_path)
     environment.update(python_environment)
@@ -207,6 +224,27 @@ def test_runner_requires_more_than_five_gib_and_explicit_confirmation(
     assert unconfirmed.returncode == 2
     assert "confirm-cloud-storage" in unconfirmed.stderr
     assert unconfirmed_calls == []
+
+
+def test_runner_rejects_extraction_when_free_inodes_cannot_hold_the_subset(
+    tmp_path: Path,
+) -> None:
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+
+    completed, calls, _ = _invoke(
+        tmp_path,
+        storage_root=storage_root,
+        repository=repository,
+        stage="extract",
+        stage_arguments=["--confirm-cloud-storage"],
+        available_inodes=1_199,
+    )
+
+    assert completed.returncode == 2
+    assert "at least 1200 free inodes" in completed.stderr
+    assert calls == []
 
 
 def test_runner_rejects_symlink_components_and_storage_override(

@@ -63,6 +63,7 @@ run_main() {
   local argument
   local confirmed=false
   local available_kib
+  local available_inodes
   shift
   (( $# >= 4 )) ||
     die 'argument count; usage: run_cloud.sh STORAGE_ROOT REPO_DIR STAGE STAGE_ARGS'
@@ -90,6 +91,13 @@ run_main() {
   [[ "$available_kib" =~ ^[0-9]+$ ]] || die 'could not determine free disk space'
   (( available_kib > 5 * 1024 * 1024 )) ||
     die 'more than 5 GiB of free disk space is required'
+  if [[ "$stage" == extract ]]; then
+    available_inodes="$(df -Pi -- "$storage_root" | awk 'NR == 2 {print $4}')"
+    [[ "$available_inodes" =~ ^[0-9]+$ ]] ||
+      die 'could not determine free inode count'
+    (( available_inodes >= 1200 )) ||
+      die 'at least 1200 free inodes are required for extraction'
+  fi
 
   cd -- "$repo_dir"
   PYTHONPATH="$repo_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
