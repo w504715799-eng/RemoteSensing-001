@@ -317,8 +317,8 @@ and no audit process remains, the cloud instance can be paused. Never copy the
 
 ## Phase 2B2-B development three-model smoke
 
-Status: local implementation and tests are in progress; real cloud GPU acceptance
-is not yet complete. This phase will run bicubic, SEN2SRLite, and LDSR-S2 on exactly
+Status: local implementation and all repository tests are complete; real cloud GPU
+acceptance is not yet complete. This phase will run bicubic, SEN2SRLite, and LDSR-S2 on exactly
 four frozen `development` samples, persist 12 identity-bound predictions, and then
 rebuild the deterministic result without model inference. It never computes
 calibration or internal_test metrics and is not a paper-result checkpoint.
