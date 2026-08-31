@@ -7,7 +7,7 @@ from collections import Counter
 import pytest
 
 from trustsr.data.crosssensor_schema import CrosssensorSample
-from trustsr.data.pilot_sampling import select_pilot
+from trustsr.data.pilot_sampling import CORRELATION_CUTS, correlation_bin, select_pilot
 from trustsr.data.research_subset import select_research_subset
 from trustsr.data.spatial_split import AssignedSample
 
@@ -112,6 +112,15 @@ def test_selection_is_independent_of_input_order() -> None:
     assert select_research_subset(assignments) == select_research_subset(
         tuple(reversed(assignments))
     )
+
+
+@pytest.mark.parametrize(
+    ("cut", "expected_bin"), zip(CORRELATION_CUTS, (1, 2, 3), strict=True)
+)
+def test_exact_correlation_cuts_enter_the_higher_bin(
+    cut: float, expected_bin: int
+) -> None:
+    assert correlation_bin(cut) == expected_bin
 
 
 def test_selection_rejects_a_tenth_round_without_a_distinct_group() -> None:

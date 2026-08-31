@@ -97,6 +97,7 @@ def _fake_base_python(tmp_path: Path) -> tuple[Path, dict[str, str], Path]:
         "with Path(os.environ['FAKE_PYTHON_CALLS']).open('a', encoding='utf-8') as stream:\n"
         "    stream.write(json.dumps(arguments) + '\\n')\n"
         "if arguments[:2] == ['-m', 'trustsr.cli.phase2b1b']:\n"
+        "    print(json.dumps({'stage': arguments[2]}, separators=(',', ':')))\n"
         "    raise SystemExit(0)\n"
         "raise SystemExit(f'unexpected fake Python argv: {arguments!r}')\n",
     )
@@ -226,7 +227,7 @@ def test_runner_requires_more_than_five_gib_and_explicit_confirmation(
     assert unconfirmed_calls == []
 
 
-def test_runner_rejects_extraction_when_free_inodes_cannot_hold_the_subset(
+def test_runner_defers_inode_capacity_to_the_restart_aware_extract_stage(
     tmp_path: Path,
 ) -> None:
     storage_root = tmp_path / "persistent"
@@ -239,12 +240,44 @@ def test_runner_rejects_extraction_when_free_inodes_cannot_hold_the_subset(
         repository=repository,
         stage="extract",
         stage_arguments=["--confirm-cloud-storage"],
-        available_inodes=1_199,
+        available_inodes=0,
     )
 
-    assert completed.returncode == 2
-    assert "at least 1200 free inodes" in completed.stderr
-    assert calls == []
+    assert completed.returncode == 0, completed.stderr
+    assert calls == [
+        [
+            "-m",
+            "trustsr.cli.phase2b1b",
+            "extract",
+            "--storage-root",
+            str(storage_root),
+            "--confirm-cloud-storage",
+        ]
+    ]
+
+
+def test_runner_appends_each_canonical_result_to_the_explicit_stage_log(
+    tmp_path: Path,
+) -> None:
+    storage_root = tmp_path / "persistent"
+    storage_root.mkdir()
+    repository = _repository(tmp_path)
+
+    for _ in range(2):
+        completed, _, _ = _invoke(
+            tmp_path,
+            storage_root=storage_root,
+            repository=repository,
+            stage="select",
+            stage_arguments=["--confirm-cloud-storage"],
+        )
+        assert completed.returncode == 0, completed.stderr
+
+    log = storage_root / "trustsr" / "phase2b1b" / "logs" / "select.jsonl"
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        '{"stage":"select"}',
+        '{"stage":"select"}',
+    ]
 
 
 def test_runner_rejects_symlink_components_and_storage_override(

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import cast
 
@@ -35,7 +36,7 @@ from trustsr.data.subset_manifest import (
     validate_subset_against_base,
     write_subset_manifest,
 )
-from trustsr.data.taco_v1_adapter import extract_pair
+from trustsr.data.taco_v1_adapter import extract_pair, inspect_extracted_pair
 from trustsr.jsonio import atomic_write_bytes, canonical_json
 
 _SOURCE_REPOSITORY = "tacofoundation/SEN2NAIPv2"
@@ -160,9 +161,15 @@ def _commit_selection(
             raise ValueError("existing digest-addressed selection has different bytes")
         return destination, True
 
-    destination_directory.mkdir()
-    atomic_write_bytes(destination, payload)
-    load_subset_manifest(destination, expected_sha256=candidate.sha256)
+    with tempfile.TemporaryDirectory(
+        prefix=".selection-commit-", dir=selection_root.parent
+    ) as temporary:
+        staged_directory = Path(temporary) / candidate.sha256
+        staged_directory.mkdir()
+        staged = staged_directory / "samples.jsonl"
+        atomic_write_bytes(staged, payload)
+        load_subset_manifest(staged, expected_sha256=candidate.sha256)
+        staged_directory.rename(destination_directory)
     return destination, False
 
 
@@ -190,14 +197,17 @@ def _require_absent_or_complete_pair(output_root: Path) -> None:
         raise ValueError("existing research-subset pair is partial or invalid")
 
 
-def _hash_file(path: Path) -> tuple[int, str]:
-    size_bytes = 0
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            size_bytes += len(block)
-            digest.update(block)
-    return size_bytes, digest.hexdigest()
+def _require_extract_inode_capacity(
+    storage_root: Path, outputs: Sequence[Path]
+) -> None:
+    missing_pairs = sum(not output.exists() for output in outputs)
+    required_inodes = 3 * missing_pairs + 16
+    available_inodes = os.statvfs(storage_root).f_favail
+    if available_inodes < required_inodes:
+        raise ValueError(
+            "storage_root has insufficient free inodes for extraction: "
+            f"requires {required_inodes}, has {available_inodes}"
+        )
 
 
 def _require_matching_post_selection(
@@ -229,6 +239,7 @@ def _verify_post_selection_assets(
         sample_id = cast(str, record["sample_id"])
         split = cast(str, record["split"])
         _require_safe_component(sample_id)
+        paths: dict[str, Path] = {}
         for kind in ("lr", "hr"):
             asset = cast(Mapping[str, object], record[f"{kind}_asset"])
             expected = PurePosixPath(
@@ -240,8 +251,24 @@ def _verify_post_selection_assets(
             _require_confined(storage_root, path)
             if path.is_symlink() or not path.is_file():
                 raise ValueError("post-extraction sidecar requires all 720 regular assets")
-            if _hash_file(path) != (asset["size_bytes"], asset["sha256"]):
-                raise ValueError("asset bytes do not match the post-extraction sidecar")
+            paths[kind] = path
+        observed_pair = inspect_extracted_pair(
+            paths["lr"],
+            paths["hr"],
+            lr_time_start=cast(str, record["lr_time_start"]),
+            hr_time_start=cast(str, record["hr_time_start"]),
+        )
+        for kind, observed in zip(("lr", "hr"), observed_pair, strict=True):
+            expected = PurePosixPath(
+                "subset-v1", split, sample_id, f"{kind}.tif"
+            ).as_posix()
+            observed_record = asdict(replace(observed, relative_path=expected))
+            observed_record["shape"] = list(observed_record["shape"])
+            observed_record["transform"] = list(observed_record["transform"])
+            if observed_record != record[f"{kind}_asset"]:
+                raise ValueError(
+                    "asset GeoTIFF metadata does not match the post-extraction sidecar"
+                )
             asset_count += 1
     if asset_count != 720:
         raise ValueError("post-extraction sidecar requires all 720 regular assets")
@@ -255,6 +282,8 @@ def _find_reusable_post_selection(
     selection_root = _phase_root(storage_root) / "selections"
     matches: list[ManifestArtifact] = []
     for directory in sorted(selection_root.iterdir(), key=lambda path: path.name):
+        if directory.name.startswith(".candidate-"):
+            continue
         if directory.name == input_manifest_sha256:
             continue
         candidate = directory / "samples.jsonl"
@@ -295,7 +324,9 @@ def run_select(
     selection_root = _phase_root(root) / "selections"
     _require_confined(root, selection_root)
     selection_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".candidate-", dir=selection_root) as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".selection-candidate-", dir=selection_root.parent
+    ) as temporary:
         candidate_path = Path(temporary) / "samples.jsonl"
         artifact = write_subset_manifest(candidate_path, base_records, choices, {})
         records = load_subset_manifest(candidate_path, expected_sha256=artifact.sha256)
@@ -357,6 +388,7 @@ def run_extract(
         artifact = reusable
         reused = True
     else:
+        _require_extract_inode_capacity(root, tuple(outputs.values()))
         assets: dict[str, tuple[ExtractedAsset, ExtractedAsset]] = {}
         for choice in choices:
             record = records_by_id[choice.sample_id]
@@ -380,7 +412,7 @@ def run_extract(
 
         selection_root = _phase_root(root) / "selections"
         with tempfile.TemporaryDirectory(
-            prefix=".candidate-", dir=selection_root
+            prefix=".selection-candidate-", dir=selection_root.parent
         ) as temporary:
             candidate_path = Path(temporary) / "samples.jsonl"
             artifact = write_subset_manifest(
@@ -423,8 +455,13 @@ def _commit_audit(
         return audit_path, True
 
     audit_directory.parent.mkdir(parents=True, exist_ok=True)
-    audit_directory.mkdir()
-    atomic_write_bytes(audit_path, payload)
+    with tempfile.TemporaryDirectory(
+        prefix=".audit-commit-", dir=phase_root
+    ) as temporary:
+        staged_directory = Path(temporary) / manifest_sha256
+        staged_directory.mkdir()
+        atomic_write_bytes(staged_directory / audit_path.name, payload)
+        staged_directory.rename(audit_directory)
     return audit_path, False
 
 
@@ -461,7 +498,12 @@ def run_audit(
         minimum_distances=FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
     )
     payload = canonical_json(audit)
-    _, reused = _commit_audit(_phase_root(root), manifest_digest, payload)
+    phase_root = _phase_root(root)
+    _require_confined(
+        root,
+        phase_root / "audits" / manifest_digest / "phase2b1b-audit.json",
+    )
+    _, reused = _commit_audit(phase_root, manifest_digest, payload)
     return {
         "stage": "audit",
         "digests": {

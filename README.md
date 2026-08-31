@@ -267,16 +267,19 @@ printf 'Pre-extraction sidecar: %s\nPost-extraction sidecar: %s\nAudit: %s\n' \
   "$PHASE2B1B_PRE_MANIFEST" "$PHASE2B1B_POST_MANIFEST" "$PHASE2B1B_AUDIT"
 ```
 
-`PHASE2B1B_STORAGE_ROOT` must be the persistent mountpoint itself. The runner
+`PHASE2B1B_STORAGE_ROOT` must be the selected data-filesystem mountpoint itself. The runner
 rejects root, home, relative, wildcard, newline, symlink, and non-mounted paths;
 requires explicit `--confirm-cloud-storage` and strictly more than 5 GiB free;
-requires at least 1,200 free inodes before extraction; and invokes only
-`/opt/conda/bin/python` from the existing cloud base environment. Check both
-`df -h` and `df -ih`: a filesystem can have ample byte capacity while its inode
-quota is exhausted. If the persistent filesystem is inode-constrained, use a
-separate mounted scratch filesystem after staging the exact digest-qualified
-TACO object, frozen base manifest, and pre-extraction sidecar beneath the same
-layout. The TIFF tree is reconstructible, but copy and verify the canonical
-audit before stopping an ephemeral instance. The three stages are intentionally
-restartable. Never copy the TACO object, 360-row sidecar, or GeoTIFF tree into
-Git.
+and invokes only `/opt/conda/bin/python` from the existing cloud base environment.
+Each successful canonical result is appended to the explicit
+`trustsr/phase2b1b/logs/<stage>.jsonl` path below that mount. Check both `df -h`
+and `df -ih`: a filesystem can have ample byte capacity while its inode quota is
+exhausted. Extraction computes its inode requirement from unfinished work as
+three inodes per missing pair plus 16 inodes of directory/commit headroom, so a
+valid partial run remains restartable. If the persistent filesystem is
+inode-constrained, use a separate mounted scratch filesystem after staging the
+exact digest-qualified TACO object, frozen base manifest, and pre-extraction
+sidecar beneath the same layout. The TIFF tree is reconstructible, but copy and
+verify the canonical audit before stopping an ephemeral instance. The three
+stages are intentionally restartable. Never copy the TACO object, 360-row
+sidecar, or GeoTIFF tree into Git.

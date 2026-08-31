@@ -63,7 +63,9 @@ run_main() {
   local argument
   local confirmed=false
   local available_kib
-  local available_inodes
+  local log_dir
+  local log_path
+  local output
   shift
   (( $# >= 4 )) ||
     die 'argument count; usage: run_cloud.sh STORAGE_ROOT REPO_DIR STAGE STAGE_ARGS'
@@ -91,18 +93,24 @@ run_main() {
   [[ "$available_kib" =~ ^[0-9]+$ ]] || die 'could not determine free disk space'
   (( available_kib > 5 * 1024 * 1024 )) ||
     die 'more than 5 GiB of free disk space is required'
-  if [[ "$stage" == extract ]]; then
-    available_inodes="$(df -Pi -- "$storage_root" | awk 'NR == 2 {print $4}')"
-    [[ "$available_inodes" =~ ^[0-9]+$ ]] ||
-      die 'could not determine free inode count'
-    (( available_inodes >= 1200 )) ||
-      die 'at least 1200 free inodes are required for extraction'
+
+  log_dir="$storage_root/trustsr/phase2b1b/logs"
+  reject_symlink_components "$log_dir" ||
+    die 'log directory must not contain a symlink'
+  mkdir -p -- "$log_dir"
+  [[ -d "$log_dir" && ! -L "$log_dir" ]] || die 'log directory is invalid'
+  log_path="$log_dir/$stage.jsonl"
+  if [[ -e "$log_path" || -L "$log_path" ]]; then
+    [[ -f "$log_path" && ! -L "$log_path" ]] || die 'stage log is invalid'
   fi
 
   cd -- "$repo_dir"
-  PYTHONPATH="$repo_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
-    exec "$base_python" -m trustsr.cli.phase2b1b "$stage" \
-      --storage-root "$storage_root" "$@"
+  output="$(
+    PYTHONPATH="$repo_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$base_python" -m trustsr.cli.phase2b1b "$stage" \
+        --storage-root "$storage_root" "$@"
+  )"
+  printf '%s\n' "$output" | tee -a -- "$log_path"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

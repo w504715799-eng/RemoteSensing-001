@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from rasterio.io import MemoryFile
+from rasterio.transform import Affine
 
 from trustsr.cli import phase2b1b
 from trustsr.data.crosssensor_manifest import ExtractedAsset, load_manifest, write_manifest
@@ -133,6 +139,30 @@ def _pre_selection(
     return path, artifact.sha256
 
 
+@lru_cache(maxsize=2)
+def _geotiff_payload(kind: str) -> bytes:
+    size, resolution = (130, 10.0) if kind == "lr" else (520, 2.5)
+    pixels = np.zeros((4, size, size), dtype=np.uint16)
+    pixels[0, 0, 0] = 10_000
+    with MemoryFile() as memory:
+        with memory.open(
+            driver="GTiff",
+            width=size,
+            height=size,
+            count=4,
+            dtype="uint16",
+            crs="EPSG:32618",
+            transform=Affine(resolution, 0.0, 500000.0, 0.0, -resolution, 400000.0),
+            compress="deflate",
+        ) as dataset:
+            dataset.write(pixels)
+            for band_index, description in enumerate(
+                ("B04", "B03", "B02", "B08"), start=1
+            ):
+                dataset.set_band_description(band_index, description)
+        return memory.read()
+
+
 class _FakeExtractor:
     def __init__(self, base_records: tuple[dict, ...]) -> None:
         self.by_index = {record["source_index"]: record for record in base_records}
@@ -149,8 +179,8 @@ class _FakeExtractor:
         record = self.by_index[source_index]
         self.calls.append(source_index)
         output_root.mkdir(parents=True, exist_ok=True)
-        lr_payload = f"lr-{source_index}".encode()
-        hr_payload = f"hr-{source_index}".encode()
+        lr_payload = _geotiff_payload("lr")
+        hr_payload = _geotiff_payload("hr")
         (output_root / "lr.tif").write_bytes(lr_payload)
         (output_root / "hr.tif").write_bytes(hr_payload)
         return (
@@ -215,6 +245,61 @@ def test_parser_has_exact_stage_specific_manifest_arguments() -> None:
     assert extracted.stage == "extract"
     assert extracted.selection_manifest == Path("selection.jsonl")
     assert not hasattr(extracted, "base_manifest")
+
+
+def test_selection_commit_failure_does_not_publish_an_empty_digest_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_records = _base_records(tmp_path)
+    candidate = tmp_path / "candidate.jsonl"
+    artifact = write_subset_manifest(
+        candidate, base_records, select_from_base_manifest(base_records), {}
+    )
+    selection_root = tmp_path / "trustsr" / "phase2b1b" / "selections"
+    selection_root.mkdir(parents=True)
+
+    def fail_write(path: Path, payload: bytes) -> None:
+        raise OSError("injected write failure")
+
+    monkeypatch.setattr(phase2b1b, "atomic_write_bytes", fail_write)
+
+    with pytest.raises(OSError, match="injected write failure"):
+        phase2b1b._commit_selection(selection_root, artifact)
+
+    assert not (selection_root / artifact.sha256).exists()
+
+
+def test_audit_commit_failure_does_not_publish_an_empty_digest_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    phase_root = tmp_path / "trustsr" / "phase2b1b"
+    phase_root.mkdir(parents=True)
+    manifest_sha256 = "a" * 64
+
+    def fail_write(path: Path, payload: bytes) -> None:
+        raise OSError("injected write failure")
+
+    monkeypatch.setattr(phase2b1b, "atomic_write_bytes", fail_write)
+
+    with pytest.raises(OSError, match="injected write failure"):
+        phase2b1b._commit_audit(phase_root, manifest_sha256, b"{}")
+
+    assert not (phase_root / "audits" / manifest_sha256).exists()
+
+
+def test_reusable_selection_scan_ignores_an_abandoned_legacy_candidate(
+    tmp_path: Path,
+) -> None:
+    base_records = _base_records(tmp_path)
+    pre_manifest, pre_digest = _pre_selection(tmp_path, base_records)
+    records = load_subset_manifest(pre_manifest, expected_sha256=pre_digest)
+    abandoned = pre_manifest.parent.parent / ".candidate-interrupted"
+    abandoned.mkdir()
+    (abandoned / "partial").write_bytes(b"incomplete")
+
+    assert phase2b1b._find_reusable_post_selection(
+        tmp_path, pre_digest, records
+    ) is None
 
 
 def test_frozen_source_loader_accepts_the_committed_provenance() -> None:
@@ -478,18 +563,87 @@ def _completed_extraction(
     return base_records, post_manifest, post_digest
 
 
+def test_extract_rejects_insufficient_inodes_before_reading_taco(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_records = _base_records(tmp_path)
+    pre_manifest, _ = _pre_selection(tmp_path, base_records)
+    extractor = _FakeExtractor(base_records)
+    monkeypatch.setattr(
+        phase2b1b, "_load_frozen_base_from_storage", lambda root: base_records
+    )
+    monkeypatch.setattr(phase2b1b, "extract_pair", extractor)
+    monkeypatch.setattr(os, "statvfs", lambda path: SimpleNamespace(f_favail=1_095))
+    _patch_verified_source(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="free inodes"):
+        phase2b1b.run_extract(
+            SOURCE,
+            tmp_path,
+            pre_manifest,
+            confirmed_cloud_storage=True,
+        )
+
+    assert extractor.calls == []
+
+
+def test_extract_inode_gate_accounts_for_completed_pairs_at_exact_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_records = _base_records(tmp_path)
+    choices = select_from_base_manifest(base_records)
+    pre_manifest, _ = _pre_selection(tmp_path, base_records)
+    extractor = _FakeExtractor(base_records)
+    by_id = {record["sample_id"]: record for record in base_records}
+    first = choices[0]
+    extractor(
+        Path("unused"),
+        by_id[first.sample_id]["source_index"],
+        tmp_path / "trustsr" / "phase2b1b" / "subset-v1" / first.split / first.sample_id,
+        ("B04", "B03", "B02", "B08"),
+    )
+    extractor.calls.clear()
+    monkeypatch.setattr(
+        phase2b1b, "_load_frozen_base_from_storage", lambda root: base_records
+    )
+    monkeypatch.setattr(phase2b1b, "extract_pair", extractor)
+    monkeypatch.setattr(os, "statvfs", lambda path: SimpleNamespace(f_favail=1_093))
+    _patch_verified_source(monkeypatch, tmp_path)
+
+    result = phase2b1b.run_extract(
+        SOURCE,
+        tmp_path,
+        pre_manifest,
+        confirmed_cloud_storage=True,
+    )
+
+    assert result["counts"] == {"subset_pairs": 360, "subset_geotiffs": 720}
+    assert len(extractor.calls) == 360
+
+
 def test_audit_rehashes_all_720_files_and_reuses_identical_canonical_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, post_manifest, post_digest = _completed_extraction(monkeypatch, tmp_path)
-    real_hash_file = phase2b1b._hash_file
-    hash_calls: list[Path] = []
+    real_inspect_pair = phase2b1b.inspect_extracted_pair
+    inspection_calls: list[tuple[Path, Path]] = []
 
-    def counting_hash(path: Path) -> tuple[int, str]:
-        hash_calls.append(path)
-        return real_hash_file(path)
+    def counting_inspection(
+        lr_path: Path,
+        hr_path: Path,
+        *,
+        lr_time_start: str,
+        hr_time_start: str,
+    ) -> tuple[ExtractedAsset, ExtractedAsset]:
+        inspection_calls.append((lr_path, hr_path))
+        return real_inspect_pair(
+            lr_path,
+            hr_path,
+            lr_time_start=lr_time_start,
+            hr_time_start=hr_time_start,
+        )
 
-    monkeypatch.setattr(phase2b1b, "_hash_file", counting_hash)
+    monkeypatch.setattr(phase2b1b, "inspect_extracted_pair", counting_inspection)
 
     first = phase2b1b.run_audit(
         SOURCE,
@@ -513,7 +667,7 @@ def test_audit_rehashes_all_720_files_and_reuses_identical_canonical_json(
         confirmed_cloud_storage=True,
     )
 
-    assert len(hash_calls) == 1440
+    assert len(inspection_calls) == 720
     assert first == {
         "stage": "audit",
         "digests": {
@@ -551,7 +705,7 @@ def test_audit_rejects_a_symlink_or_hash_mismatch_before_writing_an_audit(
         message = "regular assets"
     else:
         target.write_bytes(b"changed")
-        message = "asset bytes"
+        message = "readable GeoTIFF"
 
     with pytest.raises(ValueError, match=message):
         phase2b1b.run_audit(
@@ -562,3 +716,55 @@ def test_audit_rejects_a_symlink_or_hash_mismatch_before_writing_an_audit(
         )
 
     assert not (tmp_path / "trustsr" / "phase2b1b" / "audits").exists()
+
+
+@pytest.mark.parametrize("damage", ["non-geotiff", "falsified-metadata"])
+def test_asset_verification_reconstructs_metadata_from_real_geotiff_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    _, post_manifest, post_digest = _completed_extraction(monkeypatch, tmp_path)
+    records = [
+        dict(record)
+        for record in load_subset_manifest(post_manifest, expected_sha256=post_digest)
+    ]
+    first = dict(records[0])
+    lr_asset = dict(first["lr_asset"])
+    target = (
+        tmp_path / "trustsr" / "phase2b1b" / lr_asset["relative_path"]
+    )
+    if damage == "non-geotiff":
+        payload = b"self-consistent but not a GeoTIFF"
+        target.write_bytes(payload)
+        lr_asset["size_bytes"] = len(payload)
+        lr_asset["sha256"] = hashlib.sha256(payload).hexdigest()
+        message = "readable GeoTIFF"
+    else:
+        lr_asset["minimum"] = 1.0
+        message = "metadata"
+    first["lr_asset"] = lr_asset
+    records[0] = first
+
+    with pytest.raises(ValueError, match=message):
+        phase2b1b._verify_post_selection_assets(tmp_path, records)
+
+
+def test_audit_rejects_a_symlinked_audit_parent_before_writing_outside_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage_root = tmp_path / "storage"
+    storage_root.mkdir()
+    _, post_manifest, _ = _completed_extraction(monkeypatch, storage_root)
+    audit_parent = storage_root / "trustsr" / "phase2b1b" / "audits"
+    external = tmp_path / "external-audits"
+    external.mkdir()
+    audit_parent.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escapes storage_root"):
+        phase2b1b.run_audit(
+            SOURCE,
+            storage_root,
+            post_manifest,
+            confirmed_cloud_storage=True,
+        )
+
+    assert tuple(external.iterdir()) == ()
