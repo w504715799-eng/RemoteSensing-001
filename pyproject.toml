@@ -29,6 +29,7 @@ trustsr-dataset-audit = "trustsr.cli.dataset_audit:main"
 trustsr-phase2b1a = "trustsr.cli.phase2b1a:main"
 trustsr-phase2b1b = "trustsr.cli.phase2b1b:main"
 trustsr-phase2b2a = "trustsr.cli.phase2b2a:main"
+trustsr-phase2b2b = "trustsr.cli.phase2b2b:main"
 
 [dependency-groups]
 dev = [
