@@ -333,6 +333,16 @@ def _base_by_id(
     return result
 
 
+def select_from_base_manifest(
+    base_records: Sequence[Mapping[str, object]],
+) -> tuple[SubsetChoice, ...]:
+    """Select the fixed research subset directly from Phase 2B1A manifest records."""
+    _base_by_id(base_records)
+    return select_research_subset(
+        tuple(_assignment_from_base_record(record) for record in base_records)
+    )
+
+
 def _require_record_matches_base(
     record: Mapping[str, object], base: Mapping[str, object]
 ) -> None:
@@ -381,8 +391,7 @@ def validate_subset_against_base(
     validated = tuple(_validate_record(record) for record in records)
     _validate_collection(validated)
     base_by_id = _base_by_id(base_records)
-    assignments = tuple(_assignment_from_base_record(record) for record in base_records)
-    expected = select_research_subset(assignments)
+    expected = select_from_base_manifest(base_records)
     expected_by_id = {choice.sample_id: choice for choice in expected}
     if {record["sample_id"] for record in validated} != set(expected_by_id):
         raise ValueError("sidecar does not equal the deterministic research subset")
@@ -443,9 +452,7 @@ def write_subset_manifest(
     if not isinstance(assets, Mapping):
         raise ValueError("assets must be a mapping")
     base_by_id = _base_by_id(base_records)
-    expected = select_research_subset(
-        tuple(_assignment_from_base_record(record) for record in base_records)
-    )
+    expected = select_from_base_manifest(base_records)
     if tuple(choices) != expected:
         raise ValueError("choices do not equal the deterministic research subset")
     selected_ids = {choice.sample_id for choice in expected}
