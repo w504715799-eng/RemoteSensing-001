@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -446,3 +447,118 @@ def test_extract_requires_an_all_null_pre_extraction_sidecar(
         )
 
     assert extractor.calls == []
+
+
+def _completed_extraction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[tuple[dict, ...], Path, str]:
+    base_records = _base_records(tmp_path)
+    pre_manifest, _ = _pre_selection(tmp_path, base_records)
+    extractor = _FakeExtractor(base_records)
+    monkeypatch.setattr(
+        phase2b1b, "_load_frozen_base_from_storage", lambda root: base_records
+    )
+    monkeypatch.setattr(phase2b1b, "extract_pair", extractor)
+    _patch_verified_source(monkeypatch, tmp_path)
+    extracted = phase2b1b.run_extract(
+        SOURCE,
+        tmp_path,
+        pre_manifest,
+        confirmed_cloud_storage=True,
+    )
+    post_digest = extracted["digests"]["selection_manifest_sha256"]
+    post_manifest = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1b"
+        / "selections"
+        / post_digest
+        / "samples.jsonl"
+    )
+    return base_records, post_manifest, post_digest
+
+
+def test_audit_rehashes_all_720_files_and_reuses_identical_canonical_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, post_manifest, post_digest = _completed_extraction(monkeypatch, tmp_path)
+    real_hash_file = phase2b1b._hash_file
+    hash_calls: list[Path] = []
+
+    def counting_hash(path: Path) -> tuple[int, str]:
+        hash_calls.append(path)
+        return real_hash_file(path)
+
+    monkeypatch.setattr(phase2b1b, "_hash_file", counting_hash)
+
+    first = phase2b1b.run_audit(
+        SOURCE,
+        tmp_path,
+        post_manifest,
+        confirmed_cloud_storage=True,
+    )
+    audit_path = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1b"
+        / "audits"
+        / post_digest
+        / "phase2b1b-audit.json"
+    )
+    audit = json.loads(audit_path.read_bytes())
+    second = phase2b1b.run_audit(
+        SOURCE,
+        tmp_path,
+        post_manifest,
+        confirmed_cloud_storage=True,
+    )
+
+    assert len(hash_calls) == 1440
+    assert first == {
+        "stage": "audit",
+        "digests": {
+            "audit_sha256": hashlib.sha256(audit_path.read_bytes()).hexdigest(),
+            "base_manifest_sha256": BASE_MANIFEST_SHA256,
+            "selection_manifest_sha256": post_digest,
+            "source_sha256": phase2b1b.SOURCE_OBJECT_SHA256,
+        },
+        "counts": {"subset_pairs": 360, "subset_geotiffs": 720},
+        "reused": False,
+    }
+    assert audit["manifest_sha256"] == post_digest
+    assert audit["round_one_matches_phase2b1a"] is True
+    assert second["digests"] == first["digests"]
+    assert second["reused"] is True
+
+
+@pytest.mark.parametrize("damage", ["symlink", "changed-bytes"])
+def test_audit_rejects_a_symlink_or_hash_mismatch_before_writing_an_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, damage: str
+) -> None:
+    _, post_manifest, post_digest = _completed_extraction(monkeypatch, tmp_path)
+    records = load_subset_manifest(post_manifest, expected_sha256=post_digest)
+    first = records[0]
+    target = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1b"
+        / first["lr_asset"]["relative_path"]
+    )
+    if damage == "symlink":
+        original = target.with_name("original-lr.tif")
+        target.rename(original)
+        target.symlink_to(original)
+        message = "regular assets"
+    else:
+        target.write_bytes(b"changed")
+        message = "asset bytes"
+
+    with pytest.raises(ValueError, match=message):
+        phase2b1b.run_audit(
+            SOURCE,
+            tmp_path,
+            post_manifest,
+            confirmed_cloud_storage=True,
+        )
+
+    assert not (tmp_path / "trustsr" / "phase2b1b" / "audits").exists()

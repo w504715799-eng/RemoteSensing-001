@@ -20,6 +20,8 @@ from trustsr.data.research_subset import SubsetChoice, select_research_subset
 from trustsr.data.spatial_split import AssignedSample
 from trustsr.data.subset_manifest import (
     BASE_MANIFEST_SHA256,
+    FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
+    build_subset_audit,
     load_subset_manifest,
     validate_subset_against_base,
     write_subset_manifest,
@@ -229,3 +231,76 @@ def test_subset_loader_rejects_a_duplicate_group_within_one_split(tmp_path: Path
 
     with pytest.raises(ValueError, match="120 distinct spatial groups"):
         load_subset_manifest(path, expected_sha256=hashlib.sha256(payload).hexdigest())
+
+
+def _post_records(tmp_path: Path) -> tuple[tuple[dict, ...], tuple[dict, ...], str]:
+    assignments = _assignments()
+    base_records = _base_records(tmp_path, assignments)
+    choices = select_research_subset(assignments)
+    path = tmp_path / "post.jsonl"
+    artifact = write_subset_manifest(path, base_records, choices, _assets(base_records, choices))
+    records = load_subset_manifest(path, expected_sha256=artifact.sha256)
+    return records, base_records, artifact.sha256
+
+
+def test_subset_audit_records_exact_counts_and_round_one_evidence(tmp_path: Path) -> None:
+    records, base_records, digest = _post_records(tmp_path)
+
+    audit = build_subset_audit(
+        records,
+        manifest_sha256=digest,
+        base_records=base_records,
+        minimum_distances=FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
+    )
+
+    assert audit["schema"] == "trustsr.phase2b1b-audit.v1"
+    assert audit["base_manifest_sha256"] == BASE_MANIFEST_SHA256
+    assert audit["manifest_sha256"] == digest
+    assert audit["subset_pair_count"] == 360
+    assert audit["subset_geotiff_count"] == 720
+    assert audit["split_sample_counts"] == {
+        "development": 120,
+        "calibration": 120,
+        "internal_test": 120,
+    }
+    assert audit["split_spatial_group_counts"] == audit["split_sample_counts"]
+    assert len(audit["stratum_counts"]) == 36
+    assert set(audit["stratum_counts"].values()) == {10}
+    assert audit["selection_round_counts"] == {
+        str(selection_round): 36 for selection_round in range(1, 11)
+    }
+    assert audit["round_one_matches_phase2b1a"] is True
+    assert audit["minimum_cross_split_distances"] == FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES
+    assert audit["real_pixels_local"] is False
+    assert audit["gpu_used"] is False
+
+
+def test_subset_audit_rejects_an_all_null_sidecar(tmp_path: Path) -> None:
+    assignments = _assignments()
+    base_records = _base_records(tmp_path, assignments)
+    choices = select_research_subset(assignments)
+    path = tmp_path / "pre.jsonl"
+    artifact = write_subset_manifest(path, base_records, choices, {})
+    records = load_subset_manifest(path, expected_sha256=artifact.sha256)
+
+    with pytest.raises(ValueError, match="all 720 GeoTIFF assets"):
+        build_subset_audit(
+            records,
+            manifest_sha256=artifact.sha256,
+            base_records=base_records,
+            minimum_distances=FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
+        )
+
+
+def test_subset_audit_rejects_changed_distance_evidence(tmp_path: Path) -> None:
+    records, base_records, digest = _post_records(tmp_path)
+    distances = dict(FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES)
+    distances["calibration:development"] += 0.001
+
+    with pytest.raises(ValueError, match="frozen Phase 2B1A evidence"):
+        build_subset_audit(
+            records,
+            manifest_sha256=digest,
+            base_records=base_records,
+            minimum_distances=distances,
+        )

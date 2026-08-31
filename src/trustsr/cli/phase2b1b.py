@@ -28,6 +28,8 @@ from trustsr.data.crosssensor_source import (
 from trustsr.data.provenance import DatasetSource, LfsObject, load_dataset_source
 from trustsr.data.subset_manifest import (
     BASE_MANIFEST_SHA256,
+    FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
+    build_subset_audit,
     load_subset_manifest,
     select_from_base_manifest,
     validate_subset_against_base,
@@ -404,6 +406,75 @@ def run_extract(
     }
 
 
+def _commit_audit(
+    phase_root: Path, manifest_sha256: str, payload: bytes
+) -> tuple[Path, bool]:
+    audit_directory = phase_root / "audits" / manifest_sha256
+    audit_path = audit_directory / "phase2b1b-audit.json"
+    if audit_directory.exists() or audit_directory.is_symlink():
+        if audit_directory.is_symlink() or not audit_directory.is_dir():
+            raise ValueError("existing audit digest directory is invalid")
+        if tuple(audit_directory.iterdir()) != (audit_path,):
+            raise ValueError("existing audit digest directory is incomplete or invalid")
+        if audit_path.is_symlink() or not audit_path.is_file():
+            raise ValueError("existing Phase 2B1B audit is invalid")
+        if audit_path.read_bytes() != payload:
+            raise ValueError("existing Phase 2B1B audit has different bytes")
+        return audit_path, True
+
+    audit_directory.parent.mkdir(parents=True, exist_ok=True)
+    audit_directory.mkdir()
+    atomic_write_bytes(audit_path, payload)
+    return audit_path, False
+
+
+def run_audit(
+    source_path: Path,
+    storage_root: Path,
+    selection_manifest_path: Path,
+    *,
+    confirmed_cloud_storage: bool,
+) -> dict[str, object]:
+    """Rehash all selected assets and commit the canonical Phase 2B1B audit."""
+    root = require_cloud_confirmation(storage_root, confirmed_cloud_storage)
+    _, object_spec = _load_frozen_source(source_path)
+    verified = verify_crosssensor(source_paths(root, object_spec).final, object_spec)
+    if (
+        verified.size_bytes != SOURCE_OBJECT_SIZE_BYTES
+        or verified.sha256 != SOURCE_OBJECT_SHA256
+    ):
+        raise ValueError("verified source does not match the frozen crosssensor object")
+    manifest_digest, records = _load_digest_selection(root, selection_manifest_path)
+    if any(
+        record["lr_asset"] is None or record["hr_asset"] is None for record in records
+    ):
+        raise ValueError("audit requires an all-assets post-extraction sidecar")
+    base_records = _load_frozen_base_from_storage(root)
+    choices = validate_subset_against_base(records, base_records)
+    if len(choices) != 360:
+        raise ValueError("audit requires exactly 360 deterministic choices")
+    _verify_post_selection_assets(root, records)
+    audit = build_subset_audit(
+        records,
+        manifest_sha256=manifest_digest,
+        base_records=base_records,
+        minimum_distances=FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES,
+    )
+    payload = canonical_json(audit)
+    _, reused = _commit_audit(_phase_root(root), manifest_digest, payload)
+    return {
+        "stage": "audit",
+        "digests": {
+            "audit_sha256": hashlib.sha256(payload).hexdigest(),
+            "base_manifest_sha256": BASE_MANIFEST_SHA256,
+            "selection_manifest_sha256": manifest_digest,
+            "source_sha256": verified.sha256,
+        },
+        "counts": {"subset_pairs": 360, "subset_geotiffs": 720},
+        "reused": reused,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch an implemented Phase 2B1B stage and emit canonical JSON."""
     args = build_parser().parse_args(argv)
@@ -422,7 +493,12 @@ def main(argv: list[str] | None = None) -> int:
             confirmed_cloud_storage=args.confirm_cloud_storage,
         )
     else:
-        raise ValueError(f"Phase 2B1B stage is not implemented yet: {args.stage}")
+        payload = run_audit(
+            args.source,
+            args.storage_root,
+            args.selection_manifest,
+            confirmed_cloud_storage=args.confirm_cloud_storage,
+        )
     print(canonical_json(payload).decode("utf-8"))
     return 0
 

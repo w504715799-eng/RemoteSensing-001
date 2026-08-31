@@ -15,6 +15,7 @@ from trustsr.data.crosssensor_manifest import (
     SOURCE_REVISION,
     ExtractedAsset,
     ManifestArtifact,
+    audit_source_identity,
 )
 from trustsr.data.crosssensor_schema import (
     AcquisitionTimes,
@@ -38,6 +39,11 @@ SUBSET_SCHEMA = "trustsr.phase2b1b-selection.v1"
 AUDIT_SCHEMA = "trustsr.phase2b1b-audit.v1"
 BASE_MANIFEST_SHA256 = "7487b0af2ebef86910e918d5d6b2fb927a6f5e46bac7c2e30be7ffb2ce994482"
 BANDS = ("B04", "B03", "B02", "B08")
+FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES = {
+    "calibration:development": 5.001488639974653,
+    "calibration:internal_test": 5.012057656530008,
+    "development:internal_test": 5.001592281637432,
+}
 _SUBSET_FIELDS = frozenset(
     {
         "schema",
@@ -508,3 +514,97 @@ def load_subset_manifest(
         raise ValueError("selection manifest must be sorted by sample_id")
     _validate_collection(records)
     return tuple(records)
+
+
+def _validate_minimum_distances(
+    minimum_distances: Mapping[str, float],
+) -> dict[str, float]:
+    if not isinstance(minimum_distances, Mapping):
+        raise ValueError("minimum distances must be a mapping")
+    observed: dict[str, float] = {}
+    for key in FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES:
+        if key not in minimum_distances:
+            raise ValueError("minimum distances do not match frozen Phase 2B1A evidence")
+        observed[key] = _require_float(minimum_distances[key], f"minimum distance {key}")
+    if set(minimum_distances) != set(FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES) or (
+        observed != FROZEN_MINIMUM_CROSS_SPLIT_DISTANCES
+    ):
+        raise ValueError("minimum distances do not match frozen Phase 2B1A evidence")
+    return observed
+
+
+def build_subset_audit(
+    records: Sequence[Mapping[str, object]],
+    *,
+    manifest_sha256: str,
+    base_records: Sequence[Mapping[str, object]],
+    minimum_distances: Mapping[str, float],
+) -> dict[str, object]:
+    """Build a host-free audit after validating the full 360-pair contract."""
+    _require_sha256(manifest_sha256, "selection manifest SHA-256")
+    choices = validate_subset_against_base(records, base_records)
+    validated = tuple(_validate_record(record) for record in records)
+    if any(
+        record["lr_asset"] is None or record["hr_asset"] is None
+        for record in validated
+    ):
+        raise ValueError("Phase 2B1B audit requires all 720 GeoTIFF assets")
+    split_counts = {
+        split: sum(record["split"] == split for record in validated) for split in SPLITS
+    }
+    group_counts = {
+        split: len(
+            {
+                record["spatial_group_id"]
+                for record in validated
+                if record["split"] == split
+            }
+        )
+        for split in SPLITS
+    }
+    stratum_counts = {
+        f"{split}:day={days_between}:bin={bin_index}": sum(
+            record["split"] == split
+            and record["days_between"] == days_between
+            and record["correlation_bin"] == bin_index
+            for record in validated
+        )
+        for split in SPLITS
+        for days_between in DAYS_BETWEEN
+        for bin_index in CORRELATION_BINS
+    }
+    round_counts = {
+        str(selection_round): sum(
+            record["selection_round"] == selection_round for record in validated
+        )
+        for selection_round in range(1, SELECTION_ROUNDS + 1)
+    }
+    expected_round_one = {
+        choice.sample_id for choice in choices if choice.selection_round == 1
+    }
+    observed_round_one = {
+        str(record["sample_id"])
+        for record in validated
+        if record["selection_round"] == 1
+    }
+    round_one_matches = observed_round_one == expected_round_one
+    if not round_one_matches:
+        raise ValueError("round one does not match the Phase 2B1A pilot")
+    return {
+        "schema": AUDIT_SCHEMA,
+        **audit_source_identity(),
+        "base_manifest_sha256": BASE_MANIFEST_SHA256,
+        "manifest_sha256": manifest_sha256,
+        "subset_pair_count": len(validated),
+        "subset_geotiff_count": 2 * len(validated),
+        "split_sample_counts": split_counts,
+        "split_spatial_group_counts": group_counts,
+        "stratum_counts": stratum_counts,
+        "selection_round_counts": round_counts,
+        "round_one_matches_phase2b1a": round_one_matches,
+        "minimum_cross_split_distances": _validate_minimum_distances(
+            minimum_distances
+        ),
+        "real_pixels_local": False,
+        "gpu_used": False,
+    }
