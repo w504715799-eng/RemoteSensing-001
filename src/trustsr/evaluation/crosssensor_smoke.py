@@ -159,10 +159,13 @@ def _validate_pairs(
     return result
 
 
-def _validate_models(models: Sequence[SRModel]) -> tuple[SRModel, ...]:
+def _validate_models(
+    models: Sequence[SRModel],
+) -> tuple[tuple[SRModel, ...], tuple[Mapping[str, JsonScalar], ...]]:
     result = tuple(models)
     if tuple(model.name for model in result) != MODEL_NAMES:
         raise ValueError("development smoke model order must match the frozen three-model order")
+    provenances: list[Mapping[str, JsonScalar]] = []
     for model in result:
         if model.scale != 4:
             raise ValueError(f"model {model.name!r} must use scale 4")
@@ -170,7 +173,8 @@ def _validate_models(models: Sequence[SRModel]) -> tuple[SRModel, ...]:
         if provenance.get("name") != model.name or provenance.get("scale") != 4:
             raise ValueError(f"model {model.name!r} provenance does not identify the model")
         build_cache_provenance(provenance)
-    return result
+        provenances.append(provenance)
+    return result, tuple(provenances)
 
 
 def _validate_prediction(pair: SRPair, prediction: torch.Tensor) -> torch.Tensor:
@@ -340,8 +344,7 @@ def evaluate_development_smoke(
     """Evaluate the frozen three-model grid, resuming only valid cache entries."""
 
     pairs = _validate_pairs(loaded_pairs, expected_sample_count)
-    checked_models = _validate_models(models)
-    provenances = tuple(model.provenance() for model in checked_models)
+    checked_models, provenances = _validate_models(models)
     result, audit, _ = _build_outputs(
         pairs, provenances, cache_root, metric_fn, checked_models
     )

@@ -156,6 +156,97 @@ def test_invalid_upstream_stops_before_phase_output_directory(
     assert not (tmp_path / "trustsr" / "phase2b2b").exists()
 
 
+def test_validate_upstream_rejects_alternate_symlink_to_frozen_input_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = (
+        tmp_path
+        / "trustsr/phase2b2a/input-audits"
+        / POST_MANIFEST_SHA256
+        / "phase2b2a-input-audit.json"
+    )
+    expected.parent.mkdir(parents=True)
+    expected.write_bytes(b"audit")
+    alternate = tmp_path / "alternate-input-audit.json"
+    alternate.symlink_to(expected)
+    args = _args(tmp_path)
+    args.input_audit = alternate
+    monkeypatch.setattr(
+        phase2b2b,
+        "require_cloud_confirmation",
+        lambda root, confirmed: root,
+    )
+    monkeypatch.setattr(
+        phase2b2b,
+        "load_crosssensor_records",
+        lambda root, path, *, expected_sha256: _records(),
+    )
+    monkeypatch.setattr(
+        phase2b2b,
+        "load_input_audit",
+        lambda path, *, expected_sha256: pytest.fail("symlink reached audit loader"),
+    )
+
+    with pytest.raises(ValueError, match="digest-addressed path"):
+        phase2b2b._validate_upstream(args)
+
+
+def test_compute_stage_checks_gpu_before_loading_pair_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    def validate(_args):
+        events.append("upstream")
+        return tmp_path, _records()
+
+    def reject_gpu():
+        events.append("gpu")
+        raise RuntimeError("GPU gate")
+
+    def load_pair(*args, **kwargs):
+        events.append("pixels")
+        return _loaded(args[1])
+
+    monkeypatch.setattr(phase2b2b, "_validate_upstream", validate)
+    monkeypatch.setattr(phase2b2b, "capture_gpu_hardware", reject_gpu)
+    monkeypatch.setattr(phase2b2b, "load_crosssensor_pair", load_pair)
+
+    with pytest.raises(RuntimeError, match="GPU gate"):
+        phase2b2b.run_smoke(_args(tmp_path))
+
+    assert events == ["upstream", "gpu"]
+
+
+def test_compute_stage_rejects_symlinked_phase_output_before_gpu_or_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "trustsr").mkdir()
+    (tmp_path / "trustsr" / "phase2b2b").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(
+        phase2b2b,
+        "_validate_upstream",
+        lambda args: (tmp_path, _records()),
+    )
+    monkeypatch.setattr(
+        phase2b2b,
+        "capture_gpu_hardware",
+        lambda: pytest.fail("symlinked path reached GPU gate"),
+    )
+    monkeypatch.setattr(
+        phase2b2b,
+        "load_crosssensor_pair",
+        lambda *args, **kwargs: pytest.fail("symlinked path loaded pixels"),
+    )
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        phase2b2b.run_smoke(_args(tmp_path))
+
+    assert tuple(outside.iterdir()) == ()
+
+
 def test_preflight_constructs_models_without_loading_pair_pixels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

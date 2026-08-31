@@ -58,7 +58,10 @@ phase2b2b_run() {
 }
 ```
 
-runner 只调用云镜像的 `/opt/conda/bin/python`，不会创建环境、下载数据或安装软件。若轻量依赖或模型资产尚未按其既有摘要准备完成，应先停止并修复环境，不得在 runner 内临时升级依赖。
+runner 只调用云镜像的 `/opt/conda/bin/python`，不会创建环境、下载 crosssensor
+数据或安装软件。既有模型适配器可能在模型目录缺少资产时获取固定模型文件，
+但只能在下载后通过冻结的大小和 SHA-256 校验；轻量依赖缺失时应停止并修复
+base 环境，不得在 runner 内临时升级 PyTorch 或其他依赖。
 
 ## 3. Preflight
 
@@ -136,4 +139,3 @@ nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits
 要求无计算 PID，四阶段均成功，两个 Git-safe 文件的远端/本地摘要一致，且本地完整测试通过。云服务器的暂停或关机由用户在云平台控制台完成，仓库脚本不执行关机操作。
 
 本阶段通过后先按实测单样本耗时和缓存大小复盘 Phase 2B3 成本，不自动启动 360 对推理。
-

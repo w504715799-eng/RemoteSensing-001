@@ -164,9 +164,11 @@ class FakeModel:
         self.name = name
         self.value = value
         self.calls = 0
+        self.provenance_calls = 0
         self.last_prediction: torch.Tensor | None = None
 
     def provenance(self):
+        self.provenance_calls += 1
         return {"name": self.name, "scale": self.scale, "value": self.value}
 
     def predict(self, lr: torch.Tensor) -> torch.Tensor:
@@ -204,6 +206,8 @@ def test_model_grid_cold_run_writes_12_caches_and_warm_run_is_identical(
 
     assert [model.calls for model in cold_models] == [4, 4, 4]
     assert [model.calls for model in warm_models] == [0, 0, 0]
+    assert [model.provenance_calls for model in cold_models] == [1, 1, 1]
+    assert [model.provenance_calls for model in warm_models] == [1, 1, 1]
     assert cold_result == warm_result
     assert cold_audit == warm_audit
     assert cold_result["sample_count"] == 4

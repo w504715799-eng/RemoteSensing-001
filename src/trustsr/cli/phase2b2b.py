@@ -88,12 +88,14 @@ def _validate_upstream(
         / POST_MANIFEST_SHA256
         / "phase2b2a-input-audit.json"
     )
-    try:
-        actual_audit = Path(args.input_audit).resolve(strict=True)
-    except OSError as exc:
-        raise ValueError("frozen input audit path is unavailable") from exc
+    actual_audit = Path(args.input_audit)
     if actual_audit != expected_audit:
         raise ValueError("input audit must use the frozen digest-addressed path")
+    current = root
+    for component in actual_audit.relative_to(root).parts:
+        current = current / component
+        if current.is_symlink():
+            raise ValueError("input audit digest-addressed path must not contain symlinks")
     load_input_audit(actual_audit, expected_sha256=args.input_audit_sha256)
     return root, records
 
@@ -143,6 +145,13 @@ def _require_safe_derived_path(root: Path, path: Path) -> None:
             raise ValueError("Phase 2B2-B output parent must be a directory")
 
 
+def _require_safe_output_directories(root: Path) -> None:
+    for directory in (_result_directory(root), _cache_directory(root)):
+        _require_safe_derived_path(root, directory)
+        if directory.exists() and not directory.is_dir():
+            raise ValueError("Phase 2B2-B output directory must be a directory")
+
+
 def _commit_identical_or_new(path: Path, payload: bytes, root: Path) -> bool:
     _require_safe_derived_path(root, path)
     if path.exists() or path.is_symlink():
@@ -188,6 +197,7 @@ def _runtime_measurement() -> dict[str, object]:
 
 def run_preflight(args: argparse.Namespace) -> dict[str, object]:
     root, _ = _validate_upstream(args)
+    _require_safe_output_directories(root)
     snapshot = capture_gpu_hardware()
     models = _model_factory(args)
     model_records = _model_records(models)
@@ -207,10 +217,12 @@ def run_preflight(args: argparse.Namespace) -> dict[str, object]:
 def _run_compute(
     args: argparse.Namespace, *, expected_sample_count: int
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object], Path]:
+    root, _ = _validate_upstream(args)
+    _require_safe_output_directories(root)
+    capture_gpu_hardware()
     pairs = _load_development_pairs(
         args, limit=1 if expected_sample_count == 1 else None
     )
-    capture_gpu_hardware()
     models = _model_factory(args)
     _model_records(models)
     if torch.cuda.is_available():
@@ -219,12 +231,11 @@ def _run_compute(
     result, audit = evaluate_development_smoke(
         pairs,
         models,
-        _cache_directory(Path(args.storage_root)),
+        _cache_directory(root),
         expected_sample_count=expected_sample_count,
     )
     runtime = _runtime_measurement()
     runtime["duration_seconds"] = time.monotonic() - started
-    root = Path(args.storage_root).resolve(strict=True)
     return result, audit, runtime, root
 
 
@@ -265,8 +276,9 @@ def _read_canonical_object(path: Path) -> tuple[bytes, dict[str, object]]:
 
 
 def run_replay(args: argparse.Namespace) -> dict[str, object]:
+    root, _ = _validate_upstream(args)
+    _require_safe_output_directories(root)
     pairs = _load_development_pairs(args)
-    root = Path(args.storage_root).resolve(strict=True)
     result_bytes, result = _read_canonical_object(_result_directory(root) / _RESULT_NAME)
     audit_bytes, audit = _read_canonical_object(_result_directory(root) / _AUDIT_NAME)
     rebuilt_result, rebuilt_audit = replay_development_smoke(
