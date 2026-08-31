@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-31
 
-**状态：** 待用户审阅
+**状态：** 已批准（2026-08-31）
 
 **上位阶段：** `docs/superpowers/specs/2026-08-28-phase2b1b-crosssensor-research-subset.md`
 
