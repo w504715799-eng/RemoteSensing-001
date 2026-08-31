@@ -6,10 +6,18 @@ import hashlib
 from copy import deepcopy
 from pathlib import Path
 
+import numpy as np
 import pytest
+import rasterio
+import torch
+from affine import Affine
 
 from trustsr.data import crosssensor_pairs
 from trustsr.data.crosssensor_pairs import (
+    CROP_POLICY,
+    NORMALIZATION_POLICY,
+    POST_MANIFEST_SHA256,
+    load_crosssensor_pair,
     load_crosssensor_records,
     select_input_smoke_records,
 )
@@ -192,3 +200,181 @@ def test_load_records_rejects_symlink_root_or_manifest(
     manifest_link.symlink_to(manifest)
     with pytest.raises(ValueError, match="regular file"):
         load_crosssensor_records(real_root, manifest_link, expected_sha256=digest)
+
+
+_BANDS = ("B04", "B03", "B02", "B08")
+_LR_TRANSFORM = Affine(10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0)
+_HR_TRANSFORM = Affine(2.5, 0.0, 500000.0, 0.0, -2.5, 400000.0)
+
+
+def _write_geotiff(
+    path: Path,
+    pixels: np.ndarray,
+    transform: Affine,
+    *,
+    nodata: int | None = None,
+    descriptions: tuple[str, ...] | None = _BANDS,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=pixels.shape[2],
+        height=pixels.shape[1],
+        count=pixels.shape[0],
+        dtype=pixels.dtype,
+        crs="EPSG:32618",
+        transform=transform,
+        nodata=nodata,
+    ) as dataset:
+        dataset.write(pixels)
+        if descriptions is not None:
+            dataset.descriptions = descriptions
+
+
+def _asset(path: Path, relative_path: str) -> dict[str, object]:
+    with rasterio.open(path) as dataset:
+        pixels = dataset.read()
+        transform = dataset.transform
+        return {
+            "relative_path": relative_path,
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "shape": [dataset.count, dataset.height, dataset.width],
+            "dtype": dataset.dtypes[0],
+            "crs": dataset.crs.to_string(),
+            "transform": [
+                float(transform.a),
+                float(transform.b),
+                float(transform.c),
+                float(transform.d),
+                float(transform.e),
+                float(transform.f),
+            ],
+            "nodata": dataset.nodata,
+            "minimum": float(pixels.min()),
+            "maximum": float(pixels.max()),
+            "time_start": "2020-01-02T10:00:00Z",
+        }
+
+
+def _real_pair_fixture(tmp_path: Path, damage: str | None = None) -> dict[str, object]:
+    sample_id = "sample-development-0"
+    prefix = f"subset-v1/development/{sample_id}"
+    pair_root = tmp_path / "trustsr" / "phase2b1b" / prefix
+    dtype = np.int16 if damage == "dtype" else np.uint16
+    lr = np.full((4, 130, 130), 5000, dtype=dtype)
+    hr = np.full((4, 520, 520), 5000, dtype=dtype)
+    lr[0, 0, 0] = 9999
+    lr[0, 1, 1] = 1234
+    hr[0, 0, 0] = 9999
+    hr[0, 4, 4] = 1234
+    if damage == "maximum":
+        lr[0, 2, 2] = 10001
+    if damage == "band-count":
+        lr = lr[:3]
+    nodata = 0 if damage == "nodata" else None
+    descriptions = (
+        ("WRONG", "B03", "B02", "B08")
+        if damage == "descriptions"
+        else _BANDS[: lr.shape[0]]
+    )
+    hr_transform = (
+        Affine(2.5, 0.0, 500001.0, 0.0, -2.5, 400000.0)
+        if damage == "bounds"
+        else _HR_TRANSFORM
+    )
+    lr_path = pair_root / "lr.tif"
+    hr_path = pair_root / "hr.tif"
+    _write_geotiff(lr_path, lr, _LR_TRANSFORM, nodata=nodata, descriptions=descriptions)
+    _write_geotiff(hr_path, hr, hr_transform, nodata=nodata)
+    record: dict[str, object] = {
+        "sample_id": sample_id,
+        "split": "development",
+        "spatial_group_id": "a" * 64,
+        "days_between": -1,
+        "correlation_bin": 0,
+        "selection_round": 1,
+        "lr_asset": _asset(lr_path, f"{prefix}/lr.tif"),
+        "hr_asset": _asset(hr_path, f"{prefix}/hr.tif"),
+    }
+    if damage == "hash":
+        record["lr_asset"]["sha256"] = "0" * 64  # type: ignore[index]
+    elif damage == "transform":
+        record["lr_asset"]["transform"][0] = 11.0  # type: ignore[index]
+    elif damage == "minimum":
+        record["lr_asset"]["minimum"] = 1.0  # type: ignore[index]
+    elif damage == "path":
+        record["lr_asset"]["relative_path"] = "../lr.tif"  # type: ignore[index]
+    elif damage == "symlink":
+        original = lr_path.with_name("original-lr.tif")
+        lr_path.rename(original)
+        lr_path.symlink_to(original)
+    return record
+
+
+def test_load_pair_center_crops_aligns_and_normalizes_without_clipping(
+    tmp_path: Path,
+) -> None:
+    record = _real_pair_fixture(tmp_path)
+
+    loaded = load_crosssensor_pair(
+        tmp_path,
+        record,
+        manifest_sha256=POST_MANIFEST_SHA256,
+    )
+
+    assert loaded.pair.lr.shape == (4, 128, 128)
+    assert loaded.pair.hr.shape == (4, 512, 512)
+    assert loaded.pair.lr.dtype == torch.float32
+    assert loaded.pair.hr.dtype == torch.float32
+    assert loaded.pair.lr.device.type == "cpu"
+    assert loaded.pair.lr.is_contiguous()
+    assert loaded.pair.hr.is_contiguous()
+    assert loaded.pair.lr[0, 0, 0].item() == pytest.approx(0.1234)
+    assert loaded.pair.hr[0, 0, 0].item() == pytest.approx(0.1234)
+    assert loaded.pair.lr.max().item() == pytest.approx(0.5)
+    assert loaded.pair.hr.max().item() == pytest.approx(0.5)
+    loaded.pair.validate()
+    assert loaded.metadata.crop_policy == CROP_POLICY
+    assert loaded.metadata.normalization_policy == NORMALIZATION_POLICY
+    assert loaded.metadata.lr_crop_transform == (10.0, 0.0, 500010.0, 0.0, -10.0, 399990.0)
+    assert loaded.metadata.hr_crop_transform == (2.5, 0.0, 500010.0, 0.0, -2.5, 399990.0)
+    assert loaded.metadata.crop_bounds == (500010.0, 398710.0, 501290.0, 399990.0)
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("hash", "asset bytes"),
+        ("symlink", "regular GeoTIFF"),
+        ("dtype", "uint16"),
+        ("nodata", "nodata"),
+        ("maximum", r"\[0, 10000\]"),
+        ("transform", "metadata"),
+        ("bounds", "cropped LR/HR bounds"),
+        ("band-count", "four bands"),
+        ("descriptions", "band descriptions"),
+        ("minimum", "metadata"),
+        ("path", "canonical Phase 2B1B path"),
+    ],
+)
+def test_load_pair_rejects_integrity_or_reflectance_contract_violation(
+    tmp_path: Path, damage: str, message: str
+) -> None:
+    record = _real_pair_fixture(tmp_path, damage)
+
+    with pytest.raises(ValueError, match=message):
+        load_crosssensor_pair(
+            tmp_path,
+            record,
+            manifest_sha256=POST_MANIFEST_SHA256,
+        )
+
+
+def test_load_pair_rejects_wrong_manifest_digest_before_reading(tmp_path: Path) -> None:
+    record = _real_pair_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match="frozen post-manifest SHA-256"):
+        load_crosssensor_pair(tmp_path, record, manifest_sha256="0" * 64)
