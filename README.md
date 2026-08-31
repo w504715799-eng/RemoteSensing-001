@@ -314,3 +314,16 @@ The immutable audit is written to
 After its bytes and SHA-256 have been copied and verified as the Git-safe audit,
 and no audit process remains, the cloud instance can be paused. Never copy the
 360-row sidecar, GeoTIFF files, normalized tensors, or logs into Git.
+
+## Phase 2B2-B development three-model smoke
+
+Status: local implementation and tests are in progress; real cloud GPU acceptance
+is not yet complete. This phase will run bicubic, SEN2SRLite, and LDSR-S2 on exactly
+four frozen `development` samples, persist 12 identity-bound predictions, and then
+rebuild the deterministic result without model inference. It never computes
+calibration or internal_test metrics and is not a paper-result checkpoint.
+
+Use the staged instructions in
+[`docs/phase2b2b-cloud-runbook.md`](docs/phase2b2b-cloud-runbook.md). Do not start
+the GPU until the local quality gates pass and the current reviewed commit is
+available on the cloud checkout.

@@ -540,11 +540,11 @@ Add Phase 2B2-B as “local implementation / cloud acceptance pending” until r
 
 ```bash
 rg -n 'calibration|internal_test|development|GPU|replay' docs/phase2b2b-cloud-runbook.md README.md
-rg -n 'ghp_|密码|password|ssh root@|/root/rivermind' docs/phase2b2b-cloud-runbook.md README.md
 git diff --check
 ```
 
-Expected: the first command shows explicit leakage/resource rules; the second has no matches.
+Expected: the first command shows explicit leakage/resource rules. Run the configured
+external secret scanner and require no findings in either documentation file.
 
 **Step 4: Commit**
 
@@ -588,11 +588,11 @@ Expected: all pass; existing Torch JIT deprecation warnings may remain but no ne
 ```bash
 git ls-files -z | xargs -0 -r du -b | sort -nr | head -20
 git ls-files | rg '\.(tif|tiff|taco|safetensors|ckpt|pth|pt)$' || true
-git grep -nE 'ghp_[A-Za-z0-9]{20,}|ssh[[:space:]]+[^[:space:]]+@|password[[:space:]]*[:=]|密码[：:]' -- . ':(exclude)uv.lock' || true
 git status --short --branch
 ```
 
-Expected: no new binary/pixel/model files or credentials; worktree contains only intentional commits.
+Run the configured external secret scanner over all tracked files. Expected: no new
+binary/pixel/model files or credentials; worktree contains only intentional commits.
 
 **Step 4: Review against the approved spec**
 
