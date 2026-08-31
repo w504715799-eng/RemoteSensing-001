@@ -4,20 +4,32 @@ from __future__ import annotations
 
 import hashlib
 import os
+from copy import deepcopy
 from pathlib import Path
 
+import pytest
 import torch
 
-from trustsr.artifacts.predictions import PredictionCache, build_identity
-from trustsr.data.crosssensor_pairs import POST_MANIFEST_SHA256
+from trustsr.artifacts.predictions import PredictionCache, build_identity, tensor_sha256
+from trustsr.contracts import SRPair
+from trustsr.data.crosssensor_pairs import (
+    CROP_POLICY,
+    NORMALIZATION_POLICY,
+    POST_MANIFEST_SHA256,
+    CrosssensorPairMetadata,
+    LoadedCrosssensorPair,
+)
 from trustsr.evaluation import crosssensor_smoke
 from trustsr.evaluation.crosssensor_smoke import (
     EXPERIMENT_SCHEMA,
     INPUT_AUDIT_SHA256,
     build_cache_provenance,
     cache_entry_evidence,
+    evaluate_development_smoke,
+    replay_development_smoke,
     snapshot_cache_files,
 )
+from trustsr.evaluation.opensr_metrics import METRIC_KEYS
 
 
 def _lr(value: float = 0.25) -> torch.Tensor:
@@ -108,3 +120,219 @@ def test_snapshot_cache_files_observes_size_mtime_and_digest_change(tmp_path: Pa
     after = snapshot_cache_files(tmp_path, [identity])
 
     assert before != after
+
+
+def _loaded_pairs() -> tuple[LoadedCrosssensorPair, ...]:
+    result = []
+    for bin_index in range(4):
+        sample_id = f"development-{bin_index}"
+        value = (bin_index + 1) / 10
+        result.append(
+            LoadedCrosssensorPair(
+                pair=SRPair(
+                    source=f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}",
+                    sample_id=sample_id,
+                    lr=torch.full((4, 2, 3), value, dtype=torch.float32),
+                    hr=torch.full((4, 8, 12), value, dtype=torch.float32),
+                    scale=4,
+                ),
+                metadata=CrosssensorPairMetadata(
+                    manifest_sha256=POST_MANIFEST_SHA256,
+                    sample_id=sample_id,
+                    split="development",
+                    spatial_group_id=f"group-{bin_index}",
+                    days_between=-1,
+                    correlation_bin=bin_index,
+                    selection_round=1,
+                    lr_asset_sha256=f"{bin_index + 1:x}" * 64,
+                    hr_asset_sha256=f"{bin_index + 5:x}" * 64,
+                    lr_crop_transform=(10.0, 0.0, 10.0, 0.0, -10.0, -10.0),
+                    hr_crop_transform=(2.5, 0.0, 10.0, 0.0, -2.5, -10.0),
+                    crop_bounds=(10.0, -30.0, 40.0, -10.0),
+                    crop_policy=CROP_POLICY,
+                    normalization_policy=NORMALIZATION_POLICY,
+                ),
+            )
+        )
+    return tuple(result)
+
+
+class FakeModel:
+    scale = 4
+
+    def __init__(self, name: str, value: float):
+        self.name = name
+        self.value = value
+        self.calls = 0
+        self.last_prediction: torch.Tensor | None = None
+
+    def provenance(self):
+        return {"name": self.name, "scale": self.scale, "value": self.value}
+
+    def predict(self, lr: torch.Tensor) -> torch.Tensor:
+        self.calls += 1
+        self.last_prediction = torch.full(
+            (4, lr.shape[1] * 4, lr.shape[2] * 4), self.value, dtype=torch.float32
+        )
+        return self.last_prediction
+
+
+def _models() -> list[FakeModel]:
+    return [
+        FakeModel("bicubic-x4", 0.1),
+        FakeModel("sen2srlite-x4", 0.2),
+        FakeModel("ldsr-s2-x4", 0.3),
+    ]
+
+
+def _metrics(_pair: SRPair, prediction: torch.Tensor) -> dict[str, float]:
+    base = float(prediction.mean())
+    return {key: base + index for index, key in enumerate(METRIC_KEYS)}
+
+
+def test_model_grid_cold_run_writes_12_caches_and_warm_run_is_identical(
+    tmp_path: Path,
+) -> None:
+    cold_models = _models()
+    cold_result, cold_audit = evaluate_development_smoke(
+        _loaded_pairs(), cold_models, tmp_path, metric_fn=_metrics
+    )
+    warm_models = _models()
+    warm_result, warm_audit = evaluate_development_smoke(
+        _loaded_pairs(), warm_models, tmp_path, metric_fn=_metrics
+    )
+
+    assert [model.calls for model in cold_models] == [4, 4, 4]
+    assert [model.calls for model in warm_models] == [0, 0, 0]
+    assert cold_result == warm_result
+    assert cold_audit == warm_audit
+    assert cold_result["sample_count"] == 4
+    assert cold_result["prediction_count"] == 12
+    assert cold_audit["prediction_count"] == 12
+    assert len(cold_audit["entries"]) == 12
+    assert len(tuple(tmp_path.glob("*.json"))) == 12
+    assert len(tuple(tmp_path.glob("*.safetensors"))) == 12
+    for model_index, model_record in enumerate(cold_result["models"], start=1):
+        assert len(model_record["predictions"]) == 4
+        assert len(model_record["mean_metrics"]) == 7
+        assert model_record["mean_metrics"]["reflectance"] == pytest.approx(
+            model_index / 10
+        )
+
+
+def test_model_grid_metrics_use_reloaded_cache_tensor(tmp_path: Path) -> None:
+    models = _models()
+
+    def metrics(pair: SRPair, prediction: torch.Tensor) -> dict[str, float]:
+        model = models[int(round(float(prediction.mean()) * 10)) - 1]
+        assert model.last_prediction is not None
+        assert prediction.data_ptr() != model.last_prediction.data_ptr()
+        return _metrics(pair, prediction)
+
+    evaluate_development_smoke(_loaded_pairs(), models, tmp_path, metric_fn=metrics)
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("pair-count", "exactly four"),
+        ("wrong-split", "development"),
+        ("model-order", "model order"),
+        ("model-scale", "scale 4"),
+        ("nonfinite-metric", "finite"),
+    ],
+)
+def test_model_grid_rejects_contract_damage(
+    tmp_path: Path, damage: str, message: str
+) -> None:
+    pairs = list(_loaded_pairs())
+    models = _models()
+    metric_fn = _metrics
+    if damage == "pair-count":
+        pairs.pop()
+    elif damage == "wrong-split":
+        pairs[0] = LoadedCrosssensorPair(
+            pair=pairs[0].pair,
+            metadata=CrosssensorPairMetadata(
+                **{**pairs[0].metadata.__dict__, "split": "calibration"}
+            ),
+        )
+    elif damage == "model-order":
+        models.reverse()
+    elif damage == "model-scale":
+        models[0].scale = 2
+    else:
+        def nonfinite_metrics(pair: SRPair, prediction: torch.Tensor) -> dict[str, float]:
+            return {**_metrics(pair, prediction), "spectral": float("nan")}
+
+        metric_fn = nonfinite_metrics
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_development_smoke(pairs, models, tmp_path, metric_fn=metric_fn)
+
+
+def test_replay_rebuilds_identical_outputs_without_models(tmp_path: Path) -> None:
+    result, audit = evaluate_development_smoke(
+        _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
+    )
+
+    rebuilt_result, rebuilt_audit = replay_development_smoke(
+        _loaded_pairs(), result, audit, tmp_path, metric_fn=_metrics
+    )
+
+    assert rebuilt_result == result
+    assert rebuilt_audit == audit
+
+
+@pytest.mark.parametrize("target", ["result-schema", "audit-count", "cache-bytes"])
+def test_replay_rejects_changed_evidence(tmp_path: Path, target: str) -> None:
+    result, audit = evaluate_development_smoke(
+        _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
+    )
+    damaged_result = deepcopy(result)
+    damaged_audit = deepcopy(audit)
+    if target == "result-schema":
+        damaged_result["schema"] = "changed"
+    elif target == "audit-count":
+        damaged_audit["prediction_count"] = 11
+    else:
+        key = damaged_audit["entries"][0]["cache_key"]
+        path = tmp_path / f"{key}.safetensors"
+        path.write_bytes(path.read_bytes() + b"damage")
+
+    with pytest.raises((ValueError, RuntimeError), match="cache|committed|result|audit"):
+        replay_development_smoke(
+            _loaded_pairs(), damaged_result, damaged_audit, tmp_path, metric_fn=_metrics
+        )
+
+
+def test_replay_detects_cache_mtime_change_during_metrics(tmp_path: Path) -> None:
+    result, audit = evaluate_development_smoke(
+        _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
+    )
+    first_key = audit["entries"][0]["cache_key"]
+    first_path = tmp_path / f"{first_key}.json"
+    changed = False
+
+    def changing_metrics(pair: SRPair, prediction: torch.Tensor) -> dict[str, float]:
+        nonlocal changed
+        if not changed:
+            stat = first_path.stat()
+            os.utime(first_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+            changed = True
+        return _metrics(pair, prediction)
+
+    with pytest.raises(RuntimeError, match="changed during replay"):
+        replay_development_smoke(
+            _loaded_pairs(), result, audit, tmp_path, metric_fn=changing_metrics
+        )
+
+
+def test_result_prediction_digest_matches_cached_tensor(tmp_path: Path) -> None:
+    result, _ = evaluate_development_smoke(
+        _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
+    )
+
+    assert result["models"][0]["predictions"][0]["prediction_sha256"] == tensor_sha256(
+        torch.full((4, 8, 12), 0.1, dtype=torch.float32)
+    )
