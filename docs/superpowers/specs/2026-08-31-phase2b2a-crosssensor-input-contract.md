@@ -142,6 +142,9 @@ class CrosssensorPairMetadata:
     selection_round: int
     lr_asset_sha256: str
     hr_asset_sha256: str
+    lr_crop_transform: tuple[float, float, float, float, float, float]
+    hr_crop_transform: tuple[float, float, float, float, float, float]
+    crop_bounds: tuple[float, float, float, float]
     crop_policy: str
     normalization_policy: str
 
