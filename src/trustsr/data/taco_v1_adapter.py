@@ -358,6 +358,25 @@ def _write_or_reuse(output_root: Path, assets: tuple[tuple[str, _Raster], ...]) 
             atomic_write_bytes(target, payload)
 
 
+def inspect_extracted_pair(
+    lr_path: Path,
+    hr_path: Path,
+    *,
+    lr_time_start: str,
+    hr_time_start: str,
+) -> tuple[ExtractedAsset, ExtractedAsset]:
+    """Reconstruct and validate asset metadata from an extracted GeoTIFF pair."""
+    for path in (lr_path, hr_path):
+        if not isinstance(path, Path) or path.is_symlink() or not path.is_file():
+            raise ValueError("extracted assets must be regular GeoTIFF files")
+    lr = _inspect_raster(lr_path.read_bytes(), lr_time_start)
+    hr = _inspect_raster(hr_path.read_bytes(), hr_time_start)
+    if _raster_kind(lr) != "lr" or _raster_kind(hr) != "hr":
+        raise ValueError("extracted GeoTIFF pair must preserve LR and HR ordering")
+    _validate_pair_geometry(lr, hr)
+    return _asset("lr.tif", lr), _asset("hr.tif", hr)
+
+
 def extract_pair(
     taco_path: Path,
     source_index: int,
