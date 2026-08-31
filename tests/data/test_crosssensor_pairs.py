@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
-from trustsr.data.crosssensor_pairs import select_input_smoke_records
+from trustsr.data import crosssensor_pairs
+from trustsr.data.crosssensor_pairs import (
+    load_crosssensor_records,
+    select_input_smoke_records,
+)
 
 SPLITS = ("development", "calibration", "internal_test")
 
@@ -80,3 +86,109 @@ def test_smoke_selection_rejects_invalid_or_duplicate_identities(
     records[1][field] = records[0][field]
     with pytest.raises(ValueError, match=f"unique {message}"):
         select_input_smoke_records(records)
+
+
+def _post_records(*, all_assets: bool = True) -> tuple[dict[str, object], ...]:
+    return tuple(
+        {
+            "sample_id": f"sample-{index:03d}",
+            "lr_asset": {"sha256": "a" * 64} if all_assets else None,
+            "hr_asset": {"sha256": "b" * 64} if all_assets else None,
+        }
+        for index in range(360)
+    )
+
+
+def _digest_manifest(tmp_path: Path, payload: bytes = b"post-manifest\n") -> tuple[Path, str]:
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = (
+        tmp_path
+        / "trustsr"
+        / "phase2b1b"
+        / "selections"
+        / digest
+        / "samples.jsonl"
+    )
+    manifest.parent.mkdir(parents=True)
+    manifest.write_bytes(payload)
+    return manifest, digest
+
+
+def test_load_records_requires_digest_addressed_all_assets_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, digest = _digest_manifest(tmp_path)
+    calls: list[tuple[Path, str]] = []
+
+    def load(path: Path, *, expected_sha256: str) -> tuple[dict[str, object], ...]:
+        calls.append((path, expected_sha256))
+        return _post_records()
+
+    monkeypatch.setattr(crosssensor_pairs, "POST_MANIFEST_SHA256", digest)
+    monkeypatch.setattr(crosssensor_pairs, "load_subset_manifest", load)
+
+    records = load_crosssensor_records(tmp_path, manifest, expected_sha256=digest)
+
+    assert len(records) == 360
+    assert calls == [(manifest.resolve(), digest)]
+
+
+def test_load_records_rejects_wrong_digest_or_layout_before_schema_loader(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, digest = _digest_manifest(tmp_path)
+    calls: list[Path] = []
+
+    def load(path: Path, *, expected_sha256: str) -> tuple[dict[str, object], ...]:
+        calls.append(path)
+        return _post_records()
+
+    monkeypatch.setattr(crosssensor_pairs, "POST_MANIFEST_SHA256", digest)
+    monkeypatch.setattr(crosssensor_pairs, "load_subset_manifest", load)
+    misplaced = tmp_path / "misplaced.jsonl"
+    misplaced.write_bytes(manifest.read_bytes())
+
+    with pytest.raises(ValueError, match="frozen post-manifest"):
+        load_crosssensor_records(tmp_path, misplaced, expected_sha256=digest)
+    with pytest.raises(ValueError, match="frozen post-manifest SHA-256"):
+        load_crosssensor_records(tmp_path, manifest, expected_sha256="0" * 64)
+    assert calls == []
+
+
+def test_load_records_rejects_null_assets_after_schema_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, digest = _digest_manifest(tmp_path)
+    monkeypatch.setattr(crosssensor_pairs, "POST_MANIFEST_SHA256", digest)
+    monkeypatch.setattr(
+        crosssensor_pairs,
+        "load_subset_manifest",
+        lambda path, *, expected_sha256: _post_records(all_assets=False),
+    )
+
+    with pytest.raises(ValueError, match="all-assets post-manifest"):
+        load_crosssensor_records(tmp_path, manifest, expected_sha256=digest)
+
+
+def test_load_records_rejects_symlink_root_or_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    real_root = tmp_path / "real"
+    real_root.mkdir()
+    manifest, digest = _digest_manifest(real_root)
+    monkeypatch.setattr(crosssensor_pairs, "POST_MANIFEST_SHA256", digest)
+    monkeypatch.setattr(
+        crosssensor_pairs,
+        "load_subset_manifest",
+        lambda path, *, expected_sha256: _post_records(),
+    )
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(real_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="storage_root"):
+        load_crosssensor_records(root_link, manifest, expected_sha256=digest)
+
+    manifest_link = manifest.with_name("manifest-link.jsonl")
+    manifest_link.symlink_to(manifest)
+    with pytest.raises(ValueError, match="regular file"):
+        load_crosssensor_records(real_root, manifest_link, expected_sha256=digest)
