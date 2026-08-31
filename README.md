@@ -213,3 +213,65 @@ stack, and proves that the Phase 2B1A CLI comes from the supplied checkout. The
 pre-extraction and post-extraction manifest paths are intentionally distinct; the
 audit always consumes the latter. Do not place cloud credentials or a transport
 URL in repository files.
+
+## Phase 2B1B cloud crosssensor research subset
+
+Phase 2B1B reuses the verified Phase 2B1A source object and base environment. It
+does not download the TACO object again, create a Conda environment, run a model,
+or use GPU computation. Run the following commands on the cloud instance from the
+exact reviewed repository checkout:
+
+```bash
+: "${PHASE2B1B_STORAGE_ROOT:?set this to the persistent filesystem mountpoint}"
+PHASE2B1B_SOURCE="$PWD/artifacts/datasets/sen2naipv2-source-v1.json"
+PHASE2B1B_BASE_MANIFEST_SHA256=7487b0af2ebef86910e918d5d6b2fb927a6f5e46bac7c2e30be7ffb2ce994482
+PHASE2B1B_BASE_MANIFEST="${PHASE2B1B_STORAGE_ROOT%/}/trustsr/phase2b1a/manifests/${PHASE2B1B_BASE_MANIFEST_SHA256}/samples.jsonl"
+
+phase2b1b_json_digest() {
+  /opt/conda/bin/python -c 'import json, string, sys
+value = json.load(sys.stdin)["digests"][sys.argv[1]]
+if not isinstance(value, str) or len(value) != 64 or any(c not in string.hexdigits.lower() for c in value):
+    raise SystemExit("stage output did not contain a lowercase SHA-256 digest")
+print(value)' "$1"
+}
+
+PHASE2B1B_SELECT_JSON="$(
+  scripts/phase2b1b/run_cloud.sh "$PHASE2B1B_STORAGE_ROOT" "$PWD" select \
+    --confirm-cloud-storage --source "$PHASE2B1B_SOURCE" \
+    --base-manifest "$PHASE2B1B_BASE_MANIFEST"
+)"
+PHASE2B1B_PRE_MANIFEST_SHA256="$(
+  printf '%s\n' "$PHASE2B1B_SELECT_JSON" | \
+    phase2b1b_json_digest selection_manifest_sha256
+)"
+PHASE2B1B_PRE_MANIFEST="${PHASE2B1B_STORAGE_ROOT%/}/trustsr/phase2b1b/selections/${PHASE2B1B_PRE_MANIFEST_SHA256}/samples.jsonl"
+
+PHASE2B1B_EXTRACT_JSON="$(
+  scripts/phase2b1b/run_cloud.sh "$PHASE2B1B_STORAGE_ROOT" "$PWD" extract \
+    --confirm-cloud-storage --source "$PHASE2B1B_SOURCE" \
+    --selection-manifest "$PHASE2B1B_PRE_MANIFEST"
+)"
+PHASE2B1B_POST_MANIFEST_SHA256="$(
+  printf '%s\n' "$PHASE2B1B_EXTRACT_JSON" | \
+    phase2b1b_json_digest selection_manifest_sha256
+)"
+PHASE2B1B_POST_MANIFEST="${PHASE2B1B_STORAGE_ROOT%/}/trustsr/phase2b1b/selections/${PHASE2B1B_POST_MANIFEST_SHA256}/samples.jsonl"
+
+PHASE2B1B_AUDIT_JSON="$(
+  scripts/phase2b1b/run_cloud.sh "$PHASE2B1B_STORAGE_ROOT" "$PWD" audit \
+    --confirm-cloud-storage --source "$PHASE2B1B_SOURCE" \
+    --selection-manifest "$PHASE2B1B_POST_MANIFEST"
+)"
+PHASE2B1B_AUDIT="${PHASE2B1B_STORAGE_ROOT%/}/trustsr/phase2b1b/audits/${PHASE2B1B_POST_MANIFEST_SHA256}/phase2b1b-audit.json"
+printf 'Pre-extraction sidecar: %s\nPost-extraction sidecar: %s\nAudit: %s\n' \
+  "$PHASE2B1B_PRE_MANIFEST" "$PHASE2B1B_POST_MANIFEST" "$PHASE2B1B_AUDIT"
+```
+
+`PHASE2B1B_STORAGE_ROOT` must be the persistent mountpoint itself. The runner
+rejects root, home, relative, wildcard, newline, symlink, and non-mounted paths;
+requires explicit `--confirm-cloud-storage` and strictly more than 5 GiB free;
+and invokes only `/opt/conda/bin/python` from the existing cloud base environment.
+The three stages are intentionally restartable. Do not stop the instance until
+the audit has been repeated successfully and the sub-1-MiB audit JSON has been
+copied and verified locally. Never copy the TACO object, 360-row sidecar, or
+GeoTIFF tree into Git.
