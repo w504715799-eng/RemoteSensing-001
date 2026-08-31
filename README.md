@@ -283,3 +283,34 @@ sidecar beneath the same layout. The TIFF tree is reconstructible, but copy and
 verify the canonical audit before stopping an ephemeral instance. The three
 stages are intentionally restartable. Never copy the TACO object, 360-row
 sidecar, or GeoTIFF tree into Git.
+
+## Phase 2B2-A CPU crosssensor input audit
+
+Phase 2B2-A reads 12 deterministic pairs from the frozen Phase 2B1B pixel tree,
+checks every selected GeoTIFF again, and proves that two independent loads produce
+the same aligned reflectance tensors. It does not run a super-resolution model,
+download weights, or use GPU computation. Run from the exact reviewed checkout:
+
+```bash
+: "${PHASE2B2A_STORAGE_ROOT:?set this to the persistent filesystem mountpoint}"
+PHASE2B2A_POST_MANIFEST_SHA256=c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a
+PHASE2B2A_POST_MANIFEST="${PHASE2B2A_STORAGE_ROOT%/}/trustsr/phase2b1b/selections/${PHASE2B2A_POST_MANIFEST_SHA256}/samples.jsonl"
+
+scripts/phase2b2a/run_cloud.sh \
+  "$PHASE2B2A_STORAGE_ROOT" "$PWD" \
+  --selection-manifest "$PHASE2B2A_POST_MANIFEST" \
+  --selection-manifest-sha256 "$PHASE2B2A_POST_MANIFEST_SHA256" \
+  --confirm-cloud-storage
+```
+
+The storage root must be the mounted data filesystem itself. The runner rejects
+root, home, relative, wildcard, newline, symlink, non-mounted, and storage-root
+override inputs; it requires more than 1 GiB free and more than 1024 free inodes.
+It invokes only `/opt/conda/bin/python` from the existing base environment and
+appends canonical stdout to `trustsr/phase2b2a/logs/audit-inputs.jsonl`.
+
+The immutable audit is written to
+`trustsr/phase2b2a/input-audits/<post-manifest-sha256>/phase2b2a-input-audit.json`.
+After its bytes and SHA-256 have been copied and verified as the Git-safe audit,
+and no audit process remains, the cloud instance can be paused. Never copy the
+360-row sidecar, GeoTIFF files, normalized tensors, or logs into Git.
