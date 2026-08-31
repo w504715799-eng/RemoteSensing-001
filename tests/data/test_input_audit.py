@@ -67,6 +67,8 @@ def test_input_audit_records_exact_counts_and_repeatable_tensor_digests() -> Non
         "internal_test": 4,
     }
     assert audit["correlation_bin_counts"] == {"0": 3, "1": 3, "2": 3, "3": 3}
+    assert audit["raw_nodata"] == 65535.0
+    assert audit["nodata_policy"] == "uint16_sentinel_65535_reject_invalid_v1"
     assert len(audit["pairs"]) == 12
     assert audit["pairs"][0]["crop_bounds"] == [
         500010.0,

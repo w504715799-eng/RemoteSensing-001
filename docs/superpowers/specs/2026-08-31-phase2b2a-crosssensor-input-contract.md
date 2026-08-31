@@ -104,7 +104,8 @@ HR pixel offset = (column=4, row=4)
 LR 和 HR 必须同时满足：
 
 - Rasterio 读取结果为四波段 `uint16`；
-- nodata 为 `None`；
+- nodata 精确为冻结数据集声明的 `65535`（`uint16` 最大值哨兵）；
+- Rasterio mask 中不得存在无效像素，原始数组中也不得出现该哨兵值；
 - 所有像素的原始最小值不小于 `0`；
 - 所有像素的原始最大值不大于 `10000`；
 - sidecar 中记录的 dtype、nodata、minimum 和 maximum 与重新读取结果精确一致；
@@ -123,8 +124,15 @@ reflectance = torch.from_numpy(raw.copy()).to(torch.float32).div_(10_000.0)
 ```text
 REFLECTANCE_SCALE = 10000.0
 RAW_DTYPE = uint16
+RAW_NODATA = 65535.0
+NODATA_POLICY = uint16_sentinel_65535_reject_invalid_v1
 NORMALIZATION_POLICY = uint16_divide_10000_no_clip_v1
 ```
+
+真实数据验收修订依据：冻结 post-manifest 的 360 个 LR 和 360 个 HR 资产均声明
+`nodata=65535.0`；固定 12 对烟雾样本的 24 个 GeoTIFF 实测 nodata 与 sidecar
+一致，完整影像及中心裁剪内的无效 mask 像素数均为 0，原始值范围为
+`[20,9572]`。因此保留哨兵声明，同时对任何实际无效像素 fail closed。
 
 ## 6. 公共数据接口
 
@@ -238,7 +246,7 @@ artifacts/datasets/sen2naipv2-phase2b2a-input-audit-v1.json
 - 上游 manifest、audit、base manifest 和 TACO SHA-256；
 - `smoke_pair_count=12`、`smoke_geotiff_count=24`；
 - 每个 split 四对、每个 correlation bin 三对的计数；
-- 原始与裁剪后的 shape、crop policy、reflectance scale、normalization policy；
+- 原始与裁剪后的 shape、crop policy、reflectance scale、raw nodata、nodata policy 和 normalization policy；
 - 12个 LR 和12个 HR 原始资产摘要；
 - 12个 LR 和12个 HR 归一化张量摘要；
 - 两次加载摘要一致的布尔证据；
@@ -315,7 +323,7 @@ git diff --check
 
 - Phase 2B1B post-manifest SHA、路径或 schema 不匹配；
 - 长期存储不是 mount、inode 耗尽或任一选中资产缺失；
-- 真实 dtype 不是 `uint16`、nodata 非空或真实值超出 `[0,10000]`；
+- 真实 dtype 不是 `uint16`、nodata 不等于 `65535`、存在任一无效 mask/哨兵像素或真实反射率超出 `[0,10000]`；
 - 中心裁剪后的 LR/HR bounds 不一致；
 - 任一 sidecar 元数据或哈希与重新读取结果不同；
 - 重复加载产生不同张量摘要；

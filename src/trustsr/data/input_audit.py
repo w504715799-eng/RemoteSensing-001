@@ -9,10 +9,12 @@ from trustsr.artifacts.predictions import tensor_sha256
 from trustsr.data.crosssensor_manifest import SOURCE_OBJECT_SHA256
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
+    NODATA_POLICY,
     NORMALIZATION_POLICY,
     PHASE2B1B_AUDIT_SHA256,
     POST_MANIFEST_SHA256,
     RAW_DTYPE,
+    RAW_NODATA,
     REFLECTANCE_SCALE,
     SMOKE_BINS,
     SMOKE_SPLITS,
@@ -118,6 +120,8 @@ def build_input_audit(
         "raw_shapes": {"lr": [4, 130, 130], "hr": [4, 520, 520]},
         "cropped_shapes": {"lr": [4, 128, 128], "hr": [4, 512, 512]},
         "raw_dtype": RAW_DTYPE,
+        "raw_nodata": RAW_NODATA,
+        "nodata_policy": NODATA_POLICY,
         "reflectance_scale": REFLECTANCE_SCALE,
         "crop_policy": CROP_POLICY,
         "normalization_policy": NORMALIZATION_POLICY,

@@ -15,7 +15,7 @@
 - Accept only Phase 2B1B post-manifest SHA-256 `c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a`.
 - Preserve the frozen Phase 2B1B audit SHA-256 `d8964033958594a23ac7056519894d508977bfd2cc13da50a5833024274f3e90` and base-manifest SHA-256 `7487b0af2ebef86910e918d5d6b2fb927a6f5e46bac7c2e30be7ffb2ce994482` in the audit.
 - Read only the Phase 2B1B `subset-v1` pixel tree; never overwrite, relocate, or repair upstream files.
-- Require raw four-band `uint16`, `nodata=None`, finite values in `[0,10000]`, and exact sidecar metadata.
+- Require raw four-band `uint16`, `nodata=65535`, zero invalid mask/sentinel pixels, finite reflectance values in `[0,10000]`, and exact sidecar metadata.
 - Normalize only by `torch.float32(raw) / 10000.0`; never clamp an invalid input.
 - Crop LR with `[:,1:129,1:129]` and HR with `[:,4:516,4:516]`; never resize or use random crops.
 - Verify cropped LR/HR geographic bounds within `1e-3 m` absolute tolerance.
@@ -127,6 +127,8 @@ POST_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c
 PHASE2B1B_AUDIT_SHA256 = "d8964033958594a23ac7056519894d508977bfd2cc13da50a5833024274f3e90"
 REFLECTANCE_SCALE = 10_000.0
 RAW_DTYPE = "uint16"
+RAW_NODATA = 65_535.0
+NODATA_POLICY = "uint16_sentinel_65535_reject_invalid_v1"
 CROP_POLICY = "center_crop_lr_1_hr_4_v1"
 NORMALIZATION_POLICY = "uint16_divide_10000_no_clip_v1"
 SMOKE_SPLITS = ("calibration", "development", "internal_test")
@@ -248,7 +250,7 @@ git commit -m "feat: load frozen phase2b1b post manifest"
 
 - [ ] **Step 1: Add failing real-GeoTIFF crop and normalization test**
 
-Create real temporary LR and HR GeoTIFFs. Use four `uint16` bands, `EPSG:32618`, LR transform `Affine(10,0,500000,0,-10,400000)`, HR transform `Affine(2.5,0,500000,0,-2.5,400000)`, and no nodata. Fill arrays with `5000`, then place hand-checked values inside and outside the crop:
+Create real temporary LR and HR GeoTIFFs. Use four `uint16` bands, `EPSG:32618`, LR transform `Affine(10,0,500000,0,-10,400000)`, HR transform `Affine(2.5,0,500000,0,-2.5,400000)`, and nodata `65535`. Fill arrays with `5000`, then place hand-checked values inside and outside the crop:
 
 ```python
 def test_load_pair_center_crops_aligns_and_normalizes_without_clipping(tmp_path: Path) -> None:
@@ -347,7 +349,7 @@ For each asset:
 1. require the exact canonical sidecar path `subset-v1/<split>/<sample_id>/<kind>.tif`;
 2. resolve under `<storage-root>/trustsr/phase2b1b` and reject a symlink or escape;
 3. stream SHA-256 and compare both size and digest before Rasterio opens it;
-4. require GTiff, four bands, uniform `uint16`, optional descriptions equal `B04/B03/B02/B08`, declared CRS, `nodata=None`, and finite integer pixels;
+4. require GTiff, four bands, uniform `uint16`, optional descriptions equal `B04/B03/B02/B08`, declared CRS, `nodata=65535`, no invalid mask/sentinel pixels, and finite integer pixels;
 5. compare observed shape, dtype, CRS, six transform values, nodata, minimum and maximum with the sidecar;
 6. reject any raw value outside `[0,10000]`.
 
@@ -407,6 +409,8 @@ def test_input_audit_records_exact_counts_and_repeatable_tensor_digests() -> Non
         "internal_test": 4,
     }
     assert audit["correlation_bin_counts"] == {"0": 3, "1": 3, "2": 3, "3": 3}
+    assert audit["raw_nodata"] == 65535.0
+    assert audit["nodata_policy"] == "uint16_sentinel_65535_reject_invalid_v1"
     assert len(audit["pairs"]) == 12
     assert audit["repeated_load_equal"] is True
     assert audit["model_inference_run"] is False
@@ -441,7 +445,7 @@ For each pair produce only:
 }
 ```
 
-Require both sequences to have identical ordered metadata and tensor digest records. Return exactly the spec fields, including `BASE_MANIFEST_SHA256`, `SOURCE_OBJECT_SHA256`, raw shapes `[4,130,130]` and `[4,520,520]`, cropped shapes `[4,128,128]` and `[4,512,512]`, crop policy, raw dtype, reflectance scale, normalization policy and the three false execution flags. Call `canonical_json(result)` before return to reject non-JSON or non-finite values.
+Require both sequences to have identical ordered metadata and tensor digest records. Return exactly the spec fields, including `BASE_MANIFEST_SHA256`, `SOURCE_OBJECT_SHA256`, raw shapes `[4,130,130]` and `[4,520,520]`, cropped shapes `[4,128,128]` and `[4,512,512]`, crop policy, raw dtype, raw nodata, nodata policy, reflectance scale, normalization policy and the three false execution flags. Call `canonical_json(result)` before return to reject non-JSON or non-finite values.
 
 - [ ] **Step 4: Run audit and tensor-cache regression tests**
 

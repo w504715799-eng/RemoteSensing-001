@@ -20,8 +20,10 @@ POST_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c
 PHASE2B1B_AUDIT_SHA256 = "d8964033958594a23ac7056519894d508977bfd2cc13da50a5833024274f3e90"
 REFLECTANCE_SCALE = 10_000.0
 RAW_DTYPE = "uint16"
+RAW_NODATA = 65_535.0
 CROP_POLICY = "center_crop_lr_1_hr_4_v1"
 NORMALIZATION_POLICY = "uint16_divide_10000_no_clip_v1"
+NODATA_POLICY = "uint16_sentinel_65535_reject_invalid_v1"
 SMOKE_SPLITS = ("calibration", "development", "internal_test")
 SMOKE_BINS = (0, 1, 2, 3)
 _BANDS = ("B04", "B03", "B02", "B08")
@@ -250,9 +252,11 @@ def _load_asset(
             raise ValueError("asset band descriptions must equal B04, B03, B02, B08")
         if dataset.crs is None:
             raise ValueError("asset must declare a CRS")
-        if dataset.nodata is not None:
-            raise ValueError("asset nodata must be None")
+        if dataset.nodata != RAW_NODATA:
+            raise ValueError("asset nodata must equal the frozen uint16 sentinel 65535")
         pixels = dataset.read()
+        if np.any(dataset.read_masks() == 0):
+            raise ValueError("asset contains invalid nodata pixels")
         if not np.isfinite(pixels).all():
             raise ValueError("asset pixels must be finite")
         minimum = float(pixels.min())

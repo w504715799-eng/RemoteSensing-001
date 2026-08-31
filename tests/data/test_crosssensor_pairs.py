@@ -203,6 +203,7 @@ def test_load_records_rejects_symlink_root_or_manifest(
 
 
 _BANDS = ("B04", "B03", "B02", "B08")
+_FROZEN_NODATA = 65535
 _LR_TRANSFORM = Affine(10.0, 0.0, 500000.0, 0.0, -10.0, 400000.0)
 _HR_TRANSFORM = Affine(2.5, 0.0, 500000.0, 0.0, -2.5, 400000.0)
 
@@ -274,7 +275,15 @@ def _real_pair_fixture(tmp_path: Path, damage: str | None = None) -> dict[str, o
         lr[0, 2, 2] = 10001
     if damage == "band-count":
         lr = lr[:3]
-    nodata = 0 if damage == "nodata" else None
+    nodata = (
+        -32768
+        if damage == "dtype"
+        else 0
+        if damage == "nodata"
+        else _FROZEN_NODATA
+    )
+    if damage == "nodata-pixel":
+        lr[0, 2, 2] = _FROZEN_NODATA
     descriptions = (
         ("WRONG", "B03", "B02", "B08")
         if damage == "descriptions"
@@ -350,7 +359,8 @@ def test_load_pair_center_crops_aligns_and_normalizes_without_clipping(
         ("hash", "asset bytes"),
         ("symlink", "regular GeoTIFF"),
         ("dtype", "uint16"),
-        ("nodata", "nodata"),
+        ("nodata", "65535"),
+        ("nodata-pixel", "invalid nodata pixels"),
         ("maximum", r"\[0, 10000\]"),
         ("transform", "metadata"),
         ("bounds", "cropped LR/HR bounds"),
