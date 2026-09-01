@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import gc
 import os
+import weakref
 from copy import deepcopy
 from pathlib import Path
 
@@ -45,6 +47,7 @@ from trustsr.evaluation.development_score_audit import (
     replay_a2_development,
 )
 from trustsr.evaluation.score_diagnostics import (
+    RoiScoreDiagnostics,
     score_map_spearman,
     top_fraction_jaccard,
 )
@@ -738,6 +741,12 @@ def _a2_inputs(
     return pairs, bundles
 
 
+def _ordered_a2_sample_ids(
+    pairs: tuple[LoadedCrosssensorPair, ...] | list[LoadedCrosssensorPair],
+) -> tuple[str, ...]:
+    return tuple(pair.pair.sample_id for pair in pairs)
+
+
 def _committed_a2(
     tmp_path: Path,
     *,
@@ -753,11 +762,12 @@ def _committed_a2(
     )
     result, audit = evaluate_a2_development(
         pairs,
-        bundles,
+        iter(bundles),
         prediction_cache=prediction_cache,
         score_cache=score_cache,
         include_ldsr_variance_k5=include_ldsr_variance_k5,
         code_revision="d" * 40,
+        ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
     )
     return pairs, result, audit, prediction_cache, score_cache
 
@@ -792,6 +802,325 @@ def test_a2_freezes_only_from_exact_complete_development_set(committed_a2) -> No
     assert audit["schema"] == A2_CACHE_AUDIT_SCHEMA
     assert audit["sample_count"] == len(pairs) == 120
     assert len(audit["groups"]) == 120
+
+
+def test_a2_rejects_synchronized_pair_bundle_reversal_against_authoritative_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_pairs, original_bundles = _a2_inputs()
+    reversed_pairs = tuple(reversed(original_pairs))
+    reversed_bundles = tuple(reversed(original_bundles))
+
+    def prohibited(*_args, **_kwargs):
+        raise AssertionError("non-authoritative A2 order touched a cache")
+
+    monkeypatch.setattr(PredictionCache, "get", prohibited)
+    monkeypatch.setattr(ScoreCache, "get", prohibited)
+    with pytest.raises(ValueError, match="authoritative|ordered.*sample"):
+        evaluate_a2_development(
+            reversed_pairs,
+            reversed_bundles,
+            prediction_cache=PredictionCache(tmp_path / "predictions"),
+            score_cache=ScoreCache(tmp_path / "scores"),
+            include_ldsr_variance_k5=True,
+            code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(original_pairs),
+        )
+
+
+@pytest.mark.parametrize("damage", ["count", "empty", "duplicate", "non-string"])
+def test_a2_rejects_invalid_authoritative_sample_ids_before_cache_access(
+    tmp_path: Path, damage: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs, bundles = _a2_inputs()
+    ordered_ids: list[object] = list(_ordered_a2_sample_ids(pairs))
+    if damage == "count":
+        ordered_ids.pop()
+    elif damage == "empty":
+        ordered_ids[0] = ""
+    elif damage == "duplicate":
+        ordered_ids[-1] = ordered_ids[0]
+    else:
+        ordered_ids[0] = 1
+
+    def prohibited(*_args, **_kwargs):
+        raise AssertionError("invalid authoritative IDs touched a cache")
+
+    monkeypatch.setattr(PredictionCache, "get", prohibited)
+    monkeypatch.setattr(ScoreCache, "get", prohibited)
+    with pytest.raises((TypeError, ValueError), match="ordered.*sample|120|unique|string"):
+        evaluate_a2_development(
+            pairs,
+            bundles,
+            prediction_cache=PredictionCache(tmp_path / "predictions"),
+            score_cache=ScoreCache(tmp_path / "scores"),
+            include_ldsr_variance_k5=True,
+            code_revision="d" * 40,
+            ordered_development_sample_ids=ordered_ids,  # type: ignore[arg-type]
+        )
+
+
+def test_a2_consumes_one_bundle_at_a_time_and_releases_prediction_tensors(
+    tmp_path: Path,
+) -> None:
+    pairs, _ = _a2_inputs(include_ldsr_variance_k5=False)
+    prediction_cache = PredictionCache(tmp_path / "predictions")
+    released_checks = 0
+
+    def one_shot_bundles():
+        nonlocal released_checks
+        previous_tensors: tuple[weakref.ReferenceType[torch.Tensor], ...] = ()
+        for pair in pairs:
+            gc.collect()
+            assert all(reference() is None for reference in previous_tensors)
+            if previous_tensors:
+                released_checks += 1
+            bundle = _synthetic_prediction_bundle(
+                pair,
+                cache=prediction_cache,
+                seeds=(3407,),
+            )
+            previous_tensors = tuple(
+                weakref.ref(item.tensor)
+                for item in (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
+            )
+            yield bundle
+            del bundle
+        gc.collect()
+        assert all(reference() is None for reference in previous_tensors)
+        released_checks += 1
+
+    result, _ = evaluate_a2_development(
+        pairs,
+        one_shot_bundles(),
+        prediction_cache=prediction_cache,
+        score_cache=ScoreCache(tmp_path / "scores"),
+        include_ldsr_variance_k5=False,
+        code_revision="d" * 40,
+        ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+    )
+
+    assert result["sample_count"] == 120
+    assert released_checks == 120
+
+
+def test_a2_rejects_a_short_bundle_iterable_explicitly(tmp_path: Path) -> None:
+    pairs, _ = _a2_inputs(include_ldsr_variance_k5=False)
+
+    with pytest.raises(ValueError, match="bundle iterable ended before 120"):
+        evaluate_a2_development(
+            pairs,
+            iter(()),
+            prediction_cache=PredictionCache(tmp_path / "predictions"),
+            score_cache=ScoreCache(tmp_path / "scores"),
+            include_ldsr_variance_k5=False,
+            code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
+
+
+def test_a2_rejects_an_extra_bundle_after_processing_exactly_120(tmp_path: Path) -> None:
+    prediction_cache = PredictionCache(tmp_path / "predictions")
+    pairs, bundles = _a2_inputs(
+        prediction_cache,
+        include_ldsr_variance_k5=False,
+    )
+
+    with pytest.raises(ValueError, match="more than 120"):
+        evaluate_a2_development(
+            pairs,
+            iter((*bundles, bundles[0])),
+            prediction_cache=prediction_cache,
+            score_cache=ScoreCache(tmp_path / "scores"),
+            include_ldsr_variance_k5=False,
+            code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
+
+
+def _controlled_a2_score_maps(
+    pair: LoadedCrosssensorPair,
+    bundle: DevelopmentPredictionBundle,
+    score_cache: ScoreCache,
+    *,
+    include_ldsr_variance_k5: bool,
+):
+    assert include_ldsr_variance_k5 is True
+    records = []
+    for name, base_marker in zip(A2_SCORE_NAMES, (1.0, 2.0, 3.0), strict=True):
+        marker = base_marker
+        if (
+            name == "ldsr_variance_k5"
+            and pair.metadata.days_between == -1
+            and pair.metadata.correlation_bin == 0
+        ):
+            marker = 4.0
+        identity = development_score_audit._a2_score_identity(
+            pair,
+            name=name,
+            input_sha256s=development_score_audit._a2_score_input_hashes(bundle, name),
+        )
+        records.append(
+            development_score_audit._load_or_compute_score(
+                name,
+                identity,
+                score_cache,
+                lambda marker=marker: torch.full(
+                    pair.pair.hr.shape[1:], marker, dtype=torch.float64
+                ),
+            )
+        )
+    return tuple(records)
+
+
+def _controlled_a2_diagnostic(
+    score: torch.Tensor,
+    _risk: torch.Tensor,
+    *,
+    sensitivity_direction: int = 1,
+) -> RoiScoreDiagnostics:
+    marker = int(score[0, 0].item())
+    if marker == 1:
+        rho, gain, constant = 0.4 * sensitivity_direction, 0.02 * sensitivity_direction, False
+    elif marker == 2:
+        rho, gain, constant = 0.0, 0.0, True
+    elif marker == 3:
+        rho, gain, constant = 0.4, 0.02, False
+    else:
+        rho, gain, constant = -0.11, 0.02, False
+    random_aurc = 0.1
+    aurc = random_aurc - gain
+    return RoiScoreDiagnostics(
+        rho=rho,
+        constant_score=constant,
+        coverages=tuple(index / 10 for index in range(1, 11)),
+        selective_mean_risks=(aurc,) * 10,
+        aurc=aurc,
+        random_aurc=random_aurc,
+        aurc_gain=gain,
+        high_risk_miss_rate_at_80=0.2,
+    )
+
+
+def _controlled_a2_bundles(
+    pairs: tuple[LoadedCrosssensorPair, ...], prediction_cache: PredictionCache
+):
+    for pair in pairs:
+        yield _synthetic_prediction_bundle(
+            pair,
+            cache=prediction_cache,
+            seeds=K5A_SEEDS,
+        )
+
+
+def test_a2_orchestration_retains_positive_random_and_one_failed_stratum_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs, _ = _a2_inputs()
+    prediction_cache = PredictionCache(tmp_path / "predictions")
+    monkeypatch.setattr(
+        development_score_audit, "_build_a2_score_maps", _controlled_a2_score_maps
+    )
+    monkeypatch.setattr(
+        development_score_audit,
+        "evaluate_roi_score",
+        lambda score, risk: _controlled_a2_diagnostic(score, risk),
+    )
+
+    result, _ = evaluate_a2_development(
+        pairs,
+        _controlled_a2_bundles(pairs, prediction_cache),
+        prediction_cache=prediction_cache,
+        score_cache=ScoreCache(tmp_path / "scores"),
+        include_ldsr_variance_k5=True,
+        code_revision="d" * 40,
+        ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+    )
+
+    summaries = {item["name"]: item["primary_window_9"] for item in result["candidate_summaries"]}
+    positive = summaries["lr_reprojection_l1"]
+    random_equivalent = summaries["three_model_disagreement"]
+    failed_stratum = summaries["ldsr_variance_k5"]
+    assert positive["eligible"] is True
+    assert positive["mean_rho"] == pytest.approx(0.4)
+    assert random_equivalent["mean_rho"] == 0.0
+    assert random_equivalent["mean_aurc_gain"] == 0.0
+    assert random_equivalent["eligible"] is False
+    assert failed_stratum["positive_strata"] == 11
+    assert failed_stratum["minimum_stratum_mean_rho"] == pytest.approx(-0.11)
+    assert failed_stratum["failure_reasons"] == ["a stratum mean rho is below -0.10"]
+    assert result["frozen_score"]["name"] == "lr_reprojection_l1"
+    assert [
+        item["name"] for item in result["frozen_score"]["candidate_eligibility_evidence"]
+    ] == list(A2_SCORE_NAMES)
+    for candidate in result["candidate_summaries"]:
+        for window in ("primary_window_9", "sensitivity_window_1"):
+            strata = candidate[window]["stratum_mean_rho"]
+            assert len(strata) == 12
+            assert all(
+                set(entry)
+                == {
+                    "days_between",
+                    "correlation_bin",
+                    "mean_rho",
+                    "mean_aurc_gain",
+                }
+                for entry in strata
+            )
+            expected_gain = 0.0 if candidate["name"] == "three_model_disagreement" else 0.02
+            assert [entry["mean_aurc_gain"] for entry in strata] == pytest.approx(
+                [expected_gain] * 12
+            )
+
+
+def test_a2_r1_only_perturbation_changes_sensitivity_but_not_frozen_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs, _ = _a2_inputs()
+    prediction_cache = PredictionCache(tmp_path / "predictions")
+    score_cache = ScoreCache(tmp_path / "scores")
+    sensitivity_direction = 1
+    monkeypatch.setattr(
+        development_score_audit, "_build_a2_score_maps", _controlled_a2_score_maps
+    )
+    monkeypatch.setattr(
+        development_score_audit,
+        "local_l1_risk",
+        lambda sr, _hr, *, window: torch.full(
+            sr.shape[1:], 0.9 if window == 9 else 0.1, dtype=torch.float64
+        ),
+    )
+
+    def diagnostics(score: torch.Tensor, risk: torch.Tensor) -> RoiScoreDiagnostics:
+        direction = 1 if float(risk[0, 0]) == 0.9 else sensitivity_direction
+        return _controlled_a2_diagnostic(
+            score, risk, sensitivity_direction=direction
+        )
+
+    monkeypatch.setattr(development_score_audit, "evaluate_roi_score", diagnostics)
+
+    def evaluate_once():
+        return evaluate_a2_development(
+            pairs,
+            _controlled_a2_bundles(pairs, prediction_cache),
+            prediction_cache=prediction_cache,
+            score_cache=score_cache,
+            include_ldsr_variance_k5=True,
+            code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )[0]
+
+    first = evaluate_once()
+    sensitivity_direction = -1
+    second = evaluate_once()
+
+    assert first["frozen_score"] == second["frozen_score"]
+    assert [item["primary_window_9"] for item in first["candidate_summaries"]] == [
+        item["primary_window_9"] for item in second["candidate_summaries"]
+    ]
+    assert [item["sensitivity_window_1"] for item in first["candidate_summaries"]] != [
+        item["sensitivity_window_1"] for item in second["candidate_summaries"]
+    ]
 
 
 @pytest.mark.parametrize(
@@ -843,6 +1172,7 @@ def test_a2_rejects_incomplete_leaky_or_mismatched_membership_before_cache_acces
             score_cache=ScoreCache(tmp_path / "scores"),
             include_ldsr_variance_k5=True,
             code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
         )
 
 
@@ -860,6 +1190,7 @@ def test_a2_rejects_non_boolean_a1_variance_acceptance(
             score_cache=ScoreCache(tmp_path / "scores"),
             include_ldsr_variance_k5=value,  # type: ignore[arg-type]
             code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
         )
 
 
@@ -875,6 +1206,7 @@ def test_a2_rejects_any_non_commit_code_revision(tmp_path: Path, revision: objec
             score_cache=ScoreCache(tmp_path / "scores"),
             include_ldsr_variance_k5=True,
             code_revision=revision,  # type: ignore[arg-type]
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
         )
 
 
@@ -889,6 +1221,7 @@ def test_a2_rejects_variance_seed_bundle_after_a1_removed_variance(tmp_path: Pat
             score_cache=ScoreCache(tmp_path / "scores"),
             include_ldsr_variance_k5=False,
             code_revision="d" * 40,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
         )
 
 
@@ -937,7 +1270,12 @@ def test_a2_replay_is_cache_only_and_byte_mtime_stable(
     monkeypatch.setattr(ScoreCache, "put", prohibited)
 
     rebuilt_result, rebuilt_audit = replay_a2_development(
-        pairs, result, audit, prediction_cache, score_cache
+        pairs,
+        result,
+        audit,
+        prediction_cache,
+        score_cache,
+        ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
     )
 
     assert canonical_json(rebuilt_result) == canonical_json(result)
@@ -960,7 +1298,14 @@ def test_a2_replay_recomputes_bootstrap_selection(
     )
 
     with pytest.raises(ValueError, match="rebuilt A2 result"):
-        replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+        replay_a2_development(
+            pairs,
+            result,
+            audit,
+            prediction_cache,
+            score_cache,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
 
 
 @pytest.mark.parametrize(
@@ -1011,7 +1356,14 @@ def test_a2_replay_rejects_mutated_commitment_or_cache_identity(
         result["code_revision"] = "e" * 40
 
     with pytest.raises((ValueError, RuntimeError), match="A2|cache|committed|rebuilt"):
-        replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+        replay_a2_development(
+            pairs,
+            result,
+            audit,
+            prediction_cache,
+            score_cache,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
 
 
 @pytest.mark.parametrize("kind", ["prediction", "score"])
@@ -1024,7 +1376,14 @@ def test_a2_replay_requires_every_existing_cache_entry(committed_a2, kind: str) 
     path.unlink()
     try:
         with pytest.raises((ValueError, RuntimeError), match="cache"):
-            replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+            replay_a2_development(
+                pairs,
+                result,
+                audit,
+                prediction_cache,
+                score_cache,
+                ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+            )
     finally:
         path.write_bytes(original)
 
@@ -1054,10 +1413,64 @@ def test_a2_replay_rebuilds_canonical_identity_before_any_cache_access(
     def prohibited(*_args, **_kwargs):
         raise AssertionError("noncanonical A2 identity reached cache access")
 
-    monkeypatch.setattr(PredictionCache, "get", prohibited)
     monkeypatch.setattr(ScoreCache, "get", prohibited)
+    if kind == "prediction":
+        monkeypatch.setattr(PredictionCache, "get", prohibited)
+    else:
+        monkeypatch.setattr(
+            development_score_audit, "_snapshot_score_files", prohibited
+        )
     with pytest.raises(ValueError, match="committed A2.*identity|score identity"):
-        replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+        replay_a2_development(
+            pairs,
+            result,
+            audit,
+            prediction_cache,
+            score_cache,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
+
+
+def test_a2_replay_verifies_prediction_digest_before_touching_score_namespace(
+    committed_a2, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs, result, audit, prediction_cache, score_cache = committed_a2
+    audit = deepcopy(audit)
+    group = audit["groups"][0]
+    prediction_entry = group["prediction_entries"][2]
+    original_digest = prediction_entry["prediction_sha256"]
+    altered_digest = "e" * 64
+    assert original_digest != altered_digest
+    prediction_entry["prediction_sha256"] = altered_digest
+    for score_entry in group["score_entries"]:
+        identity = score_entry["identity"]
+        identity["input_sha256s"] = [
+            altered_digest if digest == original_digest else digest
+            for digest in identity["input_sha256s"]
+        ]
+        altered_identity = ScoreIdentity(
+            score_name=identity["score_name"],
+            score_schema_version=identity["score_schema_version"],
+            sample_id=identity["sample_id"],
+            input_sha256s=tuple(identity["input_sha256s"]),
+            operator_parameters=identity["operator_parameters"],
+        )
+        score_entry["cache_key"] = altered_identity.key
+
+    def prohibited_score_access(*_args, **_kwargs):
+        raise AssertionError("A2 replay touched score namespace before prediction verification")
+
+    monkeypatch.setattr(development_score_audit, "_snapshot_score_files", prohibited_score_access)
+    monkeypatch.setattr(ScoreCache, "get", prohibited_score_access)
+    with pytest.raises(ValueError, match="prediction logical tensor SHA"):
+        replay_a2_development(
+            pairs,
+            result,
+            audit,
+            prediction_cache,
+            score_cache,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
 
 
 def test_a2_replay_rejects_incomplete_diagnostics_before_cache_access(
@@ -1073,7 +1486,14 @@ def test_a2_replay_rejects_incomplete_diagnostics_before_cache_access(
     monkeypatch.setattr(PredictionCache, "get", prohibited)
     monkeypatch.setattr(ScoreCache, "get", prohibited)
     with pytest.raises(ValueError, match="diagnostics.*incomplete"):
-        replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+        replay_a2_development(
+            pairs,
+            result,
+            audit,
+            prediction_cache,
+            score_cache,
+            ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+        )
 
 
 def test_a2_replay_detects_cache_mtime_change_during_rebuild(
@@ -1099,6 +1519,13 @@ def test_a2_replay_detects_cache_mtime_change_during_rebuild(
     monkeypatch.setattr(ScoreCache, "get", changing_get)
     try:
         with pytest.raises(RuntimeError, match="changed during A2 replay"):
-            replay_a2_development(pairs, result, audit, prediction_cache, score_cache)
+            replay_a2_development(
+                pairs,
+                result,
+                audit,
+                prediction_cache,
+                score_cache,
+                ordered_development_sample_ids=_ordered_a2_sample_ids(pairs),
+            )
     finally:
         os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))

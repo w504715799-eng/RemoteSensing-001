@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import statistics
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -1042,34 +1042,17 @@ def _validate_a2_pair(pair: LoadedCrosssensorPair) -> None:
 
 def _validate_a2_structure(
     pairs: Sequence[LoadedCrosssensorPair],
-    bundles: Sequence[DevelopmentPredictionBundle] | None,
-    *,
-    include_ldsr_variance_k5: bool,
 ) -> tuple[LoadedCrosssensorPair, ...]:
-    expected_seeds = K5A_SEEDS if include_ldsr_variance_k5 else (3407,)
     pair_values = tuple(pairs)
     if len(pair_values) != 120:
         raise ValueError("A2 requires exactly 120 development ROI")
-    bundle_values = None if bundles is None else tuple(bundles)
-    if bundle_values is not None and len(bundle_values) != 120:
-        raise ValueError("A2 requires exactly 120 prediction bundles")
     cells: dict[tuple[int, int], list[int]] = {}
-    for index, pair in enumerate(pair_values):
+    for pair in pair_values:
         _validate_a2_pair(pair)
         metadata = pair.metadata
         cells.setdefault(
             (metadata.days_between, metadata.correlation_bin), []
         ).append(metadata.selection_round)
-        if bundle_values is not None:
-            bundle = bundle_values[index]
-            if not isinstance(bundle, DevelopmentPredictionBundle):
-                raise TypeError("A2 bundles must be DevelopmentPredictionBundle values")
-            if bundle.sample_id != pair.pair.sample_id:
-                raise ValueError("A2 bundle membership does not match pair order")
-            if tuple(item.seed for item in bundle.ldsr) != expected_seeds:
-                raise ValueError(
-                    "A2 bundle seed membership conflicts with the accepted A1 variance decision"
-                )
     if len({pair.metadata.sample_id for pair in pair_values}) != 120:
         raise ValueError("A2 requires 120 unique sample identities")
     if len({pair.metadata.spatial_group_id for pair in pair_values}) != 120:
@@ -1082,12 +1065,42 @@ def _validate_a2_structure(
     return pair_values
 
 
+def _validate_ordered_development_sample_ids(
+    ordered_development_sample_ids: Sequence[str],
+    pairs: Sequence[LoadedCrosssensorPair],
+) -> tuple[str, ...]:
+    if isinstance(ordered_development_sample_ids, str | bytes) or not isinstance(
+        ordered_development_sample_ids, Sequence
+    ):
+        raise TypeError("ordered development sample IDs must be a sequence")
+    ordered = tuple(ordered_development_sample_ids)
+    if len(ordered) != 120:
+        raise ValueError("ordered development sample IDs must contain exactly 120 values")
+    if any(type(sample_id) is not str or not sample_id for sample_id in ordered):
+        raise ValueError("ordered development sample IDs must be built-in nonempty strings")
+    if len(set(ordered)) != 120:
+        raise ValueError("ordered development sample IDs must be unique")
+    observed = tuple(pair.pair.sample_id for pair in pairs)
+    if observed != ordered:
+        raise ValueError("A2 pairs do not match the authoritative ordered sample IDs")
+    return ordered
+
+
 def _validate_a2_bundle_tensors(
     pair: LoadedCrosssensorPair,
     bundle: DevelopmentPredictionBundle,
     *,
     include_ldsr_variance_k5: bool,
 ) -> None:
+    if not isinstance(bundle, DevelopmentPredictionBundle):
+        raise TypeError("A2 bundles must be DevelopmentPredictionBundle values")
+    if bundle.sample_id != pair.pair.sample_id:
+        raise ValueError("A2 bundle membership does not match pair order")
+    expected_seeds = K5A_SEEDS if include_ldsr_variance_k5 else (3407,)
+    if tuple(item.seed for item in bundle.ldsr) != expected_seeds:
+        raise ValueError(
+            "A2 bundle seed membership conflicts with the accepted A1 variance decision"
+        )
     slots = _a2_prediction_slots(include_ldsr_variance_k5)
     values = (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
     for item, (name, seed) in zip(values, slots, strict=True):
@@ -1213,6 +1226,16 @@ def _distribution_evidence(
                     np.mean(
                         [
                             item.rho
+                            for item in results
+                            if (item.days_between, item.correlation_bin)
+                            == (day, bin_index)
+                        ]
+                    )
+                ),
+                "mean_aurc_gain": float(
+                    np.mean(
+                        [
+                            item.aurc_gain
                             for item in results
                             if (item.days_between, item.correlation_bin)
                             == (day, bin_index)
@@ -1357,12 +1380,13 @@ def _a2_result_and_audit(
 
 def evaluate_a2_development(
     pairs: Sequence[LoadedCrosssensorPair],
-    bundles: Sequence[DevelopmentPredictionBundle],
+    bundles: Iterable[DevelopmentPredictionBundle],
     *,
     prediction_cache: PredictionCache,
     score_cache: ScoreCache,
     include_ldsr_variance_k5: bool,
     code_revision: str,
+    ordered_development_sample_ids: Sequence[str],
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Evaluate exactly 120 development ROI and freeze from primary R9 evidence."""
 
@@ -1372,10 +1396,14 @@ def evaluate_a2_development(
         score_cache, ScoreCache
     ):
         raise TypeError("A2 caches must be PredictionCache and ScoreCache values")
-    pair_values = _validate_a2_structure(
-        pairs, bundles, include_ldsr_variance_k5=include_ldsr_variance_k5
+    pair_values = _validate_a2_structure(pairs)
+    _validate_ordered_development_sample_ids(
+        ordered_development_sample_ids, pair_values
     )
-    bundle_values = tuple(bundles)
+    try:
+        bundle_iterator = iter(bundles)
+    except TypeError as exc:
+        raise TypeError("A2 bundles must be an iterable consumed exactly once") from exc
     sample_records: list[dict[str, object]] = []
     audit_groups: list[dict[str, object]] = []
     primary_results: dict[str, list[DevelopmentRoiResult]] = {
@@ -1384,7 +1412,11 @@ def evaluate_a2_development(
     sensitivity_results: dict[str, list[DevelopmentRoiResult]] = {
         name: [] for name in names
     }
-    for pair, bundle in zip(pair_values, bundle_values, strict=True):
+    for pair in pair_values:
+        try:
+            bundle = next(bundle_iterator)
+        except StopIteration as exc:
+            raise ValueError("A2 prediction bundle iterable ended before 120 ROI") from exc
         _validate_a2_bundle_tensors(
             pair, bundle, include_ldsr_variance_k5=include_ldsr_variance_k5
         )
@@ -1444,7 +1476,22 @@ def evaluate_a2_development(
                 ],
             }
         )
-        del prediction_items, scores, central, primary_risk, sensitivity_risk
+        del (
+            prediction_items,
+            scores,
+            score,
+            central,
+            primary_risk,
+            sensitivity_risk,
+            bundle,
+        )
+    try:
+        extra_bundle = next(bundle_iterator)
+    except StopIteration:
+        pass
+    else:
+        del extra_bundle
+        raise ValueError("A2 prediction bundle iterable contains more than 120 ROI")
     return _a2_result_and_audit(
         sample_records,
         audit_groups,
@@ -1529,9 +1576,7 @@ def _validate_a2_committed_structure(
             != list(names)
         ):
             raise ValueError("committed A2 frozen score provenance is invalid")
-    pair_values = _validate_a2_structure(
-        pairs, None, include_ldsr_variance_k5=include
-    )
+    pair_values = _validate_a2_structure(pairs)
     samples = committed_result.get("samples")
     groups = committed_audit.get("groups")
     if not isinstance(samples, list) or len(samples) != 120:
@@ -1605,19 +1650,15 @@ def _validate_a2_committed_structure(
     return pair_values, include, revision, names
 
 
-def _a2_canonical_identities(
+def _a2_canonical_prediction_identities(
     pairs: Sequence[LoadedCrosssensorPair],
     groups: Sequence[dict[str, object]],
     *,
     include_ldsr_variance_k5: bool,
     names: Sequence[str],
-) -> tuple[
-    tuple[tuple[PredictionIdentity, ...], ...],
-    tuple[tuple[ScoreIdentity, ...], ...],
-]:
+) -> tuple[tuple[PredictionIdentity, ...], ...]:
     slots = _a2_prediction_slots(include_ldsr_variance_k5)
     prediction_groups: list[tuple[PredictionIdentity, ...]] = []
-    score_groups: list[tuple[ScoreIdentity, ...]] = []
     for pair, group in zip(pairs, groups, strict=True):
         prediction_entries = group.get("prediction_entries")
         score_entries = group.get("score_entries")
@@ -1626,7 +1667,6 @@ def _a2_canonical_identities(
         if not isinstance(score_entries, list) or len(score_entries) != len(names):
             raise ValueError("committed A2 score group is incomplete")
         canonical_predictions: list[PredictionIdentity] = []
-        prediction_sha256s: dict[tuple[str, int | None], str] = {}
         for entry, (model_name, seed) in zip(prediction_entries, slots, strict=True):
             if not isinstance(entry, dict):
                 raise ValueError("committed A2 prediction entry is invalid")
@@ -1658,7 +1698,57 @@ def _a2_canonical_identities(
             ):
                 raise ValueError("committed A2 prediction identity/key/digest is invalid")
             canonical_predictions.append(canonical)
-            prediction_sha256s[(model_name, seed)] = digest
+        prediction_groups.append(tuple(canonical_predictions))
+    return tuple(prediction_groups)
+
+
+def _verify_a2_prediction_hashes(
+    pairs: Sequence[LoadedCrosssensorPair],
+    groups: Sequence[dict[str, object]],
+    identity_groups: Sequence[Sequence[PredictionIdentity]],
+    prediction_cache: PredictionCache,
+    *,
+    include_ldsr_variance_k5: bool,
+) -> tuple[tuple[str, ...], ...]:
+    verified_groups: list[tuple[str, ...]] = []
+    for pair, group, identities in zip(
+        pairs, groups, identity_groups, strict=True
+    ):
+        bundle = _a2_bundle_from_cache(
+            pair,
+            identities,
+            group["prediction_entries"],
+            prediction_cache,
+            include_ldsr_variance_k5=include_ldsr_variance_k5,
+        )
+        verified_groups.append(
+            tuple(
+                item.prediction_sha256
+                for item in (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
+            )
+        )
+        del bundle
+    return tuple(verified_groups)
+
+
+def _a2_canonical_score_identities(
+    pairs: Sequence[LoadedCrosssensorPair],
+    groups: Sequence[dict[str, object]],
+    verified_prediction_hash_groups: Sequence[Sequence[str]],
+    *,
+    include_ldsr_variance_k5: bool,
+    names: Sequence[str],
+) -> tuple[tuple[ScoreIdentity, ...], ...]:
+    slots = _a2_prediction_slots(include_ldsr_variance_k5)
+    score_groups: list[tuple[ScoreIdentity, ...]] = []
+    for pair, group, verified_hashes in zip(
+        pairs, groups, verified_prediction_hash_groups, strict=True
+    ):
+        if len(verified_hashes) != len(slots):
+            raise ValueError("verified A2 prediction hash group is incomplete")
+        prediction_sha256s = {
+            slot: digest for slot, digest in zip(slots, verified_hashes, strict=True)
+        }
         expected_inputs = {
             "lr_reprojection_l1": (prediction_sha256s[("ldsr-s2-x4", 3407)],),
             "three_model_disagreement": (
@@ -1673,6 +1763,7 @@ def _a2_canonical_identities(
             else (),
         }
         canonical_scores: list[ScoreIdentity] = []
+        score_entries = group["score_entries"]
         for entry, name in zip(score_entries, names, strict=True):
             if not isinstance(entry, dict):
                 raise ValueError("committed A2 score entry is invalid")
@@ -1692,9 +1783,8 @@ def _a2_canonical_identities(
             ):
                 raise ValueError("committed A2 score identity/key/digest is invalid")
             canonical_scores.append(canonical)
-        prediction_groups.append(tuple(canonical_predictions))
         score_groups.append(tuple(canonical_scores))
-    return tuple(prediction_groups), tuple(score_groups)
+    return tuple(score_groups)
 
 
 def _a2_bundle_from_cache(
@@ -1766,14 +1856,19 @@ def replay_a2_development(
     committed_audit: Mapping[str, object],
     prediction_cache: PredictionCache,
     score_cache: ScoreCache,
+    *,
+    ordered_development_sample_ids: Sequence[str],
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Rebuild A2 from existing caches without any model, score compute, or write path."""
 
     pair_values, include, revision, names = _validate_a2_committed_structure(
         pairs, committed_result, committed_audit
     )
+    _validate_ordered_development_sample_ids(
+        ordered_development_sample_ids, pair_values
+    )
     groups = committed_audit["groups"]
-    prediction_groups, score_identity_groups = _a2_canonical_identities(
+    prediction_groups = _a2_canonical_prediction_identities(
         pair_values,
         groups,
         include_ldsr_variance_k5=include,
@@ -1782,15 +1877,27 @@ def replay_a2_development(
     prediction_identities = tuple(
         identity for group in prediction_groups for identity in group
     )
+    prediction_before = snapshot_cache_files(
+        prediction_cache.root, prediction_identities
+    )
+    verified_prediction_hash_groups = _verify_a2_prediction_hashes(
+        pair_values,
+        groups,
+        prediction_groups,
+        prediction_cache,
+        include_ldsr_variance_k5=include,
+    )
+    score_identity_groups = _a2_canonical_score_identities(
+        pair_values,
+        groups,
+        verified_prediction_hash_groups,
+        include_ldsr_variance_k5=include,
+        names=names,
+    )
     score_identities = tuple(
         identity for group in score_identity_groups for identity in group
     )
-    before = _snapshot_all_cache_files(
-        prediction_identities,
-        score_identities,
-        prediction_cache,
-        score_cache,
-    )
+    score_before = _snapshot_score_files(score_cache, score_identities)
     sample_records: list[dict[str, object]] = []
     rebuilt_groups: list[dict[str, object]] = []
     primary_results: dict[str, list[DevelopmentRoiResult]] = {
@@ -1862,7 +1969,7 @@ def replay_a2_development(
                 ],
             }
         )
-        del bundle, scores, central, primary_risk, sensitivity_risk
+        del bundle, scores, score, central, primary_risk, sensitivity_risk
     rebuilt_result, rebuilt_audit = _a2_result_and_audit(
         sample_records,
         rebuilt_groups,
@@ -1875,12 +1982,10 @@ def replay_a2_development(
         raise ValueError("rebuilt A2 result differs from committed result")
     if canonical_json(rebuilt_audit) != canonical_json(dict(committed_audit)):
         raise ValueError("rebuilt A2 cache audit differs from committed audit")
-    after = _snapshot_all_cache_files(
-        prediction_identities,
-        score_identities,
-        prediction_cache,
-        score_cache,
+    prediction_after = snapshot_cache_files(
+        prediction_cache.root, prediction_identities
     )
-    if before != after:
+    score_after = _snapshot_score_files(score_cache, score_identities)
+    if prediction_before != prediction_after or score_before != score_after:
         raise RuntimeError("cache files changed during A2 replay")
     return rebuilt_result, rebuilt_audit
