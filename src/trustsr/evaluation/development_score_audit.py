@@ -1,4 +1,4 @@
-"""Deterministic four-ROI Phase 2B3-A score audit and cache-only replay."""
+"""Deterministic Phase 2B3-A score audits and cache-only replay."""
 
 from __future__ import annotations
 
@@ -8,11 +8,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from trustsr.artifacts.predictions import (
     PredictionCache,
     PredictionIdentity,
+    build_identity,
     tensor_sha256,
 )
 from trustsr.artifacts.scores import (
@@ -26,7 +28,12 @@ from trustsr.data.crosssensor_pairs import (
     POST_MANIFEST_SHA256,
     LoadedCrosssensorPair,
 )
-from trustsr.evaluation.crosssensor_smoke import INPUT_AUDIT_SHA256, snapshot_cache_files
+from trustsr.evaluation import score_selection
+from trustsr.evaluation.crosssensor_smoke import (
+    INPUT_AUDIT_SHA256,
+    cache_entry_evidence,
+    snapshot_cache_files,
+)
 from trustsr.evaluation.development_predictions import (
     A1_SEEDS,
     K5A_SEEDS,
@@ -43,6 +50,7 @@ from trustsr.evaluation.score_diagnostics import (
     score_map_spearman,
     top_fraction_jaccard,
 )
+from trustsr.evaluation.score_selection import DevelopmentRoiResult
 from trustsr.jsonio import canonical_json
 from trustsr.risk.local import ensemble_variance_score, local_l1_risk
 from trustsr.risk.proxies import (
@@ -52,6 +60,13 @@ from trustsr.risk.proxies import (
 
 A1_RESULT_SCHEMA = "trustsr.phase2b3a-development-smoke.v1"
 A1_CACHE_AUDIT_SCHEMA = "trustsr.phase2b3a-development-smoke-cache-audit.v1"
+A2_RESULT_SCHEMA = "trustsr.phase2b3a-development-score-audit.v1"
+A2_CACHE_AUDIT_SCHEMA = "trustsr.phase2b3a-development-score-cache-audit.v1"
+A2_SCORE_NAMES = (
+    "lr_reprojection_l1",
+    "three_model_disagreement",
+    "ldsr_variance_k5",
+)
 PRIMARY_RISK_WINDOW = 9
 SENSITIVITY_RISK_WINDOW = 1
 SCORE_SCHEMA_VERSION = 1
@@ -895,4 +910,977 @@ def replay_a1_smoke(
     )
     if before != after:
         raise RuntimeError("cache files changed during A1 replay")
+    return rebuilt_result, rebuilt_audit
+
+
+def _validate_code_revision(value: object) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 40
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError("code_revision must be a 40-character lowercase Git object ID")
+    return value
+
+
+def _a2_candidate_names(include_ldsr_variance_k5: bool) -> tuple[str, ...]:
+    if type(include_ldsr_variance_k5) is not bool:
+        raise TypeError("include_ldsr_variance_k5 must be a built-in boolean")
+    return A2_SCORE_NAMES if include_ldsr_variance_k5 else A2_SCORE_NAMES[:2]
+
+
+def _a2_prediction_slots(
+    include_ldsr_variance_k5: bool,
+) -> tuple[tuple[str, int | None], ...]:
+    seeds = K5A_SEEDS if include_ldsr_variance_k5 else (3407,)
+    return (
+        ("bicubic-x4", None),
+        ("sen2srlite-x4", None),
+        *(("ldsr-s2-x4", seed) for seed in seeds),
+    )
+
+
+def _a2_base_score_configuration(name: str) -> dict[str, object]:
+    configurations: dict[str, dict[str, object]] = {
+        "lr_reprojection_l1": {
+            "algorithm": "lr_reprojection_l1_score",
+            "downsample_mode": "area",
+            "scale": 4,
+            "upsample_mode": "repeat_interleave",
+        },
+        "three_model_disagreement": {
+            "algorithm": "three_model_disagreement_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "model_order": "bicubic-x4,sen2srlite-x4,ldsr-s2-x4",
+        },
+        "ldsr_variance_k5": {
+            "algorithm": "ensemble_variance_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "seed_first": K5A_SEEDS[0],
+            "seed_last": K5A_SEEDS[-1],
+            "seed_count": len(K5A_SEEDS),
+        },
+    }
+    try:
+        return dict(configurations[name])
+    except KeyError as exc:
+        raise ValueError("unknown A2 score name") from exc
+
+
+def _a2_score_seeds(name: str) -> tuple[int, ...]:
+    if name == "ldsr_variance_k5":
+        return K5A_SEEDS
+    if name in A2_SCORE_NAMES[:2]:
+        return (3407,)
+    raise ValueError("unknown A2 score name")
+
+
+def _a2_score_identity(
+    pair: LoadedCrosssensorPair,
+    *,
+    name: str,
+    input_sha256s: Sequence[str],
+) -> ScoreIdentity:
+    return ScoreIdentity(
+        score_name=name,
+        score_schema_version=SCORE_SCHEMA_VERSION,
+        sample_id=pair.pair.sample_id,
+        input_sha256s=tuple(input_sha256s),
+        operator_parameters={
+            **_a2_base_score_configuration(name),
+            "lr_sha256": tensor_sha256(pair.pair.lr),
+        },
+    )
+
+
+def _a2_score_input_hashes(
+    bundle: DevelopmentPredictionBundle, name: str
+) -> tuple[str, ...]:
+    central = bundle.ldsr_for_seed(3407)
+    if name == "lr_reprojection_l1":
+        return (central.prediction_sha256,)
+    if name == "three_model_disagreement":
+        return (
+            bundle.bicubic.prediction_sha256,
+            bundle.sen2srlite.prediction_sha256,
+            central.prediction_sha256,
+        )
+    if name == "ldsr_variance_k5":
+        return tuple(
+            bundle.ldsr_for_seed(seed).prediction_sha256 for seed in K5A_SEEDS
+        )
+    raise ValueError("unknown A2 score name")
+
+
+def _validate_a2_pair(pair: LoadedCrosssensorPair) -> None:
+    if not isinstance(pair, LoadedCrosssensorPair):
+        raise TypeError("A2 inputs must be LoadedCrosssensorPair values")
+    pair.pair.validate()
+    metadata = pair.metadata
+    if metadata.split != "development":
+        raise ValueError("A2 inputs must use only the development split")
+    if metadata.days_between not in (-1, 0, 1):
+        raise ValueError("A2 pair has an invalid development stratum")
+    if metadata.correlation_bin not in range(4):
+        raise ValueError("A2 pair has an invalid development stratum")
+    if metadata.selection_round not in range(1, 11):
+        raise ValueError("A2 pair has an invalid development stratum")
+    if metadata.manifest_sha256 != POST_MANIFEST_SHA256:
+        raise ValueError("A2 pair has the wrong manifest")
+    if metadata.sample_id != pair.pair.sample_id:
+        raise ValueError("A2 pair and metadata identities differ")
+    if pair.pair.source != f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}":
+        raise ValueError("A2 pair has the wrong source identity")
+    if (
+        metadata.crop_policy != CROP_POLICY
+        or metadata.normalization_policy != NORMALIZATION_POLICY
+    ):
+        raise ValueError("A2 pair has the wrong input policy")
+
+
+def _validate_a2_structure(
+    pairs: Sequence[LoadedCrosssensorPair],
+    bundles: Sequence[DevelopmentPredictionBundle] | None,
+    *,
+    include_ldsr_variance_k5: bool,
+) -> tuple[LoadedCrosssensorPair, ...]:
+    expected_seeds = K5A_SEEDS if include_ldsr_variance_k5 else (3407,)
+    pair_values = tuple(pairs)
+    if len(pair_values) != 120:
+        raise ValueError("A2 requires exactly 120 development ROI")
+    bundle_values = None if bundles is None else tuple(bundles)
+    if bundle_values is not None and len(bundle_values) != 120:
+        raise ValueError("A2 requires exactly 120 prediction bundles")
+    cells: dict[tuple[int, int], list[int]] = {}
+    for index, pair in enumerate(pair_values):
+        _validate_a2_pair(pair)
+        metadata = pair.metadata
+        cells.setdefault(
+            (metadata.days_between, metadata.correlation_bin), []
+        ).append(metadata.selection_round)
+        if bundle_values is not None:
+            bundle = bundle_values[index]
+            if not isinstance(bundle, DevelopmentPredictionBundle):
+                raise TypeError("A2 bundles must be DevelopmentPredictionBundle values")
+            if bundle.sample_id != pair.pair.sample_id:
+                raise ValueError("A2 bundle membership does not match pair order")
+            if tuple(item.seed for item in bundle.ldsr) != expected_seeds:
+                raise ValueError(
+                    "A2 bundle seed membership conflicts with the accepted A1 variance decision"
+                )
+    if len({pair.metadata.sample_id for pair in pair_values}) != 120:
+        raise ValueError("A2 requires 120 unique sample identities")
+    if len({pair.metadata.spatial_group_id for pair in pair_values}) != 120:
+        raise ValueError("A2 requires 120 unique spatial groups")
+    expected_cells = {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
+    if set(cells) != expected_cells or any(
+        sorted(rounds) != list(range(1, 11)) for rounds in cells.values()
+    ):
+        raise ValueError("A2 development strata must each contain selection rounds 1 through 10")
+    return pair_values
+
+
+def _validate_a2_bundle_tensors(
+    pair: LoadedCrosssensorPair,
+    bundle: DevelopmentPredictionBundle,
+    *,
+    include_ldsr_variance_k5: bool,
+) -> None:
+    slots = _a2_prediction_slots(include_ldsr_variance_k5)
+    values = (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
+    for item, (name, seed) in zip(values, slots, strict=True):
+        _validate_prediction_tensor(pair, item, expected_name=name, expected_seed=seed)
+
+
+def _build_a2_score_maps(
+    pair: LoadedCrosssensorPair,
+    bundle: DevelopmentPredictionBundle,
+    score_cache: ScoreCache,
+    *,
+    include_ldsr_variance_k5: bool,
+) -> tuple[CachedScoreMap, ...]:
+    names = _a2_candidate_names(include_ldsr_variance_k5)
+    central = bundle.ldsr_for_seed(3407)
+    computations: dict[str, Callable[[], torch.Tensor]] = {
+        "lr_reprojection_l1": lambda: lr_reprojection_l1_score(
+            central.tensor, pair.pair.lr, scale=4
+        ),
+        "three_model_disagreement": lambda: three_model_disagreement_score(
+            (bundle.bicubic.tensor, bundle.sen2srlite.tensor, central.tensor)
+        ),
+        "ldsr_variance_k5": lambda: ensemble_variance_score(
+            torch.stack(
+                [bundle.ldsr_for_seed(seed).tensor for seed in K5A_SEEDS], dim=0
+            )
+        ),
+    }
+    return tuple(
+        _load_or_compute_score(
+            name,
+            _a2_score_identity(
+                pair,
+                name=name,
+                input_sha256s=_a2_score_input_hashes(bundle, name),
+            ),
+            score_cache,
+            computations[name],
+        )
+        for name in names
+    )
+
+
+def _a2_prediction_evidence(
+    pair: LoadedCrosssensorPair,
+    item: CachedDevelopmentPrediction,
+    prediction_cache: PredictionCache,
+) -> dict[str, object]:
+    evidence = cache_entry_evidence(prediction_cache.root, item.identity)
+    if evidence["prediction_sha256"] != item.prediction_sha256:
+        raise RuntimeError("A2 prediction cache evidence differs from the prediction bundle")
+    return {
+        "sample_id": pair.pair.sample_id,
+        "model_name": item.model_name,
+        "seed": item.seed,
+        "cache_key": item.identity.key,
+        "identity": item.identity.as_dict(),
+        "prediction_sha256": item.prediction_sha256,
+        "files": evidence["files"],
+    }
+
+
+def _a2_score_record(
+    score: CachedScoreMap,
+    primary: RoiScoreDiagnostics,
+    sensitivity: RoiScoreDiagnostics,
+) -> dict[str, object]:
+    return {
+        "name": score.name,
+        "cache_key": score.identity.key,
+        "score_sha256": score.score_sha256,
+        "primary_window_9": _diagnostic_payload(primary),
+        "sensitivity_window_1": _diagnostic_payload(sensitivity),
+    }
+
+
+def _a2_roi_result(
+    pair: LoadedCrosssensorPair, diagnostic: RoiScoreDiagnostics
+) -> DevelopmentRoiResult:
+    metadata = pair.metadata
+    return DevelopmentRoiResult(
+        sample_id=metadata.sample_id,
+        spatial_group_id=metadata.spatial_group_id,
+        split=metadata.split,
+        days_between=metadata.days_between,
+        correlation_bin=metadata.correlation_bin,
+        selection_round=metadata.selection_round,
+        rho=diagnostic.rho,
+        constant_score=diagnostic.constant_score,
+        aurc_gain=diagnostic.aurc_gain,
+        high_risk_miss_rate_at_80=diagnostic.high_risk_miss_rate_at_80,
+    )
+
+
+def _descriptive_summary(
+    summary: object, results: Sequence[DevelopmentRoiResult]
+) -> dict[str, object]:
+    payload = asdict(summary)
+    payload["failure_reasons"] = list(payload["failure_reasons"])
+    payload["mean_rho_ci95"] = list(payload["mean_rho_ci95"])
+    payload["mean_aurc_gain_ci95"] = list(payload["mean_aurc_gain_ci95"])
+    payload.update(_distribution_evidence(results))
+    return payload
+
+
+def _distribution_evidence(
+    results: Sequence[DevelopmentRoiResult],
+) -> dict[str, object]:
+    rho = np.asarray([item.rho for item in results], dtype=np.float64)
+    gains = np.asarray([item.aurc_gain for item in results], dtype=np.float64)
+    return {
+        "median_rho": float(np.median(rho)),
+        "rho_quartiles": [float(value) for value in np.percentile(rho, (25, 75))],
+        "median_aurc_gain": float(np.median(gains)),
+        "aurc_gain_quartiles": [
+            float(value) for value in np.percentile(gains, (25, 75))
+        ],
+        "stratum_mean_rho": [
+            {
+                "days_between": day,
+                "correlation_bin": bin_index,
+                "mean_rho": float(
+                    np.mean(
+                        [
+                            item.rho
+                            for item in results
+                            if (item.days_between, item.correlation_bin)
+                            == (day, bin_index)
+                        ]
+                    )
+                ),
+            }
+            for day in (-1, 0, 1)
+            for bin_index in range(4)
+        ],
+    }
+
+
+def _sensitivity_summary(
+    results: Sequence[DevelopmentRoiResult], indices: np.ndarray
+) -> dict[str, object]:
+    rho = np.asarray([item.rho for item in results], dtype=np.float64)
+    gains = np.asarray([item.aurc_gain for item in results], dtype=np.float64)
+    rho_ci = np.percentile(rho[indices].mean(axis=1), (2.5, 97.5))
+    gain_ci = np.percentile(gains[indices].mean(axis=1), (2.5, 97.5))
+    return {
+        "selection_use": "descriptive_only",
+        "nonconstant_count": sum(not item.constant_score for item in results),
+        "mean_rho": float(rho.mean()),
+        "mean_rho_ci95": [float(value) for value in rho_ci],
+        "mean_aurc_gain": float(gains.mean()),
+        "mean_aurc_gain_ci95": [float(value) for value in gain_ci],
+        **_distribution_evidence(results),
+    }
+
+
+def _a2_result_and_audit(
+    sample_records: Sequence[dict[str, object]],
+    audit_groups: Sequence[dict[str, object]],
+    primary_results: Mapping[str, Sequence[DevelopmentRoiResult]],
+    sensitivity_results: Mapping[str, Sequence[DevelopmentRoiResult]],
+    *,
+    include_ldsr_variance_k5: bool,
+    code_revision: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    names = _a2_candidate_names(include_ldsr_variance_k5)
+    indices = score_selection.build_bootstrap_indices()
+    candidate_summaries: list[dict[str, object]] = []
+    primary_summary_payloads: list[dict[str, object]] = []
+    for name in names:
+        primary_summary = score_selection.summarize_candidate(
+            name, primary_results[name], bootstrap_indices=indices
+        )
+        primary_payload = _descriptive_summary(primary_summary, primary_results[name])
+        primary_summary_payloads.append(primary_payload)
+        candidate_summaries.append(
+            {
+                "name": name,
+                "operator_parameters": _a2_base_score_configuration(name),
+                "seeds": list(_a2_score_seeds(name)),
+                "primary_window_9": primary_payload,
+                "sensitivity_window_1": _sensitivity_summary(
+                    sensitivity_results[name], indices
+                ),
+            }
+        )
+    try:
+        selected = score_selection.freeze_score(primary_results)
+    except ValueError as exc:
+        if type(exc) is not ValueError or str(exc) != "no development score candidate is eligible":
+            raise
+        frozen_score = None
+        phase_decision = "stop_no_eligible_score"
+    else:
+        selected_summary = next(
+            item for item in primary_summary_payloads if item["name"] == selected.name
+        )
+        frozen_score = {
+            "name": selected.name,
+            "operator_parameters": _a2_base_score_configuration(selected.name),
+            "seeds": list(_a2_score_seeds(selected.name)),
+            "post_manifest_sha256": POST_MANIFEST_SHA256,
+            "code_revision": code_revision,
+            "cost_rank": selected.cost_rank,
+            "statistical_leader": selected.statistical_leader,
+            "indistinguishable_candidates": list(
+                selected.indistinguishable_candidates
+            ),
+            "selected_candidate_evidence": selected_summary,
+            "candidate_eligibility_evidence": primary_summary_payloads,
+        }
+        phase_decision = "freeze_score"
+    prediction_count = sum(len(group["prediction_entries"]) for group in audit_groups)
+    score_count = sum(len(group["score_entries"]) for group in audit_groups)
+    score_configuration = {
+        name: _a2_base_score_configuration(name) for name in names
+    }
+    result: dict[str, object] = {
+        "schema": A2_RESULT_SCHEMA,
+        "dataset_role": "development_score_selection_only",
+        "upstream": {
+            "post_manifest_sha256": POST_MANIFEST_SHA256,
+            "input_audit_sha256": INPUT_AUDIT_SHA256,
+        },
+        "code_revision": code_revision,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "scale": 4,
+        "sample_count": 120,
+        "statistical_unit": "roi",
+        "prediction_count": prediction_count,
+        "score_count": score_count,
+        "include_ldsr_variance_k5": include_ldsr_variance_k5,
+        "candidate_names": list(names),
+        "score_configuration": score_configuration,
+        "risk_configuration": {
+            "name": "local_l1_risk",
+            "primary_window": PRIMARY_RISK_WINDOW,
+            "sensitivity_window": SENSITIVITY_RISK_WINDOW,
+        },
+        "bootstrap": {
+            "algorithm": "numpy.PCG64",
+            "seed": score_selection.BOOTSTRAP_SEED,
+            "resamples": score_selection.BOOTSTRAP_RESAMPLES,
+            "ci_percentiles": [2.5, 97.5],
+        },
+        "selection_risk": "primary_window_9",
+        "candidate_summaries": candidate_summaries,
+        "frozen_score": frozen_score,
+        "phase_decision": phase_decision,
+        "samples": list(sample_records),
+    }
+    audit: dict[str, object] = {
+        "schema": A2_CACHE_AUDIT_SCHEMA,
+        "experiment_schema": A2_RESULT_SCHEMA,
+        "post_manifest_sha256": POST_MANIFEST_SHA256,
+        "input_audit_sha256": INPUT_AUDIT_SHA256,
+        "code_revision": code_revision,
+        "sample_count": 120,
+        "prediction_count": prediction_count,
+        "score_count": score_count,
+        "groups": list(audit_groups),
+    }
+    canonical_json(result)
+    canonical_json(audit)
+    return result, audit
+
+
+def evaluate_a2_development(
+    pairs: Sequence[LoadedCrosssensorPair],
+    bundles: Sequence[DevelopmentPredictionBundle],
+    *,
+    prediction_cache: PredictionCache,
+    score_cache: ScoreCache,
+    include_ldsr_variance_k5: bool,
+    code_revision: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Evaluate exactly 120 development ROI and freeze from primary R9 evidence."""
+
+    names = _a2_candidate_names(include_ldsr_variance_k5)
+    revision = _validate_code_revision(code_revision)
+    if not isinstance(prediction_cache, PredictionCache) or not isinstance(
+        score_cache, ScoreCache
+    ):
+        raise TypeError("A2 caches must be PredictionCache and ScoreCache values")
+    pair_values = _validate_a2_structure(
+        pairs, bundles, include_ldsr_variance_k5=include_ldsr_variance_k5
+    )
+    bundle_values = tuple(bundles)
+    sample_records: list[dict[str, object]] = []
+    audit_groups: list[dict[str, object]] = []
+    primary_results: dict[str, list[DevelopmentRoiResult]] = {
+        name: [] for name in names
+    }
+    sensitivity_results: dict[str, list[DevelopmentRoiResult]] = {
+        name: [] for name in names
+    }
+    for pair, bundle in zip(pair_values, bundle_values, strict=True):
+        _validate_a2_bundle_tensors(
+            pair, bundle, include_ldsr_variance_k5=include_ldsr_variance_k5
+        )
+        prediction_items = (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
+        prediction_entries = [
+            _a2_prediction_evidence(pair, item, prediction_cache)
+            for item in prediction_items
+        ]
+        scores = _build_a2_score_maps(
+            pair,
+            bundle,
+            score_cache,
+            include_ldsr_variance_k5=include_ldsr_variance_k5,
+        )
+        central = bundle.ldsr_for_seed(3407)
+        primary_risk = local_l1_risk(
+            central.tensor, pair.pair.hr, window=PRIMARY_RISK_WINDOW
+        )
+        sensitivity_risk = local_l1_risk(
+            central.tensor, pair.pair.hr, window=SENSITIVITY_RISK_WINDOW
+        )
+        score_records: list[dict[str, object]] = []
+        for score in scores:
+            primary = evaluate_roi_score(score.tensor, primary_risk)
+            sensitivity = evaluate_roi_score(score.tensor, sensitivity_risk)
+            primary_results[score.name].append(_a2_roi_result(pair, primary))
+            sensitivity_results[score.name].append(_a2_roi_result(pair, sensitivity))
+            score_records.append(_a2_score_record(score, primary, sensitivity))
+        sample_records.append(
+            {
+                "sample_id": pair.metadata.sample_id,
+                "spatial_group_id": pair.metadata.spatial_group_id,
+                "split": pair.metadata.split,
+                "days_between": pair.metadata.days_between,
+                "correlation_bin": pair.metadata.correlation_bin,
+                "selection_round": pair.metadata.selection_round,
+                "lr_tensor_sha256": tensor_sha256(pair.pair.lr),
+                "hr_tensor_sha256": tensor_sha256(pair.pair.hr),
+                "central_prediction_sha256": central.prediction_sha256,
+                "risks": {
+                    "primary_window_9": tensor_sha256(primary_risk),
+                    "sensitivity_window_1": tensor_sha256(sensitivity_risk),
+                },
+                "scores": score_records,
+            }
+        )
+        audit_groups.append(
+            {
+                "sample_id": pair.metadata.sample_id,
+                "spatial_group_id": pair.metadata.spatial_group_id,
+                "days_between": pair.metadata.days_between,
+                "correlation_bin": pair.metadata.correlation_bin,
+                "selection_round": pair.metadata.selection_round,
+                "prediction_entries": prediction_entries,
+                "score_entries": [
+                    _score_evidence(pair, score, score_cache) for score in scores
+                ],
+            }
+        )
+        del prediction_items, scores, central, primary_risk, sensitivity_risk
+    return _a2_result_and_audit(
+        sample_records,
+        audit_groups,
+        primary_results,
+        sensitivity_results,
+        include_ldsr_variance_k5=include_ldsr_variance_k5,
+        code_revision=revision,
+    )
+
+
+def _validate_a2_committed_structure(
+    pairs: Sequence[LoadedCrosssensorPair],
+    committed_result: Mapping[str, object],
+    committed_audit: Mapping[str, object],
+) -> tuple[tuple[LoadedCrosssensorPair, ...], bool, str, tuple[str, ...]]:
+    if committed_result.get("schema") != A2_RESULT_SCHEMA:
+        raise ValueError("committed A2 result schema is invalid")
+    if committed_audit.get("schema") != A2_CACHE_AUDIT_SCHEMA:
+        raise ValueError("committed A2 audit schema is invalid")
+    if committed_audit.get("experiment_schema") != A2_RESULT_SCHEMA:
+        raise ValueError("committed A2 audit experiment schema is invalid")
+    include = committed_result.get("include_ldsr_variance_k5")
+    names = _a2_candidate_names(include)  # type: ignore[arg-type]
+    revision = _validate_code_revision(committed_result.get("code_revision"))
+    if committed_audit.get("code_revision") != revision:
+        raise ValueError("committed A2 code revision differs between result and audit")
+    expected_upstream = {
+        "post_manifest_sha256": POST_MANIFEST_SHA256,
+        "input_audit_sha256": INPUT_AUDIT_SHA256,
+    }
+    if committed_result.get("upstream") != expected_upstream or any(
+        committed_audit.get(key) != value for key, value in expected_upstream.items()
+    ):
+        raise ValueError("committed A2 upstream provenance is invalid")
+    if committed_result.get("candidate_names") != list(names):
+        raise ValueError("committed A2 candidate names are invalid")
+    if committed_result.get("score_configuration") != {
+        name: _a2_base_score_configuration(name) for name in names
+    }:
+        raise ValueError("committed A2 score configuration is invalid")
+    candidate_summaries = committed_result.get("candidate_summaries")
+    if not isinstance(candidate_summaries, list) or len(candidate_summaries) != len(names):
+        raise ValueError("committed A2 candidate summaries are incomplete")
+    for candidate, name in zip(candidate_summaries, names, strict=True):
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("name") != name
+            or candidate.get("operator_parameters")
+            != _a2_base_score_configuration(name)
+            or candidate.get("seeds") != list(_a2_score_seeds(name))
+            or not isinstance(candidate.get("primary_window_9"), dict)
+            or not isinstance(candidate.get("sensitivity_window_1"), dict)
+        ):
+            raise ValueError("committed A2 candidate summary is invalid")
+    frozen = committed_result.get("frozen_score")
+    decision = committed_result.get("phase_decision")
+    if frozen is None:
+        if decision != "stop_no_eligible_score" or any(
+            candidate["primary_window_9"].get("eligible") is not False
+            for candidate in candidate_summaries
+        ):
+            raise ValueError("committed A2 no-eligible stop evidence is invalid")
+    else:
+        if not isinstance(frozen, dict) or decision != "freeze_score":
+            raise ValueError("committed A2 frozen score is invalid")
+        selected_name = frozen.get("name")
+        if (
+            type(selected_name) is not str
+            or selected_name not in names
+            or frozen.get("operator_parameters")
+            != _a2_base_score_configuration(selected_name)
+            or frozen.get("seeds") != list(_a2_score_seeds(selected_name))
+            or frozen.get("post_manifest_sha256") != POST_MANIFEST_SHA256
+            or frozen.get("code_revision") != revision
+            or not isinstance(frozen.get("selected_candidate_evidence"), dict)
+            or not isinstance(frozen.get("candidate_eligibility_evidence"), list)
+            or [
+                evidence.get("name")
+                for evidence in frozen["candidate_eligibility_evidence"]
+                if isinstance(evidence, dict)
+            ]
+            != list(names)
+        ):
+            raise ValueError("committed A2 frozen score provenance is invalid")
+    pair_values = _validate_a2_structure(
+        pairs, None, include_ldsr_variance_k5=include
+    )
+    samples = committed_result.get("samples")
+    groups = committed_audit.get("groups")
+    if not isinstance(samples, list) or len(samples) != 120:
+        raise ValueError("committed A2 result must contain exactly 120 samples")
+    if not isinstance(groups, list) or len(groups) != 120:
+        raise ValueError("committed A2 audit must contain exactly 120 groups")
+    prediction_count = 120 * len(_a2_prediction_slots(include))
+    score_count = 120 * len(names)
+    for payload, label in ((committed_result, "result"), (committed_audit, "audit")):
+        if payload.get("sample_count") != 120:
+            raise ValueError(f"committed A2 {label} sample count is invalid")
+        if payload.get("prediction_count") != prediction_count:
+            raise ValueError(f"committed A2 {label} prediction count is invalid")
+        if payload.get("score_count") != score_count:
+            raise ValueError(f"committed A2 {label} score count is invalid")
+    for pair, sample, group in zip(pair_values, samples, groups, strict=True):
+        expected = (
+            pair.metadata.sample_id,
+            pair.metadata.spatial_group_id,
+            pair.metadata.days_between,
+            pair.metadata.correlation_bin,
+            pair.metadata.selection_round,
+        )
+        if not isinstance(sample, dict) or (
+            sample.get("sample_id"),
+            sample.get("spatial_group_id"),
+            sample.get("days_between"),
+            sample.get("correlation_bin"),
+            sample.get("selection_round"),
+        ) != expected:
+            raise ValueError("committed A2 result sample order/membership is invalid")
+        if not isinstance(group, dict) or (
+            group.get("sample_id"),
+            group.get("spatial_group_id"),
+            group.get("days_between"),
+            group.get("correlation_bin"),
+            group.get("selection_round"),
+        ) != expected:
+            raise ValueError("committed A2 audit group order/membership is invalid")
+        score_records = sample.get("scores")
+        if not isinstance(score_records, list) or len(score_records) != len(names):
+            raise ValueError("committed A2 sample diagnostics are incomplete")
+        diagnostic_keys = {
+            "rho",
+            "constant_score",
+            "coverages",
+            "selective_mean_risks",
+            "aurc",
+            "random_aurc",
+            "aurc_gain",
+            "high_risk_miss_rate_at_80",
+        }
+        for score_record, name in zip(score_records, names, strict=True):
+            if (
+                not isinstance(score_record, dict)
+                or score_record.get("name") != name
+                or not isinstance(score_record.get("primary_window_9"), dict)
+                or set(score_record["primary_window_9"]) != diagnostic_keys
+                or not isinstance(score_record.get("sensitivity_window_1"), dict)
+                or set(score_record["sensitivity_window_1"]) != diagnostic_keys
+                or score_record["primary_window_9"].get("coverages")
+                != [index / 10 for index in range(1, 11)]
+                or score_record["sensitivity_window_1"].get("coverages")
+                != [index / 10 for index in range(1, 11)]
+                or len(score_record["primary_window_9"].get("selective_mean_risks", []))
+                != 10
+                or len(score_record["sensitivity_window_1"].get("selective_mean_risks", []))
+                != 10
+            ):
+                raise ValueError("committed A2 sample diagnostics are incomplete")
+    return pair_values, include, revision, names
+
+
+def _a2_canonical_identities(
+    pairs: Sequence[LoadedCrosssensorPair],
+    groups: Sequence[dict[str, object]],
+    *,
+    include_ldsr_variance_k5: bool,
+    names: Sequence[str],
+) -> tuple[
+    tuple[tuple[PredictionIdentity, ...], ...],
+    tuple[tuple[ScoreIdentity, ...], ...],
+]:
+    slots = _a2_prediction_slots(include_ldsr_variance_k5)
+    prediction_groups: list[tuple[PredictionIdentity, ...]] = []
+    score_groups: list[tuple[ScoreIdentity, ...]] = []
+    for pair, group in zip(pairs, groups, strict=True):
+        prediction_entries = group.get("prediction_entries")
+        score_entries = group.get("score_entries")
+        if not isinstance(prediction_entries, list) or len(prediction_entries) != len(slots):
+            raise ValueError("committed A2 prediction group is incomplete")
+        if not isinstance(score_entries, list) or len(score_entries) != len(names):
+            raise ValueError("committed A2 score group is incomplete")
+        canonical_predictions: list[PredictionIdentity] = []
+        prediction_sha256s: dict[tuple[str, int | None], str] = {}
+        for entry, (model_name, seed) in zip(prediction_entries, slots, strict=True):
+            if not isinstance(entry, dict):
+                raise ValueError("committed A2 prediction entry is invalid")
+            parsed = _prediction_identity_from_dict(entry.get("identity"))
+            provenance = dict(parsed.model_provenance)
+            if (
+                provenance.get("name") != model_name
+                or provenance.get("scale") != 4
+                or provenance.get("experiment_schema") != PREDICTION_EXPERIMENT_SCHEMA
+                or provenance.get("post_manifest_sha256") != POST_MANIFEST_SHA256
+                or provenance.get("input_audit_sha256") != INPUT_AUDIT_SHA256
+                or (seed is None and "seed" in provenance)
+                or (seed is not None and provenance.get("seed") != seed)
+            ):
+                raise ValueError("committed A2 prediction provenance is invalid")
+            canonical = build_identity(
+                provenance, pair.pair.source, pair.pair.sample_id, pair.pair.lr
+            )
+            digest = entry.get("prediction_sha256")
+            if (
+                parsed.as_dict() != canonical.as_dict()
+                or entry.get("sample_id") != pair.pair.sample_id
+                or entry.get("model_name") != model_name
+                or entry.get("seed") != seed
+                or entry.get("cache_key") != canonical.key
+                or type(digest) is not str
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise ValueError("committed A2 prediction identity/key/digest is invalid")
+            canonical_predictions.append(canonical)
+            prediction_sha256s[(model_name, seed)] = digest
+        expected_inputs = {
+            "lr_reprojection_l1": (prediction_sha256s[("ldsr-s2-x4", 3407)],),
+            "three_model_disagreement": (
+                prediction_sha256s[("bicubic-x4", None)],
+                prediction_sha256s[("sen2srlite-x4", None)],
+                prediction_sha256s[("ldsr-s2-x4", 3407)],
+            ),
+            "ldsr_variance_k5": tuple(
+                prediction_sha256s[("ldsr-s2-x4", seed)] for seed in K5A_SEEDS
+            )
+            if include_ldsr_variance_k5
+            else (),
+        }
+        canonical_scores: list[ScoreIdentity] = []
+        for entry, name in zip(score_entries, names, strict=True):
+            if not isinstance(entry, dict):
+                raise ValueError("committed A2 score entry is invalid")
+            canonical = _a2_score_identity(
+                pair, name=name, input_sha256s=expected_inputs[name]
+            )
+            parsed = _score_identity_from_dict(entry.get("identity"))
+            digest = entry.get("score_sha256")
+            if (
+                parsed.as_dict() != canonical.as_dict()
+                or entry.get("sample_id") != pair.pair.sample_id
+                or entry.get("name") != name
+                or entry.get("cache_key") != canonical.key
+                or type(digest) is not str
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise ValueError("committed A2 score identity/key/digest is invalid")
+            canonical_scores.append(canonical)
+        prediction_groups.append(tuple(canonical_predictions))
+        score_groups.append(tuple(canonical_scores))
+    return tuple(prediction_groups), tuple(score_groups)
+
+
+def _a2_bundle_from_cache(
+    pair: LoadedCrosssensorPair,
+    identities: Sequence[PredictionIdentity],
+    entries: Sequence[dict[str, object]],
+    prediction_cache: PredictionCache,
+    *,
+    include_ldsr_variance_k5: bool,
+) -> DevelopmentPredictionBundle:
+    records: list[CachedDevelopmentPrediction] = []
+    for identity, entry, (model_name, seed) in zip(
+        identities,
+        entries,
+        _a2_prediction_slots(include_ldsr_variance_k5),
+        strict=True,
+    ):
+        tensor = prediction_cache.get(identity)
+        if tensor is None:
+            raise RuntimeError("canonical A2 prediction cache entry is missing during replay")
+        digest = tensor_sha256(tensor)
+        if entry.get("prediction_sha256") != digest:
+            raise ValueError("committed A2 prediction logical tensor SHA is invalid")
+        record = CachedDevelopmentPrediction(
+            model_name=model_name,
+            seed=seed,
+            identity=identity,
+            prediction_sha256=digest,
+            tensor=tensor,
+        )
+        _validate_prediction_tensor(pair, record, expected_name=model_name, expected_seed=seed)
+        records.append(record)
+    return DevelopmentPredictionBundle(
+        sample_id=pair.pair.sample_id,
+        bicubic=records[0],
+        sen2srlite=records[1],
+        ldsr=tuple(records[2:]),
+    )
+
+
+def _a2_scores_from_cache(
+    pair: LoadedCrosssensorPair,
+    bundle: DevelopmentPredictionBundle,
+    identities: Sequence[ScoreIdentity],
+    entries: Sequence[dict[str, object]],
+    score_cache: ScoreCache,
+    names: Sequence[str],
+) -> tuple[CachedScoreMap, ...]:
+    records: list[CachedScoreMap] = []
+    for name, identity, entry in zip(names, identities, entries, strict=True):
+        expected = _a2_score_identity(
+            pair, name=name, input_sha256s=_a2_score_input_hashes(bundle, name)
+        )
+        if identity.as_dict() != expected.as_dict():
+            raise ValueError("committed A2 score identity differs from verified predictions")
+        tensor = score_cache.get(identity)
+        if tensor is None:
+            raise RuntimeError("canonical A2 score cache entry is missing during replay")
+        digest = tensor_sha256(tensor)
+        if entry.get("score_sha256") != digest:
+            raise ValueError("committed A2 score logical tensor SHA is invalid")
+        records.append(CachedScoreMap(name, identity, digest, tensor))
+    return tuple(records)
+
+
+def replay_a2_development(
+    pairs: Sequence[LoadedCrosssensorPair],
+    committed_result: Mapping[str, object],
+    committed_audit: Mapping[str, object],
+    prediction_cache: PredictionCache,
+    score_cache: ScoreCache,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Rebuild A2 from existing caches without any model, score compute, or write path."""
+
+    pair_values, include, revision, names = _validate_a2_committed_structure(
+        pairs, committed_result, committed_audit
+    )
+    groups = committed_audit["groups"]
+    prediction_groups, score_identity_groups = _a2_canonical_identities(
+        pair_values,
+        groups,
+        include_ldsr_variance_k5=include,
+        names=names,
+    )
+    prediction_identities = tuple(
+        identity for group in prediction_groups for identity in group
+    )
+    score_identities = tuple(
+        identity for group in score_identity_groups for identity in group
+    )
+    before = _snapshot_all_cache_files(
+        prediction_identities,
+        score_identities,
+        prediction_cache,
+        score_cache,
+    )
+    sample_records: list[dict[str, object]] = []
+    rebuilt_groups: list[dict[str, object]] = []
+    primary_results: dict[str, list[DevelopmentRoiResult]] = {
+        name: [] for name in names
+    }
+    sensitivity_results: dict[str, list[DevelopmentRoiResult]] = {
+        name: [] for name in names
+    }
+    for pair, group, prediction_ids, score_ids in zip(
+        pair_values, groups, prediction_groups, score_identity_groups, strict=True
+    ):
+        prediction_entries = group["prediction_entries"]
+        score_entries = group["score_entries"]
+        bundle = _a2_bundle_from_cache(
+            pair,
+            prediction_ids,
+            prediction_entries,
+            prediction_cache,
+            include_ldsr_variance_k5=include,
+        )
+        scores = _a2_scores_from_cache(
+            pair, bundle, score_ids, score_entries, score_cache, names
+        )
+        central = bundle.ldsr_for_seed(3407)
+        primary_risk = local_l1_risk(
+            central.tensor, pair.pair.hr, window=PRIMARY_RISK_WINDOW
+        )
+        sensitivity_risk = local_l1_risk(
+            central.tensor, pair.pair.hr, window=SENSITIVITY_RISK_WINDOW
+        )
+        rebuilt_score_records: list[dict[str, object]] = []
+        for score in scores:
+            primary = evaluate_roi_score(score.tensor, primary_risk)
+            sensitivity = evaluate_roi_score(score.tensor, sensitivity_risk)
+            primary_results[score.name].append(_a2_roi_result(pair, primary))
+            sensitivity_results[score.name].append(_a2_roi_result(pair, sensitivity))
+            rebuilt_score_records.append(_a2_score_record(score, primary, sensitivity))
+        sample_records.append(
+            {
+                "sample_id": pair.metadata.sample_id,
+                "spatial_group_id": pair.metadata.spatial_group_id,
+                "split": pair.metadata.split,
+                "days_between": pair.metadata.days_between,
+                "correlation_bin": pair.metadata.correlation_bin,
+                "selection_round": pair.metadata.selection_round,
+                "lr_tensor_sha256": tensor_sha256(pair.pair.lr),
+                "hr_tensor_sha256": tensor_sha256(pair.pair.hr),
+                "central_prediction_sha256": central.prediction_sha256,
+                "risks": {
+                    "primary_window_9": tensor_sha256(primary_risk),
+                    "sensitivity_window_1": tensor_sha256(sensitivity_risk),
+                },
+                "scores": rebuilt_score_records,
+            }
+        )
+        rebuilt_groups.append(
+            {
+                "sample_id": pair.metadata.sample_id,
+                "spatial_group_id": pair.metadata.spatial_group_id,
+                "days_between": pair.metadata.days_between,
+                "correlation_bin": pair.metadata.correlation_bin,
+                "selection_round": pair.metadata.selection_round,
+                "prediction_entries": [
+                    _a2_prediction_evidence(pair, item, prediction_cache)
+                    for item in (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
+                ],
+                "score_entries": [
+                    _score_evidence(pair, score, score_cache) for score in scores
+                ],
+            }
+        )
+        del bundle, scores, central, primary_risk, sensitivity_risk
+    rebuilt_result, rebuilt_audit = _a2_result_and_audit(
+        sample_records,
+        rebuilt_groups,
+        primary_results,
+        sensitivity_results,
+        include_ldsr_variance_k5=include,
+        code_revision=revision,
+    )
+    if canonical_json(rebuilt_result) != canonical_json(dict(committed_result)):
+        raise ValueError("rebuilt A2 result differs from committed result")
+    if canonical_json(rebuilt_audit) != canonical_json(dict(committed_audit)):
+        raise ValueError("rebuilt A2 cache audit differs from committed audit")
+    after = _snapshot_all_cache_files(
+        prediction_identities,
+        score_identities,
+        prediction_cache,
+        score_cache,
+    )
+    if before != after:
+        raise RuntimeError("cache files changed during A2 replay")
     return rebuilt_result, rebuilt_audit
