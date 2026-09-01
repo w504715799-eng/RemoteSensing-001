@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import torch
@@ -296,7 +298,8 @@ def run_replay(args: argparse.Namespace) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    result = args.handler(args)
+    with redirect_stdout(sys.stderr):
+        result = args.handler(args)
     if not isinstance(result, Mapping):
         raise TypeError("Phase 2B2-B handler must return a mapping")
     print(canonical_json(dict(result)).decode("utf-8"))

@@ -362,3 +362,24 @@ def test_replay_reads_committed_bytes_without_model_factory(
     replayed = phase2b2b.run_replay(_args(tmp_path, "replay"))
 
     assert replayed == {"stage": "replay", "prediction_count": 12, "byte_identical": True}
+
+
+def test_main_keeps_handler_noise_out_of_canonical_stdout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def noisy_handler(_args: argparse.Namespace) -> dict[str, object]:
+        print("upstream model initialization")
+        return {"model_count": 3, "stage": "preflight"}
+
+    class Parser:
+        @staticmethod
+        def parse_args(_argv: list[str] | None) -> argparse.Namespace:
+            return argparse.Namespace(handler=noisy_handler)
+
+    monkeypatch.setattr(phase2b2b, "build_parser", Parser)
+
+    assert phase2b2b.main([]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == '{"model_count":3,"stage":"preflight"}\n'
+    assert captured.err == "upstream model initialization\n"
