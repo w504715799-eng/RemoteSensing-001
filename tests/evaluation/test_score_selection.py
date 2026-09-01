@@ -16,6 +16,7 @@ def _candidate(rho: float, gain: float) -> list[DevelopmentRoiResult]:
         DevelopmentRoiResult(
             sample_id=f"sample-{day}-{bin_index}-{round_index}",
             spatial_group_id=f"group-{day}-{bin_index}-{round_index}",
+            split="development",
             days_between=day,
             correlation_bin=bin_index,
             selection_round=round_index,
@@ -47,15 +48,45 @@ def test_candidate_must_pass_all_five_eligibility_rules() -> None:
     assert summary.failure_reasons == ()
 
 
+def test_candidate_rejects_records_outside_the_development_split() -> None:
+    results = _candidate(0.2, 0.03)
+    results[0] = replace(results[0], split="calibration")
+
+    with pytest.raises(ValueError, match="split.*development"):
+        summarize_candidate("lr_reprojection_l1", results)
+
+
+def test_summary_rejects_an_unregistered_candidate_name() -> None:
+    with pytest.raises(ValueError, match="unknown development score candidate"):
+        summarize_candidate("unregistered_score", _candidate(0.2, 0.03))
+
+
 def test_candidate_rejects_fewer_than_114_nonconstant_rois() -> None:
     results = _candidate(0.2, 0.03)
     for index in range(7):
-        results[index] = replace(results[index], constant_score=True)
+        results[index] = replace(results[index], constant_score=True, rho=0.0)
 
     summary = summarize_candidate("lr_reprojection_l1", results)
 
     assert summary.eligible is False
     assert summary.failure_reasons == ("fewer than 114 nonconstant ROI scores",)
+
+
+def test_candidate_rejects_a_constant_score_with_nonzero_rho() -> None:
+    results = _candidate(0.2, 0.03)
+    results[0] = replace(results[0], constant_score=True)
+
+    with pytest.raises(ValueError, match="constant_score.*rho.*zero"):
+        summarize_candidate("lr_reprojection_l1", results)
+
+
+def test_candidate_keeps_valid_constant_scores_as_zero_rho_observations() -> None:
+    results = [replace(item, constant_score=True, rho=0.0) for item in _candidate(0.2, 0.03)]
+
+    summary = summarize_candidate("lr_reprojection_l1", results)
+
+    assert summary.nonconstant_count == 0
+    assert summary.mean_rho == 0.0
 
 
 def test_candidate_rejects_rho_ci_with_lower_bound_equal_to_zero() -> None:

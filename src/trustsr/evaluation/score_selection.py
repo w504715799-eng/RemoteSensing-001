@@ -19,6 +19,7 @@ COST_ORDER = (
 class DevelopmentRoiResult:
     sample_id: str
     spatial_group_id: str
+    split: str
     days_between: int
     correlation_bin: int
     selection_round: int
@@ -66,6 +67,8 @@ def summarize_candidate(
     bootstrap_indices: np.ndarray | None = None,
 ) -> CandidateSummary:
     """Validate and summarize a candidate from all fixed development ROIs."""
+    if name not in COST_ORDER:
+        raise ValueError("unknown development score candidate")
     indices = build_bootstrap_indices() if bootstrap_indices is None else bootstrap_indices
     validated = _validate_candidate(results)
     _validate_bootstrap_indices(indices)
@@ -109,6 +112,10 @@ def _validate_candidate(
         raise ValueError("candidate must contain unique spatial_group_id values")
     cells: dict[tuple[int, int], list[int]] = {}
     for item in results:
+        if item.split != "development":
+            raise ValueError("candidate records must have split='development'")
+        if item.constant_score is True and item.rho != 0.0:
+            raise ValueError("constant_score records must have rho equal to zero")
         if item.days_between not in (-1, 0, 1):
             raise ValueError("days_between must be one of -1, 0, 1")
         if item.correlation_bin not in range(4):
