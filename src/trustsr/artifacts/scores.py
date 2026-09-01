@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -119,10 +121,35 @@ class ScoreCache:
 
     def put(self, identity: ScoreIdentity, score: torch.Tensor) -> str:
         validated = _validate_score(score)
-        existing = self._verified_load(identity)
-        if existing is not None:
-            return identity.key
-        return self._atomic_commit(identity, validated)
+        with self._identity_lock(identity):
+            existing = self._verified_load(identity)
+            if existing is not None:
+                return identity.key
+            return self._atomic_commit(identity, validated)
+
+    @contextmanager
+    def _identity_lock(self, identity: ScoreIdentity):
+        import fcntl
+
+        lock_path = self.root / f"{identity.key}.lock"
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise CacheIntegrityError("cannot safely open score cache lock") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise CacheIntegrityError("score cache lock must be a regular non-symlink file")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            except OSError as exc:
+                raise CacheIntegrityError("cannot acquire score cache lock") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
     def _atomic_commit(self, identity: ScoreIdentity, score: torch.Tensor) -> str:
         tensor_path, metadata_path = self._paths(identity)

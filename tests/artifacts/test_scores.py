@@ -1,8 +1,10 @@
 import hashlib
 import json
+import multiprocessing
 import os
 from dataclasses import replace
 from pathlib import Path
+from threading import BrokenBarrierError
 
 import pytest
 import torch
@@ -33,6 +35,10 @@ def _score() -> torch.Tensor:
 
 def _paths(root: Path, identity: ScoreIdentity) -> tuple[Path, Path]:
     return root / f"{identity.key}.safetensors", root / f"{identity.key}.json"
+
+
+def _concurrent_put(root: Path, identity: ScoreIdentity, score: torch.Tensor) -> None:
+    ScoreCache(root).put(identity, score)
 
 
 def test_score_identity_changes_for_input_order_or_operator() -> None:
@@ -184,6 +190,48 @@ def test_score_cache_never_overwrites_valid_entry(tmp_path: Path) -> None:
     cache.put(identity, torch.full((3, 4), 9.0, dtype=torch.float64))
     assert (tensor_path.read_bytes(), metadata_path.read_bytes()) == original_bytes
     assert torch.equal(cache.get(identity), _score())
+
+
+@pytest.mark.filterwarnings("ignore:This process.*multi-threaded.*:DeprecationWarning")
+def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = _identity()
+    first_score = _score()
+    second_score = torch.full((3, 4), 9.0, dtype=torch.float64)
+    context = multiprocessing.get_context("fork")
+    both_writers_ready = context.Barrier(2)
+    first_committed = context.Event()
+    original_commit = ScoreCache._atomic_commit
+
+    def coordinated_commit(
+        cache: ScoreCache, committed_identity: ScoreIdentity, score: torch.Tensor
+    ) -> str:
+        if torch.equal(score, first_score):
+            try:
+                both_writers_ready.wait(timeout=1)
+            except BrokenBarrierError:
+                pass
+            result = original_commit(cache, committed_identity, score)
+            first_committed.set()
+            return result
+        both_writers_ready.wait(timeout=1)
+        assert first_committed.wait(timeout=1)
+        return original_commit(cache, committed_identity, score)
+
+    monkeypatch.setattr(ScoreCache, "_atomic_commit", coordinated_commit)
+    first_writer = context.Process(target=_concurrent_put, args=(tmp_path, identity, first_score))
+    second_writer = context.Process(target=_concurrent_put, args=(tmp_path, identity, second_score))
+    first_writer.start()
+    second_writer.start()
+    first_writer.join(timeout=5)
+    second_writer.join(timeout=5)
+
+    assert not first_writer.is_alive()
+    assert not second_writer.is_alive()
+    assert first_writer.exitcode == 0
+    assert second_writer.exitcode == 0
+    assert torch.equal(ScoreCache(tmp_path).get(identity), first_score)
 
 
 def test_score_entry_evidence_is_verified_and_hashes_exact_files(tmp_path: Path) -> None:
