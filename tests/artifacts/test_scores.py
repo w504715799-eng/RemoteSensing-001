@@ -201,10 +201,12 @@ def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
     second_score = torch.full((3, 4), 9.0, dtype=torch.float64)
     context = multiprocessing.get_context("fork")
     first_acquired = context.Event()
+    parent_verified_exclusion = context.Event()
     second_attempting = context.Event()
     first_committed = context.Event()
     allow_first_release = context.Event()
-    observations = context.Queue()
+    first_released = context.Event()
+    second_acquired = context.Event()
     original_lock = ScoreCache._identity_lock
 
     @contextmanager
@@ -212,22 +214,21 @@ def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
         writer_name = multiprocessing.current_process().name
         if writer_name == "first-score-writer":
             with original_lock(cache, locked_identity):
-                observations.put("first-acquired")
                 first_acquired.set()
+                assert parent_verified_exclusion.wait(timeout=2)
                 assert second_attempting.wait(timeout=2)
                 yield
-                observations.put("first-committed")
                 first_committed.set()
                 assert allow_first_release.wait(timeout=2)
-            observations.put("first-released")
+            first_released.set()
             return
         assert writer_name == "second-score-writer"
         assert first_acquired.wait(timeout=2)
-        observations.put("second-attempting")
+        assert parent_verified_exclusion.wait(timeout=2)
         second_attempting.set()
         with original_lock(cache, locked_identity):
-            assert first_committed.is_set()
-            observations.put("second-acquired")
+            assert first_released.wait(timeout=2)
+            second_acquired.set()
             yield
 
     monkeypatch.setattr(ScoreCache, "_identity_lock", observed_lock)
@@ -239,27 +240,41 @@ def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
     )
     first_writer.start()
     second_writer.start()
+    try:
+        assert first_acquired.wait(timeout=2)
+        import fcntl
 
-    assert first_committed.wait(timeout=2)
-    tensor_path, metadata_path = _paths(tmp_path, identity)
-    first_committed_bytes = (tensor_path.read_bytes(), metadata_path.read_bytes())
-    allow_first_release.set()
-    first_writer.join(timeout=5)
-    second_writer.join(timeout=5)
+        lock_path = tmp_path / f"{identity.key}.lock"
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
+        parent_verified_exclusion.set()
+        assert first_committed.wait(timeout=2)
+        tensor_path, metadata_path = _paths(tmp_path, identity)
+        first_committed_bytes = (tensor_path.read_bytes(), metadata_path.read_bytes())
+        allow_first_release.set()
+        first_writer.join(timeout=5)
+        second_writer.join(timeout=5)
 
-    assert not first_writer.is_alive()
-    assert not second_writer.is_alive()
-    assert first_writer.exitcode == 0
-    assert second_writer.exitcode == 0
-    assert [observations.get(timeout=1) for _ in range(5)] == [
-        "first-acquired",
-        "second-attempting",
-        "first-committed",
-        "first-released",
-        "second-acquired",
-    ]
-    assert (tensor_path.read_bytes(), metadata_path.read_bytes()) == first_committed_bytes
-    assert torch.equal(ScoreCache(tmp_path).get(identity), first_score)
+        assert not first_writer.is_alive()
+        assert not second_writer.is_alive()
+        assert first_writer.exitcode == 0
+        assert second_writer.exitcode == 0
+        assert first_released.is_set()
+        assert second_acquired.is_set()
+        assert (tensor_path.read_bytes(), metadata_path.read_bytes()) == first_committed_bytes
+        assert torch.equal(ScoreCache(tmp_path).get(identity), first_score)
+    finally:
+        parent_verified_exclusion.set()
+        allow_first_release.set()
+        for writer in (first_writer, second_writer):
+            writer.join(timeout=1)
+            if writer.is_alive():
+                writer.terminate()
+                writer.join(timeout=1)
 
 
 def test_score_entry_evidence_is_verified_and_hashes_exact_files(tmp_path: Path) -> None:
