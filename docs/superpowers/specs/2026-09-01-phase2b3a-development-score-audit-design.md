@@ -1,7 +1,8 @@
 # Phase 2B3-A：Development-only 不确定性评分审计设计
 
 **日期：** 2026-09-01  
-**状态：** 已批准设计，待书面规格复核  
+**状态：** 书面规格已批准，进入实施计划
+
 **上位路线：** `docs/superpowers/specs/2026-08-26-trustworthy-sentinel2-sr-roadmap.md`  
 **直接前置阶段：** `docs/superpowers/specs/2026-08-31-phase2b2b-development-three-model-smoke.md`  
 **前置代码提交：** `2455c1e07686076561b181c753cc61a5ed440222`
