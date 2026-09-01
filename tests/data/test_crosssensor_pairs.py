@@ -19,6 +19,7 @@ from trustsr.data.crosssensor_pairs import (
     POST_MANIFEST_SHA256,
     load_crosssensor_pair,
     load_crosssensor_records,
+    select_development_records,
     select_development_smoke_records,
     select_input_smoke_records,
 )
@@ -39,6 +40,61 @@ def _eligible_records() -> list[dict[str, object]]:
         for split in SPLITS
         for bin_index in range(4)
     ]
+
+
+def _complete_research_records() -> tuple[dict[str, object], ...]:
+    rows = []
+    for split in ("development", "calibration", "internal_test"):
+        for days_between in (-1, 0, 1):
+            for bin_index in range(4):
+                for selection_round in range(1, 11):
+                    sample_id = f"{split}-{days_between}-{bin_index}-{selection_round}"
+                    rows.append(
+                        {
+                            "sample_id": sample_id,
+                            "split": split,
+                            "spatial_group_id": f"group-{sample_id}",
+                            "days_between": days_between,
+                            "correlation_bin": bin_index,
+                            "selection_round": selection_round,
+                        }
+                    )
+    return tuple(rows)
+
+
+def test_select_development_records_preserves_manifest_order_and_strata() -> None:
+    records = _complete_research_records()
+    selected = select_development_records(records)
+    assert len(selected) == 120
+    assert selected == tuple(row for row in records if row["split"] == "development")
+    assert len({row["spatial_group_id"] for row in selected}) == 120
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "duplicate_sample", "duplicate_group", "bad_day", "bad_bin", "bad_round"],
+)
+def test_select_development_records_rejects_broken_frozen_cells(mutation: str) -> None:
+    records = [dict(row) for row in _complete_research_records()]
+    development_index = next(
+        i for i, row in enumerate(records) if row["split"] == "development"
+    )
+    if mutation == "missing":
+        records.pop(development_index)
+    elif mutation == "duplicate_sample":
+        records[development_index + 1]["sample_id"] = records[development_index]["sample_id"]
+    elif mutation == "duplicate_group":
+        records[development_index + 1]["spatial_group_id"] = records[development_index][
+            "spatial_group_id"
+        ]
+    elif mutation == "bad_day":
+        records[development_index]["days_between"] = 2
+    elif mutation == "bad_bin":
+        records[development_index]["correlation_bin"] = 4
+    else:
+        records[development_index]["selection_round"] = 11
+    with pytest.raises(ValueError, match="development"):
+        select_development_records(records)
 
 
 def test_smoke_selection_has_four_bins_per_split_in_canonical_order() -> None:

@@ -26,6 +26,9 @@ NORMALIZATION_POLICY = "uint16_divide_10000_no_clip_v1"
 NODATA_POLICY = "uint16_sentinel_65535_reject_invalid_v1"
 SMOKE_SPLITS = ("calibration", "development", "internal_test")
 SMOKE_BINS = (0, 1, 2, 3)
+DEVELOPMENT_DAYS = (-1, 0, 1)
+DEVELOPMENT_BINS = (0, 1, 2, 3)
+DEVELOPMENT_ROUNDS = tuple(range(1, 11))
 _BANDS = ("B04", "B03", "B02", "B08")
 _BOUNDS_TOLERANCE_M = 1e-3
 
@@ -70,6 +73,36 @@ def _require_unique_strings(
         raise ValueError(f"smoke record {field} must be a non-empty string")
     if len(set(values)) != len(values):
         raise ValueError(f"smoke records require unique {field} values")
+
+
+def select_development_records(
+    records: Sequence[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    """Select and validate the frozen 120-record development set."""
+
+    selected = tuple(record for record in records if record.get("split") == "development")
+    if len(selected) != 120:
+        raise ValueError("development selection must contain exactly 120 records")
+    try:
+        _require_unique_strings(selected, "sample_id")
+        _require_unique_strings(selected, "spatial_group_id")
+    except ValueError as error:
+        raise ValueError(f"development selection is invalid: {error}") from error
+    cells: dict[tuple[int, int], list[int]] = {
+        (day, bin_index): []
+        for day in DEVELOPMENT_DAYS
+        for bin_index in DEVELOPMENT_BINS
+    }
+    for record in selected:
+        day = _require_integer(record, "days_between")
+        bin_index = _require_integer(record, "correlation_bin")
+        selection_round = _require_integer(record, "selection_round")
+        if (day, bin_index) not in cells:
+            raise ValueError("development record has an invalid stratum")
+        cells[(day, bin_index)].append(selection_round)
+    if any(tuple(sorted(rounds)) != DEVELOPMENT_ROUNDS for rounds in cells.values()):
+        raise ValueError("development strata must each contain selection rounds 1 through 10")
+    return selected
 
 
 def select_input_smoke_records(
