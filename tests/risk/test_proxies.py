@@ -106,3 +106,19 @@ def test_three_model_disagreement_rejects_mismatched_shapes_and_invalid_member()
         three_model_disagreement_score((valid, torch.zeros((4, 3, 2)), valid))
     with pytest.raises(ValueError):
         three_model_disagreement_score((valid, torch.zeros((4, 2, 2), dtype=torch.float64), valid))
+
+
+@pytest.mark.parametrize(
+    "predictions",
+    [None, 1, (item for item in ())],
+)
+def test_three_model_disagreement_rejects_non_sequence_containers(predictions) -> None:
+    with pytest.raises(ValueError):
+        three_model_disagreement_score(predictions)
+
+
+def test_three_model_disagreement_rejects_four_dimensional_tensor_container() -> None:
+    predictions = torch.zeros((3, 4, 2, 2), dtype=torch.float32)
+
+    with pytest.raises(ValueError):
+        three_model_disagreement_score(predictions)

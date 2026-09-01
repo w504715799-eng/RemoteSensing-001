@@ -43,6 +43,8 @@ def three_model_disagreement_score(
     predictions: Sequence[torch.Tensor],
 ) -> torch.Tensor:
     """Return per-pixel population variance averaged across RGBN bands."""
+    if isinstance(predictions, torch.Tensor) or not isinstance(predictions, Sequence):
+        raise ValueError("predictions must be a sequence of tensors")
     if len(predictions) != 3:
         raise ValueError("three_model_disagreement requires exactly three predictions")
     for index, prediction in enumerate(predictions):
@@ -53,4 +55,3 @@ def three_model_disagreement_score(
         [item.detach().to(device="cpu") for item in predictions], dim=0
     )
     return ensemble_variance_score(stacked).contiguous()
-
