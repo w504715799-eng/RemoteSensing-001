@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from trustsr.artifacts.predictions import PredictionCache, build_identity, tensor_sha256
-from trustsr.artifacts.scores import ScoreCache
+from trustsr.artifacts.scores import ScoreCache, ScoreIdentity, score_entry_evidence
 from trustsr.contracts import SRPair
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
@@ -20,6 +20,7 @@ from trustsr.data.crosssensor_pairs import (
     CrosssensorPairMetadata,
     LoadedCrosssensorPair,
 )
+from trustsr.evaluation import development_predictions, development_score_audit
 from trustsr.evaluation.development_predictions import (
     A1_SEEDS,
     K5A_SEEDS,
@@ -43,6 +44,7 @@ from trustsr.evaluation.score_diagnostics import (
     top_fraction_jaccard,
 )
 from trustsr.jsonio import canonical_json
+from trustsr.models import bicubic, ldsr_s2, sen2srlite
 
 
 def _small_loaded_pair(correlation_bin: int) -> LoadedCrosssensorPair:
@@ -484,6 +486,20 @@ def test_a1_replay_is_inference_free_and_byte_mtime_stable(
             raise AssertionError("A1 replay imported an LDSR implementation")
         return original_import(name, *args, **kwargs)
 
+    def prohibited(*_args, **_kwargs):
+        raise AssertionError("A1 replay touched a model, generation, or compute seam")
+
+    monkeypatch.setattr(bicubic, "BicubicX4", prohibited)
+    monkeypatch.setattr(sen2srlite, "SEN2SRLiteX4", prohibited)
+    monkeypatch.setattr(ldsr_s2, "LDSRS2X4", prohibited)
+    monkeypatch.setattr(development_predictions, "load_or_generate_prediction_bundle", prohibited)
+    monkeypatch.setattr(development_score_audit, "evaluate_a1_smoke", prohibited)
+    monkeypatch.setattr(development_score_audit, "build_a1_score_maps", prohibited)
+    monkeypatch.setattr(development_score_audit, "ensemble_variance_score", prohibited)
+    monkeypatch.setattr(development_score_audit, "lr_reprojection_l1_score", prohibited)
+    monkeypatch.setattr(development_score_audit, "three_model_disagreement_score", prohibited)
+    monkeypatch.setattr(PredictionCache, "put", prohibited)
+    monkeypatch.setattr(ScoreCache, "put", prohibited)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     rebuilt_result, rebuilt_audit = replay_a1_smoke(
@@ -597,3 +613,61 @@ def test_a1_replay_preserves_cache_integrity_failures_without_recompute(
 
     with pytest.raises((ValueError, RuntimeError), match="cache"):
         replay_a1_smoke(pairs, result, audit, prediction_cache, score_cache)
+
+
+def test_a1_replay_rejects_self_consistent_alternate_score_identity_before_mutation(
+    tmp_path: Path,
+) -> None:
+    pairs, result, audit, prediction_cache, score_cache = _committed_a1(tmp_path)
+    result = deepcopy(result)
+    audit = deepcopy(audit)
+    entry = audit["score_entries"][0]
+    canonical_key = entry["cache_key"]
+    canonical_paths = tuple(
+        score_cache.root / f"{canonical_key}{suffix}"
+        for suffix in (".json", ".safetensors", ".lock")
+    )
+    canonical_identity = ScoreIdentity(
+        score_name=entry["identity"]["score_name"],
+        score_schema_version=entry["identity"]["score_schema_version"],
+        sample_id=entry["identity"]["sample_id"],
+        input_sha256s=tuple(entry["identity"]["input_sha256s"]),
+        operator_parameters=entry["identity"]["operator_parameters"],
+    )
+    canonical_score = score_cache.get(canonical_identity)
+    assert canonical_score is not None
+    alternate_identity = ScoreIdentity(
+        score_name=canonical_identity.score_name,
+        score_schema_version=canonical_identity.score_schema_version,
+        sample_id=canonical_identity.sample_id,
+        input_sha256s=canonical_identity.input_sha256s,
+        operator_parameters={
+            **canonical_identity.operator_parameters,
+            "seed_count": 999,
+        },
+    )
+    alternate_score = (canonical_score + 0.25).contiguous()
+    alternate_sha256 = tensor_sha256(alternate_score)
+    score_cache.put(alternate_identity, alternate_score)
+    alternate_evidence = score_entry_evidence(score_cache.root, alternate_identity)
+    entry["identity"] = alternate_identity.as_dict()
+    entry["cache_key"] = alternate_identity.key
+    entry["score_sha256"] = alternate_sha256
+    entry["files"] = [
+        {
+            "filename": alternate_evidence[kind]["filename"],
+            "size_bytes": (score_cache.root / alternate_evidence[kind]["filename"]).stat().st_size,
+            "sha256": alternate_evidence[kind]["sha256"],
+        }
+        for kind in ("json", "safetensors")
+    ]
+    result["samples"][0]["scores"][0]["cache_key"] = alternate_identity.key
+    result["samples"][0]["scores"][0]["score_sha256"] = alternate_sha256
+    for path in canonical_paths:
+        path.unlink()
+    assert all(not path.exists() for path in canonical_paths)
+
+    with pytest.raises(ValueError):
+        replay_a1_smoke(pairs, result, audit, prediction_cache, score_cache)
+
+    assert all(not path.exists() for path in canonical_paths)

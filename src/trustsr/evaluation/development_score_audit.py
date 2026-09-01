@@ -192,22 +192,89 @@ def _validate_a1_inputs(
     return tuple(zip(pair_values, bundle_values, strict=True))
 
 
-def _score_identity(
-    pair: LoadedCrosssensorPair,
-    *,
-    name: str,
-    inputs: Sequence[CachedDevelopmentPrediction],
-    parameters: Mapping[str, str | int | float | bool | None],
+def _score_operator_parameters(
+    pair: LoadedCrosssensorPair, name: str
+) -> dict[str, str | int | float | bool | None]:
+    parameters: dict[str, dict[str, str | int | float | bool | None]] = {
+        SCORE_NAMES[0]: {
+            "algorithm": "ensemble_variance_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "seed_first": K5A_SEEDS[0],
+            "seed_last": K5A_SEEDS[-1],
+            "seed_count": len(K5A_SEEDS),
+        },
+        SCORE_NAMES[1]: {
+            "algorithm": "ensemble_variance_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "seed_first": K5B_SEEDS[0],
+            "seed_last": K5B_SEEDS[-1],
+            "seed_count": len(K5B_SEEDS),
+        },
+        SCORE_NAMES[2]: {
+            "algorithm": "ensemble_variance_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "seed_first": A1_SEEDS[0],
+            "seed_last": A1_SEEDS[-1],
+            "seed_count": len(A1_SEEDS),
+        },
+        SCORE_NAMES[3]: {
+            "algorithm": "lr_reprojection_l1_score",
+            "downsample_mode": "area",
+            "scale": 4,
+            "upsample_mode": "repeat_interleave",
+        },
+        SCORE_NAMES[4]: {
+            "algorithm": "three_model_disagreement_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "model_order": "bicubic-x4,sen2srlite-x4,ldsr-s2-x4",
+        },
+    }
+    try:
+        selected = parameters[name]
+    except KeyError as exc:
+        raise ValueError("unknown A1 score name") from exc
+    return {**selected, "lr_sha256": tensor_sha256(pair.pair.lr)}
+
+
+def _score_identity_from_hashes(
+    pair: LoadedCrosssensorPair, *, name: str, input_sha256s: Sequence[str]
 ) -> ScoreIdentity:
     return ScoreIdentity(
         score_name=name,
         score_schema_version=SCORE_SCHEMA_VERSION,
         sample_id=pair.pair.sample_id,
-        input_sha256s=tuple(item.prediction_sha256 for item in inputs),
-        operator_parameters={
-            **parameters,
-            "lr_sha256": tensor_sha256(pair.pair.lr),
-        },
+        input_sha256s=tuple(input_sha256s),
+        operator_parameters=_score_operator_parameters(pair, name),
+    )
+
+
+def _score_input_groups(
+    bundle: DevelopmentPredictionBundle,
+) -> tuple[tuple[CachedDevelopmentPrediction, ...], ...]:
+    central = bundle.ldsr_for_seed(3407)
+    return (
+        tuple(bundle.ldsr_for_seed(seed) for seed in K5A_SEEDS),
+        tuple(bundle.ldsr_for_seed(seed) for seed in K5B_SEEDS),
+        tuple(bundle.ldsr_for_seed(seed) for seed in A1_SEEDS),
+        (central,),
+        (bundle.bicubic, bundle.sen2srlite, central),
+    )
+
+
+def _expected_score_identities(
+    pair: LoadedCrosssensorPair, bundle: DevelopmentPredictionBundle
+) -> tuple[ScoreIdentity, ...]:
+    return tuple(
+        _score_identity_from_hashes(
+            pair,
+            name=name,
+            input_sha256s=tuple(item.prediction_sha256 for item in inputs),
+        )
+        for name, inputs in zip(SCORE_NAMES, _score_input_groups(bundle), strict=True)
     )
 
 
@@ -242,87 +309,23 @@ def build_a1_score_maps(
     k5a = tuple(bundle.ldsr_for_seed(seed) for seed in K5A_SEEDS)
     k5b = tuple(bundle.ldsr_for_seed(seed) for seed in K5B_SEEDS)
     k25 = tuple(bundle.ldsr_for_seed(seed) for seed in A1_SEEDS)
-    specifications: tuple[
-        tuple[
-            str,
-            tuple[CachedDevelopmentPrediction, ...],
-            dict[str, str | int | float | bool | None],
-            Callable[[], torch.Tensor],
-        ],
-        ...,
-    ] = (
-        (
-            SCORE_NAMES[0],
-            k5a,
-            {
-                "algorithm": "ensemble_variance_score",
-                "band_reduction": "mean",
-                "correction": 0,
-                "seed_first": K5A_SEEDS[0],
-                "seed_last": K5A_SEEDS[-1],
-                "seed_count": len(K5A_SEEDS),
-            },
-            lambda: ensemble_variance_score(torch.stack([item.tensor for item in k5a], dim=0)),
-        ),
-        (
-            SCORE_NAMES[1],
-            k5b,
-            {
-                "algorithm": "ensemble_variance_score",
-                "band_reduction": "mean",
-                "correction": 0,
-                "seed_first": K5B_SEEDS[0],
-                "seed_last": K5B_SEEDS[-1],
-                "seed_count": len(K5B_SEEDS),
-            },
-            lambda: ensemble_variance_score(torch.stack([item.tensor for item in k5b], dim=0)),
-        ),
-        (
-            SCORE_NAMES[2],
-            k25,
-            {
-                "algorithm": "ensemble_variance_score",
-                "band_reduction": "mean",
-                "correction": 0,
-                "seed_first": A1_SEEDS[0],
-                "seed_last": A1_SEEDS[-1],
-                "seed_count": len(A1_SEEDS),
-            },
-            lambda: ensemble_variance_score(torch.stack([item.tensor for item in k25], dim=0)),
-        ),
-        (
-            SCORE_NAMES[3],
-            (central,),
-            {
-                "algorithm": "lr_reprojection_l1_score",
-                "downsample_mode": "area",
-                "scale": 4,
-                "upsample_mode": "repeat_interleave",
-            },
-            lambda: lr_reprojection_l1_score(central.tensor, pair.pair.lr, scale=4),
-        ),
-        (
-            SCORE_NAMES[4],
-            (bundle.bicubic, bundle.sen2srlite, central),
-            {
-                "algorithm": "three_model_disagreement_score",
-                "band_reduction": "mean",
-                "correction": 0,
-                "model_order": "bicubic-x4,sen2srlite-x4,ldsr-s2-x4",
-            },
-            lambda: three_model_disagreement_score(
-                (bundle.bicubic.tensor, bundle.sen2srlite.tensor, central.tensor)
-            ),
+    computations: tuple[Callable[[], torch.Tensor], ...] = (
+        lambda: ensemble_variance_score(torch.stack([item.tensor for item in k5a], dim=0)),
+        lambda: ensemble_variance_score(torch.stack([item.tensor for item in k5b], dim=0)),
+        lambda: ensemble_variance_score(torch.stack([item.tensor for item in k25], dim=0)),
+        lambda: lr_reprojection_l1_score(central.tensor, pair.pair.lr, scale=4),
+        lambda: three_model_disagreement_score(
+            (bundle.bicubic.tensor, bundle.sen2srlite.tensor, central.tensor)
         ),
     )
     return tuple(
-        _load_or_compute_score(
-            name,
-            _score_identity(pair, name=name, inputs=inputs, parameters=parameters),
-            score_cache,
-            compute,
+        _load_or_compute_score(name, identity, score_cache, compute)
+        for name, identity, compute in zip(
+            SCORE_NAMES,
+            _expected_score_identities(pair, bundle),
+            computations,
+            strict=True,
         )
-        for name, inputs, parameters, compute in specifications
     )
 
 
@@ -339,6 +342,17 @@ def _evaluate_a1_sample(
     score_cache: ScoreCache,
 ) -> dict[str, object]:
     scores = build_a1_score_maps(pair, bundle, score_cache)
+    return _evaluate_a1_sample_from_scores(pair, bundle, scores)
+
+
+def _evaluate_a1_sample_from_scores(
+    pair: LoadedCrosssensorPair,
+    bundle: DevelopmentPredictionBundle,
+    scores: Sequence[CachedScoreMap],
+) -> dict[str, object]:
+    score_values = tuple(scores)
+    if tuple(score.name for score in score_values) != SCORE_NAMES:
+        raise ValueError("A1 cached score-map order is invalid")
     central = bundle.ldsr_for_seed(3407)
     primary = local_l1_risk(central.tensor, pair.pair.hr, window=PRIMARY_RISK_WINDOW)
     sensitivity = local_l1_risk(central.tensor, pair.pair.hr, window=SENSITIVITY_RISK_WINDOW)
@@ -352,7 +366,7 @@ def _evaluate_a1_sample(
                 evaluate_roi_score(score.tensor, sensitivity)
             ),
         }
-        for score in scores
+        for score in score_values
     ]
     return {
         "sample_id": pair.metadata.sample_id,
@@ -376,10 +390,10 @@ def _evaluate_a1_sample(
             },
         },
         "stability": {
-            "k5a_k5b_spearman": score_map_spearman(scores[0].tensor, scores[1].tensor),
-            "k5a_k25_spearman": score_map_spearman(scores[0].tensor, scores[2].tensor),
+            "k5a_k5b_spearman": score_map_spearman(score_values[0].tensor, score_values[1].tensor),
+            "k5a_k25_spearman": score_map_spearman(score_values[0].tensor, score_values[2].tensor),
             "k5a_k25_top10_jaccard": top_fraction_jaccard(
-                scores[0].tensor, scores[2].tensor, fraction=0.10
+                score_values[0].tensor, score_values[2].tensor, fraction=0.10
             ),
             "k5a_constant_score": bool(score_records[0]["primary_window_9"]["constant_score"]),
             "k5b_constant_score": bool(score_records[1]["primary_window_9"]["constant_score"]),
@@ -481,19 +495,17 @@ def _prediction_evidence(
 
 def _score_and_prediction_evidence_payload(
     validated: Sequence[tuple[LoadedCrosssensorPair, DevelopmentPredictionBundle]],
+    score_groups: Sequence[Sequence[CachedScoreMap]],
     score_cache: ScoreCache,
 ) -> dict[str, object]:
     prediction_entries: list[dict[str, object]] = []
     score_entries: list[dict[str, object]] = []
-    for pair, bundle in validated:
+    for (pair, bundle), scores in zip(validated, score_groups, strict=True):
         prediction_entries.extend(
             _prediction_evidence(pair, item)
             for item in (bundle.bicubic, bundle.sen2srlite, *bundle.ldsr)
         )
-        score_entries.extend(
-            _score_evidence(pair, score, score_cache)
-            for score in build_a1_score_maps(pair, bundle, score_cache)
-        )
+        score_entries.extend(_score_evidence(pair, score, score_cache) for score in scores)
     return {
         "schema": A1_CACHE_AUDIT_SCHEMA,
         "experiment_schema": A1_RESULT_SCHEMA,
@@ -507,16 +519,17 @@ def _score_and_prediction_evidence_payload(
     }
 
 
-def evaluate_a1_smoke(
-    pairs: Sequence[LoadedCrosssensorPair],
-    bundles: Sequence[DevelopmentPredictionBundle],
+def _build_a1_payloads_from_scores(
+    validated: Sequence[tuple[LoadedCrosssensorPair, DevelopmentPredictionBundle]],
+    score_groups: Sequence[Sequence[CachedScoreMap]],
     score_cache: ScoreCache,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """Evaluate the exact four canonical A1 ROIs into host-free JSON payloads."""
-
-    validated = _validate_a1_inputs(pairs, bundles)
+    score_values = tuple(tuple(group) for group in score_groups)
+    if len(score_values) != len(validated):
+        raise ValueError("A1 cached score groups do not match the canonical samples")
     sample_records = tuple(
-        _evaluate_a1_sample(pair, bundle, score_cache) for pair, bundle in validated
+        _evaluate_a1_sample_from_scores(pair, bundle, scores)
+        for (pair, bundle), scores in zip(validated, score_values, strict=True)
     )
     k5a_k5b = tuple(float(record["stability"]["k5a_k5b_spearman"]) for record in sample_records)
     k5a_k25 = tuple(float(record["stability"]["k5a_k25_spearman"]) for record in sample_records)
@@ -527,10 +540,24 @@ def evaluate_a1_smoke(
         sample_records,
         k5_statistically_stable=_is_k5_statistically_stable(k5a_k5b, k5a_k25, jaccards),
     )
-    audit = _score_and_prediction_evidence_payload(validated, score_cache)
+    audit = _score_and_prediction_evidence_payload(validated, score_values, score_cache)
     canonical_json(result)
     canonical_json(audit)
     return result, audit
+
+
+def evaluate_a1_smoke(
+    pairs: Sequence[LoadedCrosssensorPair],
+    bundles: Sequence[DevelopmentPredictionBundle],
+    score_cache: ScoreCache,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Evaluate the exact four canonical A1 ROIs into host-free JSON payloads."""
+
+    validated = _validate_a1_inputs(pairs, bundles)
+    score_groups = tuple(
+        build_a1_score_maps(pair, bundle, score_cache) for pair, bundle in validated
+    )
+    return _build_a1_payloads_from_scores(validated, score_groups, score_cache)
 
 
 def _require_committed_structure(
@@ -608,6 +635,28 @@ def _score_identity_from_dict(value: object) -> ScoreIdentity:
         raise ValueError("committed A1 score identity is invalid") from exc
 
 
+def _expected_score_identities_from_prediction_entries(
+    pair: LoadedCrosssensorPair, entries: Sequence[dict[str, object]]
+) -> tuple[ScoreIdentity, ...]:
+    if len(entries) != len(_MODEL_SEED_SLOTS):
+        raise ValueError("committed A1 prediction evidence count is invalid")
+    prediction_sha256s = tuple(entry.get("prediction_sha256") for entry in entries)
+    input_groups = (
+        prediction_sha256s[2:7],
+        prediction_sha256s[7:12],
+        prediction_sha256s[2:27],
+        (prediction_sha256s[2],),
+        (prediction_sha256s[0], prediction_sha256s[1], prediction_sha256s[2]),
+    )
+    try:
+        return tuple(
+            _score_identity_from_hashes(pair, name=name, input_sha256s=input_sha256s)
+            for name, input_sha256s in zip(SCORE_NAMES, input_groups, strict=True)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("committed A1 prediction logical SHA evidence is invalid") from exc
+
+
 def _committed_identities(
     pairs: Sequence[LoadedCrosssensorPair],
     committed_result: Mapping[str, object],
@@ -636,8 +685,9 @@ def _committed_identities(
     score_identities: list[ScoreIdentity] = []
     for pair_index, pair in enumerate(pair_values):
         start = pair_index * len(_MODEL_SEED_SLOTS)
+        pair_prediction_entries = prediction_entries[start : start + len(_MODEL_SEED_SLOTS)]
         for entry, (model_name, seed) in zip(
-            prediction_entries[start : start + len(_MODEL_SEED_SLOTS)],
+            pair_prediction_entries,
             _MODEL_SEED_SLOTS,
             strict=True,
         ):
@@ -653,10 +703,14 @@ def _committed_identities(
             ):
                 raise ValueError("committed A1 prediction audit order/seed/key is invalid")
             prediction_identities.append(identity)
+        expected_score_identities = _expected_score_identities_from_prediction_entries(
+            pair, pair_prediction_entries
+        )
         score_start = pair_index * len(SCORE_NAMES)
-        for entry, name in zip(
+        for entry, name, expected_identity in zip(
             score_entries[score_start : score_start + len(SCORE_NAMES)],
             SCORE_NAMES,
+            expected_score_identities,
             strict=True,
         ):
             if not isinstance(entry, dict):
@@ -668,10 +722,11 @@ def _committed_identities(
                 or entry.get("name") != name
                 or identity.score_name != name
                 or identity.sample_id != pair.pair.sample_id
+                or identity.as_dict() != expected_identity.as_dict()
                 or entry.get("cache_key") != identity.key
             ):
-                raise ValueError("committed A1 score audit order/key is invalid")
-            score_identities.append(identity)
+                raise ValueError("committed A1 score audit order/key/identity is invalid")
+            score_identities.append(expected_identity)
     return tuple(prediction_identities), tuple(score_identities), prediction_entries
 
 
@@ -762,6 +817,38 @@ def _bundles_from_prediction_cache(
     return tuple(bundles)
 
 
+def _load_existing_score_groups(
+    pairs: Sequence[LoadedCrosssensorPair],
+    bundles: Sequence[DevelopmentPredictionBundle],
+    identities: Sequence[ScoreIdentity],
+    entries: Sequence[dict[str, object]],
+    cache: ScoreCache,
+) -> tuple[tuple[CachedScoreMap, ...], ...]:
+    groups: list[tuple[CachedScoreMap, ...]] = []
+    for pair_index, (pair, bundle) in enumerate(zip(pairs, bundles, strict=True)):
+        start = pair_index * len(SCORE_NAMES)
+        expected_from_verified_predictions = _expected_score_identities(pair, bundle)
+        records: list[CachedScoreMap] = []
+        for name, identity, expected_identity, entry in zip(
+            SCORE_NAMES,
+            identities[start : start + len(SCORE_NAMES)],
+            expected_from_verified_predictions,
+            entries[start : start + len(SCORE_NAMES)],
+            strict=True,
+        ):
+            if identity.as_dict() != expected_identity.as_dict():
+                raise ValueError("committed A1 score identity differs from verified predictions")
+            score = cache.get(identity)
+            if score is None:
+                raise RuntimeError("canonical A1 score cache entry is missing during replay")
+            score_sha256 = tensor_sha256(score)
+            if entry.get("score_sha256") != score_sha256:
+                raise ValueError("committed A1 score logical tensor SHA is invalid")
+            records.append(CachedScoreMap(name, identity, score_sha256, score))
+        groups.append(tuple(records))
+    return tuple(groups)
+
+
 def replay_a1_smoke(
     pairs: Sequence[LoadedCrosssensorPair],
     committed_result: Mapping[str, object],
@@ -784,7 +871,18 @@ def replay_a1_smoke(
     bundles = _bundles_from_prediction_cache(
         pair_values, prediction_identities, entries, prediction_cache
     )
-    rebuilt_result, rebuilt_audit = evaluate_a1_smoke(pair_values, bundles, score_cache)
+    score_entries = committed_audit["score_entries"]
+    score_groups = _load_existing_score_groups(
+        pair_values,
+        bundles,
+        score_identities,
+        score_entries,
+        score_cache,
+    )
+    validated = _validate_a1_inputs(pair_values, bundles)
+    rebuilt_result, rebuilt_audit = _build_a1_payloads_from_scores(
+        validated, score_groups, score_cache
+    )
     if canonical_json(rebuilt_result) != canonical_json(dict(committed_result)):
         raise ValueError("rebuilt A1 result differs from committed result")
     if canonical_json(rebuilt_audit) != canonical_json(dict(committed_audit)):
