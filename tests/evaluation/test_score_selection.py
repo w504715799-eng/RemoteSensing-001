@@ -80,6 +80,14 @@ def test_candidate_rejects_a_constant_score_with_nonzero_rho() -> None:
         summarize_candidate("lr_reprojection_l1", results)
 
 
+def test_candidate_rejects_a_numpy_boolean_constant_score_flag() -> None:
+    results = _candidate(0.2, 0.03)
+    results[0] = replace(results[0], constant_score=np.bool_(True))
+
+    with pytest.raises(ValueError, match="constant_score.*bool"):
+        summarize_candidate("lr_reprojection_l1", results)
+
+
 def test_candidate_keeps_valid_constant_scores_as_zero_rho_observations() -> None:
     results = [replace(item, constant_score=True, rho=0.0) for item in _candidate(0.2, 0.03)]
 

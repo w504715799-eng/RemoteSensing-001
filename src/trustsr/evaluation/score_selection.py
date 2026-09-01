@@ -114,6 +114,8 @@ def _validate_candidate(
     for item in results:
         if item.split != "development":
             raise ValueError("candidate records must have split='development'")
+        if type(item.constant_score) is not bool:
+            raise ValueError("constant_score must be a built-in bool")
         if item.constant_score is True and item.rho != 0.0:
             raise ValueError("constant_score records must have rho equal to zero")
         if item.days_between not in (-1, 0, 1):
