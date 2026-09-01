@@ -317,13 +317,19 @@ and no audit process remains, the cloud instance can be paused. Never copy the
 
 ## Phase 2B2-B development three-model smoke
 
-Status: local implementation and all repository tests are complete; real cloud GPU
-acceptance is not yet complete. This phase will run bicubic, SEN2SRLite, and LDSR-S2 on exactly
-four frozen `development` samples, persist 12 identity-bound predictions, and then
-rebuild the deterministic result without model inference. It never computes
-calibration or internal_test metrics and is not a paper-result checkpoint.
+Status: Checkpoint A is complete. Real cloud acceptance ran bicubic, SEN2SRLite,
+and LDSR-S2 on exactly four frozen `development` samples (correlation bins 0--3),
+persisted 12 identity-bound predictions, and rebuilt the deterministic result by
+cache-only replay. The replay was byte-identical and no compute process remained
+after acceptance. It never computed calibration or `internal_test` metrics and is
+an engineering smoke checkpoint, not a paper-result checkpoint.
 
-Use the staged instructions in
-[`docs/phase2b2b-cloud-runbook.md`](docs/phase2b2b-cloud-runbook.md). Do not start
-the GPU until the local quality gates pass and the current reviewed commit is
-available on the cloud checkout.
+The committed host-free evidence is:
+
+- `artifacts/phase2b2b/sen2naipv2-development-three-model-smoke-v1.json`
+  (`sha256:864f312a1c409f718de0b2fbcd827f6fdabbbb2828a4fd0aed7069989ba1ffcb`)
+- `artifacts/phase2b2b/sen2naipv2-development-cache-audit-v1.json`
+  (`sha256:9e4d51bb80386576c985316dbab62d98b232771d81be7570809711e652ce1d6e`)
+
+The reproducible staged procedure remains in
+[`docs/phase2b2b-cloud-runbook.md`](docs/phase2b2b-cloud-runbook.md).
