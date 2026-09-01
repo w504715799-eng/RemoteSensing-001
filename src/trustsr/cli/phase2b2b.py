@@ -154,7 +154,7 @@ def _require_safe_output_directories(root: Path) -> None:
             raise ValueError("Phase 2B2-B output directory must be a directory")
 
 
-def _commit_identical_or_new(path: Path, payload: bytes, root: Path) -> bool:
+def _preflight_deterministic_output(path: Path, payload: bytes, root: Path) -> bool:
     _require_safe_derived_path(root, path)
     if path.exists() or path.is_symlink():
         if path.is_symlink() or not path.is_file():
@@ -162,19 +162,42 @@ def _commit_identical_or_new(path: Path, payload: bytes, root: Path) -> bool:
         if path.read_bytes() != payload:
             raise ValueError("existing deterministic output has different bytes")
         return True
+    return False
+
+
+def _commit_identical_or_new(path: Path, payload: bytes, root: Path) -> bool:
+    if _preflight_deterministic_output(path, payload, root):
+        return True
     atomic_write_bytes(path, payload)
     return False
 
 
+def _require_safe_model_directory(path: Path) -> Path:
+    if not path.is_absolute():
+        raise ValueError("model directory must be absolute")
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current = current / component
+        if current.is_symlink():
+            raise ValueError("model directory must not contain symlink components")
+    if not path.is_dir():
+        raise ValueError("model directory must be an existing directory")
+    return path
+
+
 def _model_factory(args: argparse.Namespace) -> tuple[SRModel, ...]:
+    sen2srlite_model_dir = _require_safe_model_directory(
+        Path(args.sen2srlite_model_dir)
+    )
+    ldsr_model_dir = _require_safe_model_directory(Path(args.ldsr_model_dir))
     from trustsr.models.bicubic import BicubicX4
     from trustsr.models.ldsr_s2 import LDSRS2X4
     from trustsr.models.sen2srlite import SEN2SRLiteX4
 
     return (
         BicubicX4(),
-        SEN2SRLiteX4.from_pretrained(Path(args.sen2srlite_model_dir), device="cpu"),
-        LDSRS2X4.from_pretrained(Path(args.ldsr_model_dir), device="cuda:0"),
+        SEN2SRLiteX4.from_pretrained(sen2srlite_model_dir, device="cpu"),
+        LDSRS2X4.from_pretrained(ldsr_model_dir, device="cuda:0"),
     )
 
 
@@ -260,6 +283,8 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
     audit_path = _result_directory(root) / _AUDIT_NAME
     _require_safe_derived_path(root, result_path)
     _require_safe_derived_path(root, audit_path)
+    _preflight_deterministic_output(result_path, result_payload, root)
+    _preflight_deterministic_output(audit_path, audit_payload, root)
     _commit_identical_or_new(result_path, result_payload, root)
     _commit_identical_or_new(audit_path, audit_payload, root)
     _atomic_json(_result_directory(root) / "smoke-runtime.json", runtime)

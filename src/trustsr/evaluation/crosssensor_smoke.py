@@ -73,6 +73,11 @@ def _cache_files(cache_root: Path, identity: PredictionIdentity) -> tuple[Path, 
     if not isinstance(cache_root, Path) or cache_root.is_symlink() or not cache_root.is_dir():
         raise ValueError("prediction cache root must be an existing non-symlink directory")
     paths = tuple(cache_root / f"{identity.key}{suffix}" for suffix in (".json", ".safetensors"))
+    named_paths = {
+        path for path in cache_root.iterdir() if path.name.startswith(f"{identity.key}.")
+    }
+    if named_paths != set(paths):
+        raise ValueError("named prediction cache entry must contain exactly two files")
     for path in paths:
         if path.is_symlink() or not path.is_file():
             raise ValueError("named prediction cache file must be a regular file")
@@ -248,11 +253,13 @@ def _evaluate_model(
         if prediction is None:
             if model is None:
                 raise ValueError(f"prediction cache is missing for {pair.sample_id!r}")
-            prediction = _validate_prediction(pair, model.predict(pair.lr))
-            cache.put(identity, prediction)
+            generated = _validate_prediction(pair, model.predict(pair.lr))
+            cache.put(identity, generated)
             prediction = cache.get(identity)
             if prediction is None:
                 raise RuntimeError("prediction cache disappeared after commit")
+            if not torch.equal(generated, prediction):
+                raise RuntimeError("prediction cache differs after commit")
         prediction = _validate_prediction(pair, prediction)
         metrics = _finite_metrics(metric_fn(pair, prediction), pair.sample_id)
         prediction_sha256 = tensor_sha256(prediction)

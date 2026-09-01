@@ -21,8 +21,7 @@ from trustsr.models.ldsr_assets import (
 )
 from trustsr.models.ldsr_backend import build_verified_backend
 from trustsr.models.protocols import JsonScalar
-
-OPENSR_MODEL_VERSION = "1.1.1"
+from trustsr.models.versions import OPENSR_MODEL_VERSION
 
 
 def _validate_configuration(

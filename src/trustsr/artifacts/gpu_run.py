@@ -20,8 +20,8 @@ from pathlib import Path
 import torch
 
 from trustsr.artifacts.predictions import canonical_json
-from trustsr.models.ldsr_s2 import OPENSR_MODEL_VERSION
 from trustsr.models.protocols import JsonScalar
+from trustsr.models.versions import OPENSR_MODEL_VERSION
 
 _GPU_COMMAND = [
     "nvidia-smi",

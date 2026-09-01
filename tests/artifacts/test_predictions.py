@@ -164,8 +164,12 @@ def test_metadata_has_no_paths_timestamps_pickle_or_temporary_files(tmp_path):
     assert not list(tmp_path.glob(".*.tmp"))
 
 
-def test_tensor_only_is_miss(tmp_path):
+@pytest.mark.parametrize("missing_suffix", [".json", ".safetensors"])
+def test_half_present_cache_is_integrity_error(tmp_path, missing_suffix):
     cache = PredictionCache(tmp_path)
     identity = _identity()
-    (tmp_path / f"{identity.key}.safetensors").write_bytes(b"orphan")
-    assert cache.get(identity) is None
+    cache.put(identity, torch.zeros((4, 8, 12)))
+    (tmp_path / f"{identity.key}{missing_suffix}").unlink()
+
+    with pytest.raises(CacheIntegrityError, match="without"):
+        cache.get(identity)

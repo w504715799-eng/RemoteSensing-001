@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -247,6 +249,23 @@ def test_compute_stage_rejects_symlinked_phase_output_before_gpu_or_pixels(
     assert tuple(outside.iterdir()) == ()
 
 
+@pytest.mark.parametrize("argument", ["sen2srlite_model_dir", "ldsr_model_dir"])
+def test_model_factory_rejects_symlinked_model_directory(
+    tmp_path: Path, argument: str
+) -> None:
+    (tmp_path / "models" / "sen2srlite").mkdir(parents=True)
+    (tmp_path / "models" / "ldsr").mkdir()
+    target = tmp_path / f"{argument}-target"
+    target.mkdir()
+    linked = tmp_path / f"{argument}-link"
+    linked.symlink_to(target, target_is_directory=True)
+    args = _args(tmp_path)
+    setattr(args, argument, linked)
+
+    with pytest.raises(ValueError, match="model directory.*symlink"):
+        phase2b2b._model_factory(args)
+
+
 def test_preflight_constructs_models_without_loading_pair_pixels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -330,6 +349,33 @@ def test_compute_stages_commit_deterministic_result(
     assert runtime["peak_memory_bytes"] == 7
 
 
+def test_smoke_preflights_both_deterministic_outputs_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = {"schema": "new-result"}
+    audit = {"schema": "new-audit"}
+    result_dir = tmp_path / "trustsr/phase2b2b/results" / POST_MANIFEST_SHA256
+    result_dir.mkdir(parents=True)
+    audit_path = result_dir / "development-cache-audit.json"
+    audit_path.write_bytes(canonical_json({"schema": "incompatible-audit"}))
+    monkeypatch.setattr(
+        phase2b2b,
+        "_run_compute",
+        lambda args, *, expected_sample_count: (
+            result,
+            audit,
+            {"peak_memory_bytes": 1, "duration_seconds": 1.0},
+            tmp_path,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="different bytes"):
+        phase2b2b.run_smoke(_args(tmp_path))
+
+    assert not (result_dir / "development-three-model-smoke.json").exists()
+    assert audit_path.read_bytes() == canonical_json({"schema": "incompatible-audit"})
+
+
 def test_replay_reads_committed_bytes_without_model_factory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -362,6 +408,40 @@ def test_replay_reads_committed_bytes_without_model_factory(
     replayed = phase2b2b.run_replay(_args(tmp_path, "replay"))
 
     assert replayed == {"stage": "replay", "prediction_count": 12, "byte_identical": True}
+
+
+def test_replay_cli_imports_without_model_adapters_in_fresh_process() -> None:
+    blocked = (
+        "trustsr.models.bicubic",
+        "trustsr.models.ldsr_s2",
+        "trustsr.models.sen2srlite",
+    )
+    script = f"""
+import importlib.abc
+import sys
+
+blocked = {blocked!r}
+
+class BlockModelAdapters(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname in blocked:
+            raise RuntimeError(f"replay imported model adapter: {{fullname}}")
+        return None
+
+sys.meta_path.insert(0, BlockModelAdapters())
+from trustsr.cli import phase2b2b
+assert not set(blocked).intersection(sys.modules)
+assert phase2b2b.build_parser().parse_args(["replay", "--help"]) is None
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_main_keeps_handler_noise_out_of_canonical_stdout(

@@ -122,6 +122,14 @@ def test_snapshot_cache_files_observes_size_mtime_and_digest_change(tmp_path: Pa
     assert before != after
 
 
+def test_named_cache_entry_rejects_extra_suffix(tmp_path: Path) -> None:
+    identity = _stored_identity(tmp_path)
+    (tmp_path / f"{identity.key}.unexpected").write_bytes(b"extra")
+
+    with pytest.raises(ValueError, match="exactly.*two"):
+        snapshot_cache_files(tmp_path, [identity])
+
+
 def _loaded_pairs() -> tuple[LoadedCrosssensorPair, ...]:
     result = []
     for bin_index in range(4):
@@ -236,6 +244,23 @@ def test_model_grid_metrics_use_reloaded_cache_tensor(tmp_path: Path) -> None:
     evaluate_development_smoke(_loaded_pairs(), models, tmp_path, metric_fn=metrics)
 
 
+def test_model_grid_rejects_cache_value_changed_during_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_get = PredictionCache.get
+
+    def changed_get(cache: PredictionCache, identity):
+        prediction = original_get(cache, identity)
+        if prediction is None:
+            return None
+        return (prediction + 0.01).contiguous()
+
+    monkeypatch.setattr(PredictionCache, "get", changed_get)
+
+    with pytest.raises(RuntimeError, match="differs after commit"):
+        evaluate_development_smoke(_loaded_pairs(), _models(), tmp_path, metric_fn=_metrics)
+
+
 @pytest.mark.parametrize(
     ("damage", "message"),
     [
@@ -275,6 +300,39 @@ def test_model_grid_rejects_contract_damage(
         evaluate_development_smoke(pairs, models, tmp_path, metric_fn=metric_fn)
 
 
+@pytest.mark.parametrize(
+    "damage",
+    ["dtype", "shape", "device", "nan", "range", "requires-grad", "noncontiguous"],
+)
+def test_model_grid_rejects_invalid_generated_prediction(
+    tmp_path: Path, damage: str
+) -> None:
+    models = _models()
+    prediction = torch.zeros((4, 8, 12), dtype=torch.float32)
+    if damage == "dtype":
+        prediction = prediction.to(torch.float64)
+    elif damage == "shape":
+        prediction = torch.zeros((4, 7, 12), dtype=torch.float32)
+    elif damage == "device":
+        prediction = torch.zeros((4, 8, 12), dtype=torch.float32, device="meta")
+    elif damage == "nan":
+        prediction[0, 0, 0] = float("nan")
+    elif damage == "range":
+        prediction[0, 0, 0] = 2.0
+    elif damage == "requires-grad":
+        prediction.requires_grad_(True)
+    else:
+        prediction = torch.zeros((4, 12, 8), dtype=torch.float32).transpose(1, 2)
+
+    def invalid_prediction(_lr: torch.Tensor) -> torch.Tensor:
+        return prediction
+
+    models[0].predict = invalid_prediction
+
+    with pytest.raises(ValueError, match="prediction"):
+        evaluate_development_smoke(_loaded_pairs(), models, tmp_path, metric_fn=_metrics)
+
+
 def test_replay_rebuilds_identical_outputs_without_models(tmp_path: Path) -> None:
     result, audit = evaluate_development_smoke(
         _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
@@ -288,7 +346,22 @@ def test_replay_rebuilds_identical_outputs_without_models(tmp_path: Path) -> Non
     assert rebuilt_audit == audit
 
 
-@pytest.mark.parametrize("target", ["result-schema", "audit-count", "cache-bytes"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "result-schema",
+        "result-model-order",
+        "result-provenance",
+        "audit-count",
+        "audit-extra-entry",
+        "audit-entry-order",
+        "audit-cache-key",
+        "audit-lr-digest",
+        "audit-prediction-digest",
+        "result-prediction-digest",
+        "cache-bytes",
+    ],
+)
 def test_replay_rejects_changed_evidence(tmp_path: Path, target: str) -> None:
     result, audit = evaluate_development_smoke(
         _loaded_pairs(), _models(), tmp_path, metric_fn=_metrics
@@ -297,8 +370,24 @@ def test_replay_rejects_changed_evidence(tmp_path: Path, target: str) -> None:
     damaged_audit = deepcopy(audit)
     if target == "result-schema":
         damaged_result["schema"] = "changed"
+    elif target == "result-model-order":
+        damaged_result["models"].reverse()
+    elif target == "result-provenance":
+        damaged_result["models"][0]["model_provenance"]["implementation"] = "changed"
     elif target == "audit-count":
         damaged_audit["prediction_count"] = 11
+    elif target == "audit-extra-entry":
+        damaged_audit["entries"].append(deepcopy(damaged_audit["entries"][0]))
+    elif target == "audit-entry-order":
+        damaged_audit["entries"].reverse()
+    elif target == "audit-cache-key":
+        damaged_audit["entries"][0]["cache_key"] = "0" * 64
+    elif target == "audit-lr-digest":
+        damaged_audit["entries"][0]["lr"]["sha256"] = "0" * 64
+    elif target == "audit-prediction-digest":
+        damaged_audit["entries"][0]["prediction_sha256"] = "0" * 64
+    elif target == "result-prediction-digest":
+        damaged_result["models"][0]["predictions"][0]["prediction_sha256"] = "0" * 64
     else:
         key = damaged_audit["entries"][0]["cache_key"]
         path = tmp_path / f"{key}.safetensors"

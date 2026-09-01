@@ -8,6 +8,10 @@ __pycache__/
 /data/
 /artifacts/*
 !/artifacts/datasets/
+!/artifacts/phase2b2b/
+/artifacts/phase2b2b/*
+!/artifacts/phase2b2b/sen2naipv2-development-cache-audit-v1.json
+!/artifacts/phase2b2b/sen2naipv2-development-three-model-smoke-v1.json
 /models/
 /checkpoints/
 *.ckpt

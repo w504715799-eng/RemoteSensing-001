@@ -211,10 +211,21 @@ class PredictionCache:
 
     def get(self, identity: PredictionIdentity) -> torch.Tensor | None:
         tensor_path, metadata_path = self._paths(identity.key)
-        if not metadata_path.exists():
+        tensor_present = tensor_path.exists() or tensor_path.is_symlink()
+        metadata_present = metadata_path.exists() or metadata_path.is_symlink()
+        if not tensor_present and not metadata_present:
             return None
-        if not tensor_path.exists():
-            raise CacheIntegrityError("cache metadata exists without tensor")
+        if tensor_present != metadata_present:
+            present = "tensor" if tensor_present else "metadata"
+            missing = "metadata" if tensor_present else "tensor"
+            raise CacheIntegrityError(f"cache {present} exists without {missing}")
+        if (
+            tensor_path.is_symlink()
+            or metadata_path.is_symlink()
+            or not tensor_path.is_file()
+            or not metadata_path.is_file()
+        ):
+            raise CacheIntegrityError("cache entry must contain regular non-symlink files")
         try:
             metadata = json.loads(metadata_path.read_bytes().decode("utf-8"))
             expected = {
