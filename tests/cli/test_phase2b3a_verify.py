@@ -7,13 +7,21 @@ import json
 import math
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from trustsr.cli import phase2b3a_verify
 from trustsr.data.crosssensor_pairs import POST_MANIFEST_SHA256
+from trustsr.evaluation import score_selection
 from trustsr.evaluation.crosssensor_smoke import INPUT_AUDIT_SHA256
+from trustsr.evaluation.development_score_audit import (
+    _descriptive_summary,
+    _sensitivity_summary,
+)
+from trustsr.evaluation.score_selection import DevelopmentRoiResult
 from trustsr.jsonio import canonical_json
 
 
@@ -161,15 +169,15 @@ def _summary(name: str, *, eligible: bool = True) -> dict[str, object]:
         "failure_reasons": [],
         "nonconstant_count": 120,
         "mean_rho": 0.75,
-        "mean_rho_ci95": [0.7, 0.8],
-        "mean_aurc_gain": 0.05,
-        "mean_aurc_gain_ci95": [0.01, 0.09],
+        "mean_rho_ci95": [0.75, 0.75],
+        "mean_aurc_gain": 0.05000000000000001,
+        "mean_aurc_gain_ci95": [0.05000000000000001, 0.05000000000000001],
         "positive_strata": 12,
-        "minimum_stratum_mean_rho": 0.7,
+        "minimum_stratum_mean_rho": 0.75,
         "median_rho": 0.75,
-        "rho_quartiles": [0.7, 0.8],
+        "rho_quartiles": [0.75, 0.75],
         "median_aurc_gain": 0.05,
-        "aurc_gain_quartiles": [0.01, 0.09],
+        "aurc_gain_quartiles": [0.05, 0.05],
         "stratum_mean_rho": [
             {
                 "days_between": day,
@@ -407,13 +415,16 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
                     "selection_use": "descriptive_only",
                     "nonconstant_count": 120,
                     "mean_rho": 0.75,
-                    "mean_rho_ci95": [0.7, 0.8],
-                    "mean_aurc_gain": 0.05,
-                    "mean_aurc_gain_ci95": [0.01, 0.09],
+                    "mean_rho_ci95": [0.75, 0.75],
+                    "mean_aurc_gain": 0.05000000000000001,
+                    "mean_aurc_gain_ci95": [
+                        0.05000000000000001,
+                        0.05000000000000001,
+                    ],
                     "median_rho": 0.75,
-                    "rho_quartiles": [0.7, 0.8],
+                    "rho_quartiles": [0.75, 0.75],
                     "median_aurc_gain": 0.05,
-                    "aurc_gain_quartiles": [0.01, 0.09],
+                    "aurc_gain_quartiles": [0.05, 0.05],
                     "stratum_mean_rho": [
                         {
                             "days_between": day,
@@ -436,7 +447,10 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
             "code_revision": "a" * 40,
             "cost_rank": 0,
             "statistical_leader": "lr_reprojection_l1",
-            "indistinguishable_candidates": ["lr_reprojection_l1"],
+            "indistinguishable_candidates": [
+                "lr_reprojection_l1",
+                "three_model_disagreement",
+            ],
             "selected_candidate_evidence": primary_summaries[0],
             "candidate_eligibility_evidence": primary_summaries,
         }
@@ -468,16 +482,8 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
             sample["hr_tensor_sha256"] = hr_sha256
             sample["central_prediction_sha256"] = predictions[2]["prediction_sha256"]
             sample["risks"] = {
-                "primary_window_9": {
-                    "name": "local_l1_risk",
-                    "window": 9,
-                    "risk_sha256": _digest(b"risk9"),
-                },
-                "sensitivity_window_1": {
-                    "name": "local_l1_risk",
-                    "window": 1,
-                    "risk_sha256": _digest(b"risk1"),
-                },
+                "primary_window_9": _digest(b"risk9"),
+                "sensitivity_window_1": _digest(b"risk1"),
             }
             sample["scores"] = []
             scores = []
@@ -594,13 +600,24 @@ import sys
 
 class BlockHeavyImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path, target=None):
-        if fullname == "rasterio" or fullname.startswith("trustsr.models"):
+        if (
+            fullname == "torch"
+            or fullname.startswith("torch.")
+            or fullname == "rasterio"
+            or fullname.startswith("trustsr.models")
+        ):
             raise RuntimeError(f"verifier imported prohibited module: {fullname}")
         return None
 
 sys.meta_path.insert(0, BlockHeavyImports())
 from trustsr.cli import phase2b3a_verify
-assert not any(name == "rasterio" or name.startswith("trustsr.models") for name in sys.modules)
+assert not any(
+    name == "torch"
+    or name.startswith("torch.")
+    or name == "rasterio"
+    or name.startswith("trustsr.models")
+    for name in sys.modules
+)
 assert phase2b3a_verify.build_parser().parse_args(["a1", "--help"]) is None
 """
     completed = subprocess.run(
@@ -635,6 +652,143 @@ def test_valid_bundle_writes_exact_canonical_acceptance(
     acceptance = getattr(phase2b3a_verify, f"verify_{phase}_bundle")(bundle)
     assert phase2b3a_verify.main([phase, "--bundle", str(bundle), "--output", str(output)]) == 0
     assert output.read_bytes() == canonical_json(acceptance)
+
+
+def test_a2_accepts_producer_sha_string_risk_references(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a2")
+
+    assert payloads["result"]["samples"][0]["risks"] == {
+        "primary_window_9": _digest(b"risk9"),
+        "sensitivity_window_1": _digest(b"risk1"),
+    }
+    assert phase2b3a_verify.verify_a2_bundle(bundle)["no_eligible_score"] is False
+
+
+def test_local_a2_recomputation_is_exactly_in_parity_with_producer_rules() -> None:
+    producer_results = [
+        DevelopmentRoiResult(
+            sample_id=f"development-{day}-{bin_index}-{selection_round}",
+            spatial_group_id=f"group-{day}-{bin_index}-{selection_round}",
+            split="development",
+            days_between=day,
+            correlation_bin=bin_index,
+            selection_round=selection_round,
+            rho=0.65 + selection_round / 100,
+            constant_score=False,
+            aurc_gain=0.02 + bin_index / 100,
+            high_risk_miss_rate_at_80=0.1,
+        )
+        for day in (-1, 0, 1)
+        for bin_index in range(4)
+        for selection_round in range(1, 11)
+    ]
+    verifier_results = [asdict(item) for item in producer_results]
+    indices = score_selection.build_bootstrap_indices()
+
+    assert np.array_equal(phase2b3a_verify._a2_bootstrap_indices(), indices)
+    producer_primary = score_selection.summarize_candidate(
+        "lr_reprojection_l1", producer_results, bootstrap_indices=indices
+    )
+    assert phase2b3a_verify._a2_primary_summary(
+        "lr_reprojection_l1", verifier_results, indices
+    ) == _descriptive_summary(producer_primary, producer_results)
+    assert phase2b3a_verify._a2_sensitivity_summary(
+        verifier_results, indices
+    ) == _sensitivity_summary(producer_results, indices)
+    producer_selection = score_selection.freeze_score(
+        {
+            "lr_reprojection_l1": producer_results,
+            "three_model_disagreement": producer_results,
+        }
+    )
+    verifier_summaries = [
+        phase2b3a_verify._a2_primary_summary(name, verifier_results, indices)
+        for name in ("lr_reprojection_l1", "three_model_disagreement")
+    ]
+    assert phase2b3a_verify._a2_selection(
+        {
+            "lr_reprojection_l1": verifier_results,
+            "three_model_disagreement": verifier_results,
+        },
+        verifier_summaries,
+        indices,
+    ) == {
+        "name": producer_selection.name,
+        "cost_rank": producer_selection.cost_rank,
+        "statistical_leader": producer_selection.statistical_leader,
+        "indistinguishable_candidates": list(
+            producer_selection.indistinguishable_candidates
+        ),
+    }
+
+
+def test_a2_accepts_exact_recomputed_no_eligible_decision(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a2")
+    result = payloads["result"]
+    indices = score_selection.build_bootstrap_indices()
+    for sample in result["samples"]:
+        for score in sample["scores"]:
+            for window in ("primary_window_9", "sensitivity_window_1"):
+                score[window].update(rho=0.0, constant_score=True, aurc_gain=-0.01)
+    for candidate in result["candidate_summaries"]:
+        name = candidate["name"]
+        primary_results = []
+        sensitivity_results = []
+        for sample in result["samples"]:
+            score = next(item for item in sample["scores"] if item["name"] == name)
+            common = {
+                key: sample[key]
+                for key in (
+                    "sample_id",
+                    "spatial_group_id",
+                    "split",
+                    "days_between",
+                    "correlation_bin",
+                    "selection_round",
+                )
+            }
+            for window, target in (
+                ("primary_window_9", primary_results),
+                ("sensitivity_window_1", sensitivity_results),
+            ):
+                target.append(
+                    DevelopmentRoiResult(
+                        **common,
+                        **{
+                            key: score[window][key]
+                            for key in (
+                                "rho",
+                                "constant_score",
+                                "aurc_gain",
+                                "high_risk_miss_rate_at_80",
+                            )
+                        },
+                    )
+                )
+        candidate["primary_window_9"] = _descriptive_summary(
+            score_selection.summarize_candidate(
+                name, primary_results, bootstrap_indices=indices
+            ),
+            primary_results,
+        )
+        candidate["sensitivity_window_1"] = _sensitivity_summary(
+            sensitivity_results, indices
+        )
+    result["frozen_score"] = None
+    result["phase_decision"] = "stop_no_eligible_score"
+    result_path = bundle / "phase2b3a-a2-result.json"
+    replay_path = bundle / "phase2b3a-a2-replay.json"
+    result_path.write_bytes(canonical_json(result))
+    payloads["replay"]["result_sha256"] = _digest(result_path.read_bytes())
+    replay_path.write_bytes(canonical_json(payloads["replay"]))
+    for path in (result_path, replay_path):
+        _refresh_manifest(bundle / "phase2b3a-bundle-manifest.json", path)
+
+    acceptance = phase2b3a_verify.verify_a2_bundle(bundle)
+    assert acceptance["no_eligible_score"] is True
+    assert acceptance["frozen_score"] is None
 
 
 def test_output_must_be_declared_direct_child_and_not_traverse_symlink(
@@ -716,6 +870,28 @@ def test_a1_bundle_mutations_fail_closed(tmp_path: Path, mutation: str, message:
         _refresh_manifest(manifest_path, result_path)
 
     with pytest.raises((ValueError, RuntimeError), match=message):
+        phase2b3a_verify.verify_a1_bundle(bundle)
+
+
+def test_a1_recomputes_stability_decision_from_per_roi_evidence(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a1")
+    result_path = bundle / "phase2b3a-a1-result.json"
+    replay_path = bundle / "phase2b3a-a1-replay.json"
+    manifest_path = bundle / "phase2b3a-bundle-manifest.json"
+    for sample in payloads["result"]["samples"]:
+        sample["stability"].update(
+            k5a_k5b_spearman=0.1,
+            k5a_k25_spearman=0.1,
+            k5a_k25_top10_jaccard=0.1,
+        )
+    result_path.write_bytes(canonical_json(payloads["result"]))
+    payloads["replay"]["result_sha256"] = _digest(result_path.read_bytes())
+    replay_path.write_bytes(canonical_json(payloads["replay"]))
+    _refresh_manifest(manifest_path, result_path)
+    _refresh_manifest(manifest_path, replay_path)
+
+    with pytest.raises(ValueError, match="stability|K=5"):
         phase2b3a_verify.verify_a1_bundle(bundle)
 
 
@@ -986,4 +1162,79 @@ def test_a2_requires_complete_exact_candidate_and_freeze_evidence(
     for path in (result_path, replay_path):
         _refresh_manifest(bundle / "phase2b3a-bundle-manifest.json", path)
     with pytest.raises(ValueError, match="A2|candidate|score|frozen|schema|runtime"):
+        phase2b3a_verify.verify_a2_bundle(bundle)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "sample_rho",
+        "nonconstant_count",
+        "rho_ci",
+        "positive_strata",
+        "minimum_stratum",
+        "failure_reasons",
+        "eligibility",
+        "sensitivity_mean",
+        "statistical_leader",
+        "indistinguishable",
+        "cost_choice",
+        "no_eligible_decision",
+    ],
+)
+def test_a2_recomputes_all_summary_and_frozen_decision_evidence(
+    tmp_path: Path, mutation: str
+) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a2")
+    result = payloads["result"]
+    primary = result["candidate_summaries"][0]["primary_window_9"]
+    frozen = result["frozen_score"]
+    if mutation == "sample_rho":
+        result["samples"][0]["scores"][0]["primary_window_9"]["rho"] = 0.25
+    elif mutation == "nonconstant_count":
+        primary["nonconstant_count"] = -1
+    elif mutation == "rho_ci":
+        primary["mean_rho_ci95"] = [-0.1, 0.8]
+    elif mutation == "positive_strata":
+        primary["positive_strata"] = -1
+    elif mutation == "minimum_stratum":
+        primary["minimum_stratum_mean_rho"] = -1.0
+    elif mutation == "failure_reasons":
+        primary["failure_reasons"] = ["fabricated"]
+    elif mutation == "eligibility":
+        primary["eligible"] = False
+    elif mutation == "sensitivity_mean":
+        result["candidate_summaries"][0]["sensitivity_window_1"]["mean_rho"] = 0.5
+    elif mutation == "statistical_leader":
+        frozen["statistical_leader"] = "three_model_disagreement"
+    elif mutation == "indistinguishable":
+        frozen["indistinguishable_candidates"] = ["lr_reprojection_l1"]
+    elif mutation == "cost_choice":
+        frozen.update(
+            name="three_model_disagreement",
+            operator_parameters=_score_configuration("three_model_disagreement"),
+            cost_rank=1,
+            indistinguishable_candidates=["three_model_disagreement"],
+            selected_candidate_evidence=result["candidate_summaries"][1][
+                "primary_window_9"
+            ],
+        )
+    else:
+        for summary in result["candidate_summaries"]:
+            summary["primary_window_9"].update(
+                eligible=False,
+                failure_reasons=["fabricated"],
+            )
+        result["frozen_score"] = None
+        result["phase_decision"] = "stop_no_eligible_score"
+    result_path = bundle / "phase2b3a-a2-result.json"
+    replay_path = bundle / "phase2b3a-a2-replay.json"
+    result_path.write_bytes(canonical_json(result))
+    payloads["replay"]["result_sha256"] = _digest(result_path.read_bytes())
+    replay_path.write_bytes(canonical_json(payloads["replay"]))
+    for path in (result_path, replay_path):
+        _refresh_manifest(bundle / "phase2b3a-bundle-manifest.json", path)
+
+    with pytest.raises(ValueError, match="A2|candidate|summary|frozen|decision"):
         phase2b3a_verify.verify_a2_bundle(bundle)

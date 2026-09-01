@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+import numpy as np
+
 from trustsr.jsonio import atomic_write_bytes, canonical_json
 
 POST_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a"
@@ -47,6 +49,14 @@ _SECRET_KEY = re.compile(
 )
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
+_A2_BOOTSTRAP_SEED = 23031
+_A2_BOOTSTRAP_RESAMPLES = 10_000
+_A2_ROI_COUNT = 120
+_A2_COST_ORDER = (
+    "lr_reprojection_l1",
+    "three_model_disagreement",
+    "ldsr_variance_k5",
+)
 _PREDICTION_COMMON = {
     "name",
     "scale",
@@ -675,6 +685,9 @@ def _verify_a1_result_audit_runtime_replay(
     observed = []
     sample_ids: set[object] = set()
     groups: set[object] = set()
+    k5a_k5b: list[float] = []
+    k5a_k25: list[float] = []
+    top10_jaccards: list[float] = []
     for sample in samples:
         sample = _require_exact_keys(
             sample,
@@ -737,6 +750,9 @@ def _verify_a1_result_audit_runtime_replay(
             for key in ("k5a_constant_score", "k5b_constant_score", "k25_constant_score")
         ):
             raise ValueError("A1 stability evidence is invalid")
+        k5a_k5b.append(float(stability["k5a_k5b_spearman"]))
+        k5a_k25.append(float(stability["k5a_k25_spearman"]))
+        top10_jaccards.append(float(stability["k5a_k25_top10_jaccard"]))
         if not all(
             _is_sha(sample[key])
             for key in ("lr_tensor_sha256", "hr_tensor_sha256", "central_prediction_sha256")
@@ -892,7 +908,19 @@ def _verify_a1_result_audit_runtime_replay(
     )
     include = result.get("include_ldsr_variance_k5")
     stable = result.get("k5_statistically_stable")
-    if type(include) is not bool or type(stable) is not bool or include is not stable:
+    recomputed_stable = bool(
+        statistics.median(k5a_k5b) >= 0.60
+        and min(k5a_k5b) >= 0.40
+        and statistics.median(k5a_k25) >= 0.80
+        and min(k5a_k25) >= 0.60
+        and statistics.median(top10_jaccards) >= 0.50
+    )
+    if (
+        type(include) is not bool
+        or type(stable) is not bool
+        or include is not recomputed_stable
+        or stable is not recomputed_stable
+    ):
         raise ValueError("A1 K=5 acceptance/stability decision is invalid")
     return {
         "schema": "trustsr.phase2b3a-development-smoke-acceptance.v1",
@@ -905,12 +933,197 @@ def _verify_a1_result_audit_runtime_replay(
     }
 
 
+def _a2_bootstrap_indices() -> np.ndarray:
+    rng = np.random.Generator(np.random.PCG64(_A2_BOOTSTRAP_SEED))
+    return rng.integers(
+        0,
+        _A2_ROI_COUNT,
+        size=(_A2_BOOTSTRAP_RESAMPLES, _A2_ROI_COUNT),
+        dtype=np.int64,
+    )
+
+
+def _a2_sorted_results(
+    results: Iterable[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    return sorted(
+        results,
+        key=lambda item: (
+            item["days_between"],
+            item["correlation_bin"],
+            item["selection_round"],
+        ),
+    )
+
+
+def _a2_distribution_evidence(
+    results: list[Mapping[str, object]],
+) -> dict[str, object]:
+    rho = np.asarray([item["rho"] for item in results], dtype=np.float64)
+    gains = np.asarray([item["aurc_gain"] for item in results], dtype=np.float64)
+    return {
+        "median_rho": float(np.median(rho)),
+        "rho_quartiles": [float(value) for value in np.percentile(rho, (25, 75))],
+        "median_aurc_gain": float(np.median(gains)),
+        "aurc_gain_quartiles": [
+            float(value) for value in np.percentile(gains, (25, 75))
+        ],
+        "stratum_mean_rho": [
+            {
+                "days_between": day,
+                "correlation_bin": bin_index,
+                "mean_rho": float(
+                    np.mean(
+                        [
+                            item["rho"]
+                            for item in results
+                            if (item["days_between"], item["correlation_bin"])
+                            == (day, bin_index)
+                        ]
+                    )
+                ),
+                "mean_aurc_gain": float(
+                    np.mean(
+                        [
+                            item["aurc_gain"]
+                            for item in results
+                            if (item["days_between"], item["correlation_bin"])
+                            == (day, bin_index)
+                        ]
+                    )
+                ),
+            }
+            for day in (-1, 0, 1)
+            for bin_index in range(4)
+        ],
+    }
+
+
+def _a2_primary_summary(
+    name: str,
+    results: list[Mapping[str, object]],
+    indices: np.ndarray,
+) -> dict[str, object]:
+    ordered = _a2_sorted_results(results)
+    rho = np.asarray([item["rho"] for item in ordered], dtype=np.float64)
+    gains = np.asarray([item["aurc_gain"] for item in ordered], dtype=np.float64)
+    rho_ci = np.percentile(rho[indices].mean(axis=1), (2.5, 97.5))
+    gain_ci = np.percentile(gains[indices].mean(axis=1), (2.5, 97.5))
+    stratum_means = np.asarray(
+        [
+            np.mean(
+                [
+                    item["rho"]
+                    for item in ordered
+                    if (item["days_between"], item["correlation_bin"])
+                    == (day, bin_index)
+                ]
+            )
+            for day in (-1, 0, 1)
+            for bin_index in range(4)
+        ],
+        dtype=np.float64,
+    )
+    nonconstant_count = sum(not item["constant_score"] for item in ordered)
+    positive_strata = int(np.count_nonzero(stratum_means > 0))
+    minimum_stratum_mean_rho = float(stratum_means.min())
+    failure_reasons = [
+        reason
+        for passed, reason in (
+            (nonconstant_count >= 114, "fewer than 114 nonconstant ROI scores"),
+            (rho_ci[0] > 0, "mean rho bootstrap lower bound is not greater than zero"),
+            (
+                gain_ci[0] > 0,
+                "mean AURC gain bootstrap lower bound is not greater than zero",
+            ),
+            (positive_strata >= 9, "fewer than 9 strata have positive mean rho"),
+            (
+                minimum_stratum_mean_rho >= -0.10,
+                "a stratum mean rho is below -0.10",
+            ),
+        )
+        if not passed
+    ]
+    return {
+        "name": name,
+        "eligible": not failure_reasons,
+        "failure_reasons": failure_reasons,
+        "nonconstant_count": nonconstant_count,
+        "mean_rho": float(rho.mean()),
+        "mean_rho_ci95": [float(value) for value in rho_ci],
+        "mean_aurc_gain": float(gains.mean()),
+        "mean_aurc_gain_ci95": [float(value) for value in gain_ci],
+        "positive_strata": positive_strata,
+        "minimum_stratum_mean_rho": minimum_stratum_mean_rho,
+        **_a2_distribution_evidence(results),
+    }
+
+
+def _a2_sensitivity_summary(
+    results: list[Mapping[str, object]],
+    indices: np.ndarray,
+) -> dict[str, object]:
+    rho = np.asarray([item["rho"] for item in results], dtype=np.float64)
+    gains = np.asarray([item["aurc_gain"] for item in results], dtype=np.float64)
+    rho_ci = np.percentile(rho[indices].mean(axis=1), (2.5, 97.5))
+    gain_ci = np.percentile(gains[indices].mean(axis=1), (2.5, 97.5))
+    return {
+        "selection_use": "descriptive_only",
+        "nonconstant_count": sum(not item["constant_score"] for item in results),
+        "mean_rho": float(rho.mean()),
+        "mean_rho_ci95": [float(value) for value in rho_ci],
+        "mean_aurc_gain": float(gains.mean()),
+        "mean_aurc_gain_ci95": [float(value) for value in gain_ci],
+        **_a2_distribution_evidence(results),
+    }
+
+
+def _a2_selection(
+    primary_results: Mapping[str, list[Mapping[str, object]]],
+    summaries: list[dict[str, object]],
+    indices: np.ndarray,
+) -> dict[str, object] | None:
+    eligible = [summary for summary in summaries if summary["eligible"]]
+    if not eligible:
+        return None
+    leader = max(eligible, key=lambda item: item["mean_rho"])
+    leader_results = _a2_sorted_results(primary_results[str(leader["name"])])
+    leader_rho = np.asarray([item["rho"] for item in leader_results], dtype=np.float64)
+    indistinguishable = {str(leader["name"])}
+    for candidate in eligible:
+        candidate_name = str(candidate["name"])
+        if candidate_name == leader["name"]:
+            continue
+        candidate_results = _a2_sorted_results(primary_results[candidate_name])
+        candidate_rho = np.asarray(
+            [item["rho"] for item in candidate_results], dtype=np.float64
+        )
+        difference_ci = np.percentile(
+            (leader_rho - candidate_rho)[indices].mean(axis=1), (2.5, 97.5)
+        )
+        if difference_ci[0] <= 0:
+            indistinguishable.add(candidate_name)
+    ordered_indistinguishable = [
+        name for name in _A2_COST_ORDER if name in indistinguishable
+    ]
+    chosen = min(ordered_indistinguishable, key=_A2_COST_ORDER.index)
+    return {
+        "name": chosen,
+        "cost_rank": _A2_COST_ORDER.index(chosen),
+        "statistical_leader": leader["name"],
+        "indistinguishable_candidates": ordered_indistinguishable,
+    }
+
+
 def _validate_a2_samples(
     result: Mapping[str, object],
     audit: Mapping[str, object],
     *,
     include_ldsr_variance_k5: bool,
-) -> None:
+) -> tuple[
+    dict[str, list[Mapping[str, object]]],
+    dict[str, list[Mapping[str, object]]],
+]:
     samples = result.get("samples")
     groups = audit.get("groups")
     if not isinstance(samples, list) or len(samples) != 120:
@@ -921,6 +1134,17 @@ def _validate_a2_samples(
     spatial_groups: set[object] = set()
     cells: Counter[tuple[object, object]] = Counter()
     rounds: dict[tuple[object, object], list[object]] = {}
+    names = (
+        "lr_reprojection_l1",
+        "three_model_disagreement",
+        *(("ldsr_variance_k5",) if include_ldsr_variance_k5 else ()),
+    )
+    primary_results: dict[str, list[Mapping[str, object]]] = {
+        name: [] for name in names
+    }
+    sensitivity_results: dict[str, list[Mapping[str, object]]] = {
+        name: [] for name in names
+    }
     keys = (
         "sample_id",
         "spatial_group_id",
@@ -962,16 +1186,8 @@ def _validate_a2_samples(
         risks = _require_exact_keys(
             sample["risks"], {"primary_window_9", "sensitivity_window_1"}, "A2 risks"
         )
-        for risk_name, window in (("primary_window_9", 9), ("sensitivity_window_1", 1)):
-            risk = _require_exact_keys(
-                risks[risk_name], {"name", "window", "risk_sha256"}, "A2 risk"
-            )
-            if risk != {
-                "name": "local_l1_risk",
-                "window": window,
-                "risk_sha256": risk["risk_sha256"],
-            } or not _is_sha(risk["risk_sha256"]):
-                raise ValueError("A2 risk evidence is invalid")
+        if not all(_is_sha(risks[name]) for name in risks):
+            raise ValueError("A2 risk evidence is invalid")
         if not all(
             _is_sha(sample[key])
             for key in ("lr_tensor_sha256", "hr_tensor_sha256", "central_prediction_sha256")
@@ -1053,6 +1269,29 @@ def _validate_a2_samples(
                 input_sha256s=inputs_by_name[name],
             )
             _validate_sample_score_reference(score, verified_score, name)
+            for window, target in (
+                ("primary_window_9", primary_results),
+                ("sensitivity_window_1", sensitivity_results),
+            ):
+                diagnostic = score[window]
+                if diagnostic["constant_score"] is True and diagnostic["rho"] != 0.0:
+                    raise ValueError("A2 constant-score evidence has nonzero rho")
+                target[name].append(
+                    {
+                        "sample_id": sample["sample_id"],
+                        "spatial_group_id": sample["spatial_group_id"],
+                        "split": sample["split"],
+                        "days_between": sample["days_between"],
+                        "correlation_bin": sample["correlation_bin"],
+                        "selection_round": sample["selection_round"],
+                        "rho": diagnostic["rho"],
+                        "constant_score": diagnostic["constant_score"],
+                        "aurc_gain": diagnostic["aurc_gain"],
+                        "high_risk_miss_rate_at_80": diagnostic[
+                            "high_risk_miss_rate_at_80"
+                        ],
+                    }
+                )
     expected_cells = {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
     if (
         len(sample_ids) != 120
@@ -1062,6 +1301,7 @@ def _validate_a2_samples(
         or any(sorted(rounds[cell]) != list(range(1, 11)) for cell in expected_cells)
     ):
         raise ValueError("A2 ROI identities or 12x10 strata are invalid")
+    return primary_results, sensitivity_results
 
 
 def _verify_a2_result_audit_runtime_replay(
@@ -1275,7 +1515,57 @@ def _verify_a2_result_audit_runtime_replay(
             != {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
         ):
             raise ValueError("A2 candidate summary/freeze evidence is invalid")
-    _validate_a2_samples(result, audit, include_ldsr_variance_k5=include)
+    primary_results, sensitivity_results = _validate_a2_samples(
+        result, audit, include_ldsr_variance_k5=include
+    )
+    indices = _a2_bootstrap_indices()
+    primary_summaries = [
+        _a2_primary_summary(name, primary_results[name], indices) for name in names
+    ]
+    expected_summaries = [
+        {
+            "name": name,
+            "operator_parameters": _score_configuration(name),
+            "seeds": list(range(3407, 3412))
+            if name == "ldsr_variance_k5"
+            else [3407],
+            "primary_window_9": primary,
+            "sensitivity_window_1": _a2_sensitivity_summary(
+                sensitivity_results[name], indices
+            ),
+        }
+        for name, primary in zip(names, primary_summaries, strict=True)
+    ]
+    if summaries != expected_summaries:
+        raise ValueError("A2 candidate summaries differ from recomputed ROI evidence")
+    selected = _a2_selection(primary_results, primary_summaries, indices)
+    if selected is None:
+        expected_decision = "stop_no_eligible_score"
+        expected_frozen = None
+    else:
+        selected_name = str(selected["name"])
+        expected_decision = "freeze_score"
+        expected_frozen = {
+            "name": selected_name,
+            "operator_parameters": _score_configuration(selected_name),
+            "seeds": list(range(3407, 3412))
+            if selected_name == "ldsr_variance_k5"
+            else [3407],
+            "post_manifest_sha256": POST_MANIFEST_SHA256,
+            "code_revision": result["code_revision"],
+            "cost_rank": selected["cost_rank"],
+            "statistical_leader": selected["statistical_leader"],
+            "indistinguishable_candidates": selected["indistinguishable_candidates"],
+            "selected_candidate_evidence": primary_summaries[
+                names.index(selected_name)
+            ],
+            "candidate_eligibility_evidence": primary_summaries,
+        }
+    if (
+        result.get("phase_decision") != expected_decision
+        or result.get("frozen_score") != expected_frozen
+    ):
+        raise ValueError("A2 frozen-score decision differs from recomputed evidence")
     runtime_sha256 = _sha256(runtime_bytes)
     if result.get("runtime_manifest_sha256") != runtime_sha256:
         raise ValueError("A2 runtime-manifest SHA reference is invalid")
@@ -1292,8 +1582,6 @@ def _verify_a2_result_audit_runtime_replay(
         audit_bytes=audit_bytes,
         runtime_bytes=runtime_bytes,
     )
-    frozen = result.get("frozen_score")
-    decision = result.get("phase_decision")
     acceptance: dict[str, object] = {
         "schema": "trustsr.phase2b3a-development-score-acceptance.v1",
         "digests": _bundle_digests(files),
@@ -1301,51 +1589,12 @@ def _verify_a2_result_audit_runtime_replay(
         "replay_pass": True,
         "development_only_pass": True,
     }
-    if decision == "freeze_score" and isinstance(frozen, dict):
-        frozen = _require_exact_keys(
-            frozen,
-            {
-                "name",
-                "operator_parameters",
-                "seeds",
-                "post_manifest_sha256",
-                "code_revision",
-                "cost_rank",
-                "statistical_leader",
-                "indistinguishable_candidates",
-                "selected_candidate_evidence",
-                "candidate_eligibility_evidence",
-            },
-            "A2 frozen score",
-        )
-        selected_name = frozen["name"]
-        expected_seeds = list(range(3407, 3412)) if selected_name == "ldsr_variance_k5" else [3407]
-        primary_evidence = [summary["primary_window_9"] for summary in summaries]
-        if (
-            selected_name not in names
-            or frozen["operator_parameters"] != _score_configuration(selected_name)
-            or frozen["seeds"] != expected_seeds
-            or frozen["post_manifest_sha256"] != POST_MANIFEST_SHA256
-            or frozen["code_revision"] != result["code_revision"]
-            or frozen["selected_candidate_evidence"] != primary_evidence[names.index(selected_name)]
-            or frozen["candidate_eligibility_evidence"] != primary_evidence
-            or frozen["cost_rank"] != names.index(selected_name)
-            or frozen["statistical_leader"] not in names
-            or not isinstance(frozen["indistinguishable_candidates"], list)
-            or frozen["indistinguishable_candidates"]
-            != [name for name in names if name in frozen["indistinguishable_candidates"]]
-            or selected_name not in frozen["indistinguishable_candidates"]
-        ):
-            raise ValueError("A2 frozen score provenance/selection evidence is invalid")
-        acceptance["frozen_score"] = frozen
+    if expected_frozen is not None:
+        acceptance["frozen_score"] = expected_frozen
         acceptance["no_eligible_score"] = False
-    elif decision == "stop_no_eligible_score" and frozen is None:
-        if any(summary["primary_window_9"]["eligible"] is not False for summary in summaries):
-            raise ValueError("A2 no-eligible stop lacks complete ineligibility evidence")
+    else:
         acceptance["frozen_score"] = None
         acceptance["no_eligible_score"] = True
-    else:
-        raise ValueError("A2 frozen-score/no-eligible decision is invalid")
     return acceptance
 
 

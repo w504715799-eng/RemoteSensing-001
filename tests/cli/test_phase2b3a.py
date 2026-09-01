@@ -599,9 +599,28 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
                 ),
             ),
         )
-        monkeypatch.setattr(phase2b3a, "_one_shot_bundles", lambda *args: iter(()))
+        built: list[tuple[str, tuple[int, ...]]] = []
+
+        def bundle_for_pair(pair, models, seeds, cache):
+            del models, cache
+            sample_id = pair.pair.sample_id
+            built.append((sample_id, seeds))
+            return sample_id, seeds
+
+        def consume_a1(passed_pairs, bundles, score_cache):
+            del score_cache
+            assert passed_pairs is pairs
+            assert bundles == tuple((pair.pair.sample_id, phase2b3a.A1_SEEDS) for pair in pairs)
+            assert built == [
+                (pair.pair.sample_id, phase2b3a.A1_SEEDS) for pair in pairs
+            ]
+            return {"include_ldsr_variance_k5": False}, {}
+
+        monkeypatch.setattr(phase2b3a, "_bundle_for_pair", bundle_for_pair)
         monkeypatch.setattr(
-            phase2b3a, "evaluate_a1_smoke", lambda *args: ({"include_ldsr_variance_k5": False}, {})
+            phase2b3a,
+            "evaluate_a1_smoke",
+            consume_a1,
         )
         monkeypatch.setattr(
             phase2b3a,
@@ -623,7 +642,10 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         outcome = phase2b3a.run_smoke(args)
         assert outcome["stage"] == "smoke" and outcome["sample_count"] == 4
     else:
-        pairs = tuple(object() for _ in range(120))
+        pairs = tuple(
+            SimpleNamespace(pair=SimpleNamespace(sample_id=f"sample-{index}"))
+            for index in range(120)
+        )
         monkeypatch.setattr(
             phase2b3a, "_verify_a1_cloud_acceptance", lambda context: (False, "c" * 64)
         )
@@ -632,7 +654,40 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         monkeypatch.setattr(
             phase2b3a, "_model_factory", lambda args: (object(), object(), object())
         )
-        monkeypatch.setattr(phase2b3a, "evaluate_a2_development", lambda *args, **kwargs: ({}, {}))
+        built = []
+
+        def bundle_for_pair(pair, models, seeds, cache):
+            del models, cache
+            sample_id = pair.pair.sample_id
+            built.append((sample_id, seeds))
+            return sample_id, seeds
+
+        def consume_a2(
+            passed_pairs,
+            bundles,
+            *,
+            prediction_cache,
+            score_cache,
+            include_ldsr_variance_k5,
+            code_revision,
+            ordered_development_sample_ids,
+        ):
+            del prediction_cache, score_cache
+            assert passed_pairs is pairs
+            assert iter(bundles) is bundles
+            expected = [(f"sample-{index}", (3407,)) for index in range(120)]
+            assert list(bundles) == expected
+            assert list(bundles) == []
+            assert built == expected
+            assert include_ldsr_variance_k5 is False
+            assert code_revision == "a" * 40
+            assert ordered_development_sample_ids == tuple(
+                f"sample-{index}" for index in range(120)
+            )
+            return {}, {}
+
+        monkeypatch.setattr(phase2b3a, "_bundle_for_pair", bundle_for_pair)
+        monkeypatch.setattr(phase2b3a, "evaluate_a2_development", consume_a2)
         outcome = phase2b3a.run_development(args)
         assert outcome["stage"] == "development" and outcome["sample_count"] == 120
 
