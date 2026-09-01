@@ -6,7 +6,9 @@ import argparse
 import json
 import math
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -20,9 +22,7 @@ from trustsr.evaluation.development_predictions import build_cache_provenance
 def test_parser_exposes_only_frozen_stages_and_no_arbitrary_selection() -> None:
     parser = phase2b3a.build_parser()
     subparsers = [
-        action
-        for action in parser._actions
-        if isinstance(action, argparse._SubParsersAction)
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     ]
 
     assert tuple(subparsers[0].choices) == phase2b3a.STAGES
@@ -32,6 +32,89 @@ def test_parser_exposes_only_frozen_stages_and_no_arbitrary_selection() -> None:
     assert "--limit" not in help_text
     assert "--sample-id" not in help_text
 
+    common = [
+        "preflight",
+        "--storage-root",
+        ".",
+        "--selection-manifest",
+        "selection.json",
+        "--selection-manifest-sha256",
+        "a" * 64,
+        "--input-audit",
+        "audit.json",
+        "--input-audit-sha256",
+        "b" * 64,
+        "--sen2srlite-model-dir",
+        "sen2",
+        "--ldsr-model-dir",
+        "ldsr",
+        "--project-root",
+        ".",
+    ]
+    with pytest.raises(SystemExit):
+        parser.parse_args(common)
+    parsed = parser.parse_args(
+        [
+            *common,
+            "--reviewed-commit",
+            "c" * 40,
+        ]
+    )
+    assert parsed.reviewed_commit == "c" * 40
+
+
+@pytest.mark.parametrize("revision", ["A" * 40, "a" * 39, "g" * 40])
+def test_parser_rejects_noncanonical_reviewed_commit(revision: str) -> None:
+    parser = phase2b3a.build_parser()
+    argv = [
+        "preflight",
+        "--storage-root",
+        ".",
+        "--selection-manifest",
+        "selection.json",
+        "--selection-manifest-sha256",
+        "a" * 64,
+        "--input-audit",
+        "audit.json",
+        "--input-audit-sha256",
+        "b" * 64,
+        "--sen2srlite-model-dir",
+        "sen2",
+        "--ldsr-model-dir",
+        "ldsr",
+        "--project-root",
+        ".",
+        "--reviewed-commit",
+        revision,
+    ]
+    with pytest.raises(SystemExit):
+        parser.parse_args(argv)
+
+
+@pytest.mark.parametrize("stage", ["replay", "development-replay"])
+def test_replay_parser_rejects_model_arguments(stage: str) -> None:
+    parser = phase2b3a.build_parser()
+    common = [
+        stage,
+        "--storage-root",
+        ".",
+        "--selection-manifest",
+        "selection.json",
+        "--selection-manifest-sha256",
+        "a" * 64,
+        "--input-audit",
+        "audit.json",
+        "--input-audit-sha256",
+        "b" * 64,
+        "--project-root",
+        ".",
+        "--reviewed-commit",
+        "c" * 40,
+    ]
+    assert not hasattr(parser.parse_args(common), "sen2srlite_model_dir")
+    with pytest.raises(SystemExit):
+        parser.parse_args([*common, "--sen2srlite-model-dir", "model"])
+
 
 def test_phase_directories_are_exactly_digest_addressed(tmp_path: Path) -> None:
     phase = tmp_path / "trustsr" / "phase2b3a"
@@ -40,12 +123,8 @@ def test_phase_directories_are_exactly_digest_addressed(tmp_path: Path) -> None:
     assert phase2b3a._prediction_cache_directory(tmp_path) == (
         phase / "predictions" / POST_MANIFEST_SHA256
     )
-    assert phase2b3a._score_cache_directory(tmp_path) == (
-        phase / "scores" / POST_MANIFEST_SHA256
-    )
-    assert phase2b3a._result_directory(tmp_path) == (
-        phase / "results" / POST_MANIFEST_SHA256
-    )
+    assert phase2b3a._score_cache_directory(tmp_path) == (phase / "scores" / POST_MANIFEST_SHA256)
+    assert phase2b3a._result_directory(tmp_path) == (phase / "results" / POST_MANIFEST_SHA256)
 
 
 @pytest.mark.parametrize(
@@ -60,12 +139,38 @@ def test_phase_directories_are_exactly_digest_addressed(tmp_path: Path) -> None:
 def test_resource_gate_uses_all_three_inclusive_frozen_bounds(
     peak: int, total: int, free: int, projected: float, expected: bool
 ) -> None:
-    assert phase2b3a._resource_gate_pass(
-        single_peak_memory_bytes=peak,
-        gpu_total_memory_bytes=total,
-        persistent_free_bytes=free,
-        projected_a2_uncached_seconds=projected,
-    ) is expected
+    assert (
+        phase2b3a._resource_gate_pass(
+            single_peak_memory_bytes=peak,
+            gpu_total_memory_bytes=total,
+            persistent_free_bytes=free,
+            projected_a2_uncached_seconds=projected,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("peak", "total", "free", "projected"),
+    [
+        (-1, 100, 10 * 1024**3, 1.0),
+        (1, -1, 10 * 1024**3, 1.0),
+        (1, 100, -1, 1.0),
+        (1, 100, 10 * 1024**3, -1.0),
+        (1, 100, 10 * 1024**3, math.nan),
+        (1, 100, 10 * 1024**3, math.inf),
+    ],
+)
+def test_resource_gate_rejects_invalid_measurements(
+    peak: int, total: int, free: int, projected: float
+) -> None:
+    with pytest.raises(ValueError, match="resource"):
+        phase2b3a._resource_gate_pass(
+            single_peak_memory_bytes=peak,
+            gpu_total_memory_bytes=total,
+            persistent_free_bytes=free,
+            projected_a2_uncached_seconds=projected,
+        )
 
 
 def test_projection_uses_median_duration_and_exact_missing_seed_count() -> None:
@@ -78,9 +183,7 @@ def test_projection_uses_median_duration_and_exact_missing_seed_count() -> None:
 @pytest.mark.parametrize("value", [-1.0, math.inf, math.nan])
 def test_projection_rejects_invalid_uncached_duration(value: float) -> None:
     with pytest.raises(ValueError, match="projection"):
-        phase2b3a._project_a2_uncached_seconds(
-            [value], missing_seed_predictions=1
-        )
+        phase2b3a._project_a2_uncached_seconds([value], missing_seed_predictions=1)
 
 
 def test_missing_seed_count_verifies_existing_cache_bytes_before_counting(
@@ -88,21 +191,85 @@ def test_missing_seed_count_verifies_existing_cache_bytes_before_counting(
 ) -> None:
     cache = PredictionCache(tmp_path)
     lr = torch.full((4, 2, 2), 0.25, dtype=torch.float32)
-    provenance = build_cache_provenance(
-        {"name": "ldsr-s2-x4", "scale": 4, "seed": 3407}
-    )
-    identity = build_identity(provenance, "source", "sample-1", lr)
+    provenance = build_cache_provenance({"name": "ldsr-s2-x4", "scale": 4, "seed": 3407})
+    identity = build_identity(provenance, phase2b3a._SOURCE, "sample-1", lr)
     cache.put(identity, torch.full((4, 8, 8), 0.5, dtype=torch.float32))
-    assert phase2b3a._existing_a2_seed_count(
-        tmp_path, ("sample-1",), (3407,)
-    ) == 1
+    assert (
+        phase2b3a._existing_a2_seed_count(
+            tmp_path,
+            ({"sample_id": "sample-1"},),
+            (3407,),
+            {3407: provenance},
+            lambda record: lr,
+        )
+        == 1
+    )
     tensor_path = tmp_path / f"{identity.key}.safetensors"
     payload = bytearray(tensor_path.read_bytes())
     payload[-1] ^= 1
     tensor_path.write_bytes(payload)
 
     with pytest.raises(RuntimeError):
-        phase2b3a._existing_a2_seed_count(tmp_path, ("sample-1",), (3407,))
+        phase2b3a._existing_a2_seed_count(
+            tmp_path,
+            ({"sample_id": "sample-1"},),
+            (3407,),
+            {3407: provenance},
+            lambda record: lr,
+        )
+
+
+def test_stale_complete_cache_entry_does_not_reduce_missing_count(tmp_path: Path) -> None:
+    cache = PredictionCache(tmp_path)
+    lr = torch.full((4, 2, 2), 0.25, dtype=torch.float32)
+    current = build_cache_provenance(
+        {"name": "ldsr-s2-x4", "scale": 4, "seed": 3407, "checkpoint_sha256": "a" * 64}
+    )
+    stale = build_cache_provenance(
+        {"name": "ldsr-s2-x4", "scale": 4, "seed": 3407, "checkpoint_sha256": "b" * 64}
+    )
+    cache.put(
+        build_identity(stale, phase2b3a._SOURCE, "sample-1", lr),
+        torch.full((4, 8, 8), 0.5, dtype=torch.float32),
+    )
+    loads: list[str] = []
+    assert (
+        phase2b3a._existing_a2_seed_count(
+            tmp_path,
+            ({"sample_id": "sample-1"},),
+            (3407,),
+            {3407: current},
+            lambda record: loads.append(record["sample_id"]) or lr,
+        )
+        == 0
+    )
+    assert loads == []
+
+
+@pytest.mark.parametrize("suffix", [".json", ".safetensors"])
+def test_projection_cache_rejects_orphan_or_symlink(tmp_path: Path, suffix: str) -> None:
+    (tmp_path / f"{'a' * 64}{suffix}").write_bytes(b"{}")
+    with pytest.raises(RuntimeError, match="orphan"):
+        phase2b3a._existing_a2_seed_count(
+            tmp_path,
+            ({"sample_id": "sample-1"},),
+            (3407,),
+            {3407: {}},
+            lambda record: None,
+        )
+
+
+def test_projection_cache_rejects_symlink_entry(tmp_path: Path) -> None:
+    (tmp_path / f"{'a' * 64}.json").symlink_to(tmp_path / "missing")
+    (tmp_path / f"{'a' * 64}.safetensors").write_bytes(b"bytes")
+    with pytest.raises(RuntimeError, match="invalid"):
+        phase2b3a._existing_a2_seed_count(
+            tmp_path,
+            ({"sample_id": "sample-1"},),
+            (3407,),
+            {3407: {}},
+            lambda record: None,
+        )
 
 
 def test_authoritative_development_ids_preserve_selected_manifest_order(
@@ -125,8 +292,7 @@ def test_frozen_pair_loaders_touch_only_the_exact_development_count(
     count: int,
 ) -> None:
     selected = tuple(
-        {"sample_id": f"development-{index}", "split": "development"}
-        for index in range(count)
+        {"sample_id": f"development-{index}", "split": "development"} for index in range(count)
     )
     context = phase2b3a._StageContext(
         root=tmp_path,
@@ -175,9 +341,7 @@ def test_a2_bundle_generator_is_lazy_one_shot_and_forwards_exact_seed_set(
         return f"bundle-{pair}"
 
     monkeypatch.setattr(phase2b3a, "_bundle_for_pair", build)
-    bundles = phase2b3a._one_shot_bundles(
-        ("roi-1", "roi-2"), (object(),) * 3, (3407,), object()
-    )
+    bundles = phase2b3a._one_shot_bundles(("roi-1", "roi-2"), (object(),) * 3, (3407,), object())
     assert events == []
     assert next(bundles) == "bundle-roi-1"
     assert events == [("roi-1", (3407,))]
@@ -222,6 +386,59 @@ def test_reviewed_checkout_rejects_detached_dirty_or_mismatched_identity(
         phase2b3a._validate_reviewed_checkout(tmp_path, expected_revision=expected)
 
 
+def test_git_inspection_nonzero_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        phase2b3a.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 128, "", "bad git"),
+    )
+    with pytest.raises(ValueError, match="Git"):
+        phase2b3a._run_git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_stage_preflight_passes_required_reviewed_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str | None] = []
+    monkeypatch.setattr(phase2b3a, "_validate_upstream", lambda args: (Path("/x"), ()))
+    monkeypatch.setattr(phase2b3a, "_require_safe_output_roots", lambda root: None)
+    monkeypatch.setattr(
+        phase2b3a,
+        "_validate_reviewed_checkout",
+        lambda root, *, expected_revision=None: (
+            seen.append(expected_revision) or (Path("/reviewed"), expected_revision)
+        ),
+    )
+    monkeypatch.setattr(phase2b3a, "resolve_project_root", lambda path: Path("/reviewed"))
+    monkeypatch.setattr(phase2b3a, "_require_execution_from_reviewed_root", lambda *a: None)
+    monkeypatch.setattr(phase2b3a, "_require_safe_model_directory", lambda path: path)
+    monkeypatch.setattr(phase2b3a, "_validate_base_runtime", lambda: None)
+    monkeypatch.setattr(phase2b3a, "capture_gpu_hardware", lambda: object())
+    monkeypatch.setattr(
+        phase2b3a.shutil, "disk_usage", lambda root: type("D", (), {"free": 10 * 1024**3})()
+    )
+    args = argparse.Namespace(
+        project_root=Path("/reviewed"),
+        reviewed_commit="d" * 40,
+        sen2srlite_model_dir=Path("/sen2"),
+        ldsr_model_dir=Path("/ldsr"),
+    )
+    monkeypatch.setattr(phase2b3a, "_model_factory", lambda args: ())
+    revisions: list[str] = []
+    monkeypatch.setattr(
+        phase2b3a,
+        "_write_preflight_runtime",
+        lambda context, models: (
+            revisions.append(context.code_revision) or {"stage": "preflight", "model_count": 0}
+        ),
+    )
+    assert phase2b3a.run_preflight(args) == {"stage": "preflight", "model_count": 0}
+    assert revisions == ["d" * 40]
+    assert seen == ["d" * 40]
+
+
 def test_execution_checkout_must_be_the_reviewed_project_root(tmp_path: Path) -> None:
     reviewed = tmp_path / "reviewed"
     executing = tmp_path / "other"
@@ -250,10 +467,56 @@ def test_replay_handlers_never_call_a_raising_model_factory(
     )
 
     assert phase2b3a.run_replay(argparse.Namespace()) == {"stage": "replay"}
-    assert phase2b3a.run_development_replay(argparse.Namespace()) == {
-        "stage": "development-replay"
-    }
+    assert phase2b3a.run_development_replay(argparse.Namespace()) == {"stage": "development-replay"}
     assert called == []
+
+
+@pytest.mark.parametrize("phase", ["a1", "a2"])
+def test_real_replay_implementation_never_constructs_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda args, *, capture_hardware: context)
+    monkeypatch.setattr(
+        phase2b3a,
+        "_model_factory",
+        lambda args: (_ for _ in ()).throw(AssertionError("model factory called")),
+    )
+    runtime_name = phase2b3a._A1_RUNTIME if phase == "a1" else phase2b3a._A2_RUNTIME
+    runtime = {"schema": "a1"} if phase == "a1" else {"schema": "a2", "git_commit": "a" * 40}
+    _, runtime_sha = phase2b3a._write_runtime(tmp_path, runtime_name, runtime)
+    result = {"scientific": True, "runtime_manifest_sha256": runtime_sha}
+    audit = {"audit": True}
+    if phase == "a1":
+        phase2b3a._commit_pair(
+            tmp_path, (phase2b3a._A1_RESULT, result), (phase2b3a._A1_AUDIT, audit)
+        )
+        monkeypatch.setattr(phase2b3a, "_load_a1_pairs", lambda context, args: ())
+        monkeypatch.setattr(
+            phase2b3a, "replay_a1_smoke", lambda *args: ({"scientific": True}, audit)
+        )
+        outcome = phase2b3a.run_replay(argparse.Namespace())
+        assert outcome == {"stage": "replay", "byte_identical": True}
+    else:
+        phase2b3a._commit_pair(
+            tmp_path, (phase2b3a._A2_RESULT, result), (phase2b3a._A2_AUDIT, audit)
+        )
+        monkeypatch.setattr(phase2b3a, "_ordered_development_sample_ids", lambda records: ())
+        monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: ())
+        monkeypatch.setattr(
+            phase2b3a,
+            "replay_a2_development",
+            lambda *args, **kwargs: ({"scientific": True}, audit),
+        )
+        outcome = phase2b3a.run_development_replay(argparse.Namespace())
+        assert outcome == {"stage": "development-replay", "byte_identical": True}
 
 
 def test_preflight_validates_everything_before_constructing_models(
@@ -281,6 +544,97 @@ def test_preflight_validates_everything_before_constructing_models(
         "model_count": 0,
     }
     assert events == ["preflight", "models"]
+
+
+@pytest.mark.parametrize("stage", ["single", "smoke", "development"])
+def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    records = tuple({"sample_id": f"sample-{index}"} for index in range(120))
+    hardware = SimpleNamespace(memory_total_mib=1024)
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=records,
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=hardware,
+    )
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda args, *, capture_hardware: context)
+    monkeypatch.setattr(phase2b3a, "_validate_models", lambda models: None)
+    monkeypatch.setattr(phase2b3a, "_write_runtime", lambda *args: (b"{}", "b" * 64))
+    monkeypatch.setattr(phase2b3a, "_commit_pair", lambda *args: (b"{}", b"{}"))
+    args = argparse.Namespace(selection_manifest_sha256=POST_MANIFEST_SHA256)
+
+    if stage == "single":
+        lr = torch.zeros((4, 2, 2), dtype=torch.float32)
+        pair = SimpleNamespace(pair=SimpleNamespace(lr=lr))
+        seeded = SimpleNamespace(predict=lambda tensor: torch.zeros((4, 8, 8), dtype=torch.float32))
+        ldsr = SimpleNamespace(for_seed=lambda seed: seeded)
+        monkeypatch.setattr(
+            phase2b3a, "_load_a1_pairs", lambda context, args, single=False: (pair,)
+        )
+        monkeypatch.setattr(phase2b3a, "_model_factory", lambda args: (object(), object(), ldsr))
+        monkeypatch.setattr(phase2b3a, "_runtime_measurement", lambda: 1)
+        outcome = phase2b3a.run_single(args)
+        assert outcome == {"stage": "single", "repeatability_pass": True}
+    elif stage == "smoke":
+        pairs = tuple(
+            SimpleNamespace(
+                pair=SimpleNamespace(sample_id=f"sample-{index}", lr=torch.zeros((4, 1, 1)))
+            )
+            for index in range(4)
+        )
+        monkeypatch.setattr(phase2b3a, "_load_a1_pairs", lambda context, args: pairs)
+        monkeypatch.setattr(
+            phase2b3a,
+            "_model_factory",
+            lambda args: (
+                object(),
+                object(),
+                SimpleNamespace(
+                    for_seed=lambda seed: SimpleNamespace(
+                        provenance=lambda: {"name": "ldsr-s2-x4", "seed": seed}
+                    )
+                ),
+            ),
+        )
+        monkeypatch.setattr(phase2b3a, "_one_shot_bundles", lambda *args: iter(()))
+        monkeypatch.setattr(
+            phase2b3a, "evaluate_a1_smoke", lambda *args: ({"include_ldsr_variance_k5": False}, {})
+        )
+        monkeypatch.setattr(
+            phase2b3a,
+            "_read_canonical",
+            lambda path: (
+                b"{}",
+                {
+                    "schema": "trustsr.phase2b3a-single-runtime.v1",
+                    "git_commit": "a" * 40,
+                    "single_repeatability_pass": True,
+                    "uncached_ldsr_prediction_seconds": [1.0],
+                    "single_peak_memory_bytes": 1,
+                    "gpu_total_memory_bytes": 100,
+                },
+            ),
+        )
+        monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
+        monkeypatch.setattr(phase2b3a, "_existing_a2_seed_count", lambda *args: 0)
+        outcome = phase2b3a.run_smoke(args)
+        assert outcome["stage"] == "smoke" and outcome["sample_count"] == 4
+    else:
+        pairs = tuple(object() for _ in range(120))
+        monkeypatch.setattr(
+            phase2b3a, "_verify_a1_cloud_acceptance", lambda context: (False, "c" * 64)
+        )
+        monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
+        monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: pairs)
+        monkeypatch.setattr(
+            phase2b3a, "_model_factory", lambda args: (object(), object(), object())
+        )
+        monkeypatch.setattr(phase2b3a, "evaluate_a2_development", lambda *args, **kwargs: ({}, {}))
+        outcome = phase2b3a.run_development(args)
+        assert outcome["stage"] == "development" and outcome["sample_count"] == 120
 
 
 def test_main_keeps_noise_out_of_canonical_stdout(
@@ -320,6 +674,9 @@ def test_a2_bundle_manifest_atomically_replaces_completed_a1_manifest(
     ):
         (directory / name).write_bytes(b"{}")
 
+    phase2b3a._commit_pair(tmp_path, (phase2b3a._A1_RESULT, {}), (phase2b3a._A1_AUDIT, {}))
+    phase2b3a._commit_pair(tmp_path, (phase2b3a._A2_RESULT, {}), (phase2b3a._A2_AUDIT, {}))
+
     phase2b3a._write_bundle_manifest(tmp_path, "a1")
     phase2b3a._write_bundle_manifest(tmp_path, "a2")
 
@@ -342,9 +699,79 @@ def test_bundle_manifest_rejects_any_evidence_file_above_five_mib(
         "phase2b3a-a1-replay.json",
     ):
         (directory / name).write_bytes(b"{}")
-    (directory / "phase2b3a-a1-cache-audit.json").write_bytes(
-        b"x" * (5 * 1024**2 + 1)
+    (directory / "phase2b3a-a1-cache-audit.json").write_bytes(b"x" * (5 * 1024**2 + 1))
+    marker = phase2b3a._pair_marker(
+        phase2b3a._A1_RESULT,
+        (directory / phase2b3a._A1_RESULT).read_bytes(),
+        phase2b3a._A1_AUDIT,
+        (directory / phase2b3a._A1_AUDIT).read_bytes(),
     )
+    (directory / phase2b3a._A1_PAIR_COMMIT).write_bytes(marker)
 
     with pytest.raises(ValueError, match="5 MiB"):
         phase2b3a._write_bundle_manifest(tmp_path, "a1")
+
+
+def test_scientific_pair_is_committed_only_after_both_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = phase2b3a.atomic_write_bytes
+    writes = 0
+
+    def fail_second(path: Path, payload: bytes) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise OSError("injected second write failure")
+        original(path, payload)
+
+    monkeypatch.setattr(phase2b3a, "atomic_write_bytes", fail_second)
+    with pytest.raises(OSError, match="injected"):
+        phase2b3a._commit_pair(
+            tmp_path,
+            (phase2b3a._A1_RESULT, {"value": 1}),
+            (phase2b3a._A1_AUDIT, {"value": 2}),
+        )
+    directory = phase2b3a._result_directory(tmp_path)
+    assert not (directory / phase2b3a._A1_PAIR_COMMIT).exists()
+    with pytest.raises(ValueError, match="committed|pair"):
+        phase2b3a._read_committed_pair(tmp_path, phase2b3a._A1_RESULT, phase2b3a._A1_AUDIT)
+
+
+def test_partial_same_byte_pair_can_complete_but_collision_fails_closed(
+    tmp_path: Path,
+) -> None:
+    directory = phase2b3a._result_directory(tmp_path)
+    directory.mkdir(parents=True)
+    result_bytes = phase2b3a.canonical_json({"value": 1})
+    (directory / phase2b3a._A1_RESULT).write_bytes(result_bytes)
+    phase2b3a._commit_pair(
+        tmp_path,
+        (phase2b3a._A1_RESULT, {"value": 1}),
+        (phase2b3a._A1_AUDIT, {"value": 2}),
+    )
+    assert (
+        phase2b3a._read_committed_pair(tmp_path, phase2b3a._A1_RESULT, phase2b3a._A1_AUDIT)[0][0]
+        == result_bytes
+    )
+    with pytest.raises(ValueError, match="different bytes"):
+        phase2b3a._commit_pair(
+            tmp_path,
+            (phase2b3a._A1_RESULT, {"value": 9}),
+            (phase2b3a._A1_AUDIT, {"value": 2}),
+        )
+
+
+def test_concurrent_scientific_pair_writers_commit_one_identical_pair(tmp_path: Path) -> None:
+    script = (
+        "import sys; from pathlib import Path; from trustsr.cli.phase2b3a import "
+        "_commit_pair,_A1_RESULT,_A1_AUDIT; "
+        "_commit_pair(Path(sys.argv[1]), (_A1_RESULT, {'value': 1}), (_A1_AUDIT, {'value': 2}))"
+    )
+    processes = [subprocess.Popen([sys.executable, "-c", script, str(tmp_path)]) for _ in range(4)]
+    assert [process.wait() for process in processes] == [0, 0, 0, 0]
+    (result, _), (audit, _) = phase2b3a._read_committed_pair(
+        tmp_path, phase2b3a._A1_RESULT, phase2b3a._A1_AUDIT
+    )
+    assert result == phase2b3a.canonical_json({"value": 1})
+    assert audit == phase2b3a.canonical_json({"value": 2})

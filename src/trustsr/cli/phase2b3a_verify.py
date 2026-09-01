@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
+import math
+import os
 import re
+import stat
+import statistics
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -36,10 +42,119 @@ _OUTPUT_NAMES = {
     "a2": "sen2naipv2-development-score-acceptance-v1.json",
 }
 _SECRET_KEY = re.compile(
-    r"(?:^|_)(?:password|passwd|secret|token|api_key|private_key|ssh|hostname|host|username|user|env)(?:$|_)",
+    r"(?:^|_)(?:password|passwd|secret|token|api_key|access_key|credential|credentials|authorization|auth|private_key|ssh|hostname|host|username|user|env|environment)(?:$|_)",
     re.IGNORECASE,
 )
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
+_PREDICTION_COMMON = {
+    "name",
+    "scale",
+    "experiment_schema",
+    "post_manifest_sha256",
+    "input_audit_sha256",
+    "implementation_schema_version",
+    "output_policy",
+    "torch_version",
+}
+_PROVENANCE_KEYS = {
+    "bicubic-x4": _PREDICTION_COMMON | {"implementation", "mode", "align_corners", "antialias"},
+    "sen2srlite-x4": _PREDICTION_COMMON
+    | {
+        "model_id",
+        "manifest_url",
+        "mlstac_version",
+        "sen2sr_version",
+        "device",
+        "asset_sha256:example_data.safetensor",
+        "asset_sha256:hard_constraint.safetensor",
+        "asset_sha256:load.py",
+        "asset_sha256:mlm.json",
+        "asset_sha256:model.safetensor",
+    },
+    "ldsr-s2-x4": _PREDICTION_COMMON
+    | {
+        "opensr_model_version",
+        "cuda_runtime",
+        "checkpoint_name",
+        "checkpoint_url",
+        "checkpoint_size",
+        "checkpoint_sha256",
+        "config_sha256",
+        "device",
+        "seed",
+        "sampling_steps",
+        "sampling_eta",
+        "sampling_temperature",
+        "histogram_matching",
+    },
+}
+_DIAGNOSTIC_KEYS = {
+    "rho",
+    "constant_score",
+    "coverages",
+    "selective_mean_risks",
+    "aurc",
+    "random_aurc",
+    "aurc_gain",
+    "high_risk_miss_rate_at_80",
+}
+_SEN2SRLITE_ASSETS = {
+    "asset_sha256:example_data.safetensor": (
+        "c895c7da8a8d48882b73a2a1955e4260714b97540eea290229a284d73f129985"
+    ),
+    "asset_sha256:hard_constraint.safetensor": (
+        "fbad981519066387c413ead1d6af7ef3e0d2947c34147ba90163fc79ae539239"
+    ),
+    "asset_sha256:load.py": "4b6c836b1f73078c62c84d4374b2d8daee5345f6239f64e0b6be29432383bac6",
+    "asset_sha256:mlm.json": "59caa5c6af96a6fbebdbd771d93c91cc2d3a770302cd2f262b5409e77a40e3f7",
+    "asset_sha256:model.safetensor": (
+        "479aa796d5068d0b1206118ccbca27bd3223df0214db1a9b31a1e18349ed1c7e"
+    ),
+}
+
+
+def _require_exact_keys(value: object, keys: set[str], label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ValueError(f"{label} schema is invalid")
+    return value
+
+
+def _is_sha(value: object) -> bool:
+    return type(value) is str and _HEX64.fullmatch(value) is not None
+
+
+def _score_configuration(name: str) -> dict[str, object]:
+    if name in {"ldsr_variance_k5a", "ldsr_variance_k5"}:
+        first, last = 3407, 3411
+    elif name == "ldsr_variance_k5b":
+        first, last = 3412, 3416
+    elif name == "ldsr_variance_k25":
+        first, last = 3407, 3431
+    elif name == "lr_reprojection_l1":
+        return {
+            "algorithm": "lr_reprojection_l1_score",
+            "downsample_mode": "area",
+            "scale": 4,
+            "upsample_mode": "repeat_interleave",
+        }
+    elif name == "three_model_disagreement":
+        return {
+            "algorithm": "three_model_disagreement_score",
+            "band_reduction": "mean",
+            "correction": 0,
+            "model_order": "bicubic-x4,sen2srlite-x4,ldsr-s2-x4",
+        }
+    else:
+        raise ValueError("unknown score name")
+    return {
+        "algorithm": "ensemble_variance_score",
+        "band_reduction": "mean",
+        "correction": 0,
+        "seed_first": first,
+        "seed_last": last,
+        "seed_count": last - first + 1,
+    }
 
 
 def resolve_project_root() -> Path:
@@ -166,11 +281,17 @@ def _reject_secrets_paths_and_leakage(value: Any, *, label: str) -> None:
             return
         if isinstance(item, str):
             lowered = item.lower()
+            authorized_slash = (key == "source" and item == _SOURCE) or (
+                key in {"manifest_url", "checkpoint_url"}
+                and item.startswith("https://")
+                and ".." not in PurePosixPath(item).parts
+            )
             if "calibration" in lowered or "internal_test" in lowered:
                 raise ValueError(f"{label} contains prohibited non-development leakage evidence")
             if (
                 item.startswith(("/", "~", "file://", "ssh://"))
                 or "\\" in item
+                or ("/" in item and not authorized_slash)
                 or ".." in PurePosixPath(item).parts
                 or "-----begin" in lowered
                 or ("@" in item and (":" in item or "." in item))
@@ -208,9 +329,7 @@ def _file(
         raise ValueError(f"bundle is missing required file: {name}") from exc
 
 
-def _validate_common_references(
-    result: Mapping[str, object], audit: Mapping[str, object]
-) -> None:
+def _validate_common_references(result: Mapping[str, object], audit: Mapping[str, object]) -> None:
     expected = {
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
@@ -239,9 +358,7 @@ def _validate_replay(
         raise ValueError("bundle replay receipt is invalid or not byte-identical")
 
 
-def _bundle_digests(
-    files: Mapping[str, tuple[bytes, dict[str, object]]]
-) -> dict[str, str]:
+def _bundle_digests(files: Mapping[str, tuple[bytes, dict[str, object]]]) -> dict[str, str]:
     return {name: _sha256(raw) for name, (raw, _) in sorted(files.items())}
 
 
@@ -278,10 +395,23 @@ def _validate_prediction_entry(
     model_name: str,
     seed: int | None,
     require_files: bool,
+    lr_sha256: object,
+    correlation_bin: object,
 ) -> dict[str, object]:
-    if not isinstance(entry, dict) or not isinstance(entry.get("identity"), dict):
-        raise ValueError("prediction cache entry schema is invalid")
+    entry_keys = {"sample_id", "model_name", "seed", "cache_key", "identity", "prediction_sha256"}
+    if model_name == "bicubic-x4" or model_name == "sen2srlite-x4" or model_name == "ldsr-s2-x4":
+        entry_keys.add("correlation_bin") if not require_files else entry_keys.add("files")
+    entry = _require_exact_keys(entry, entry_keys, "prediction cache entry")
     identity = entry["identity"]
+    identity = _require_exact_keys(
+        identity,
+        {"model_provenance", "source", "sample_id", "lr"},
+        "prediction identity",
+    )
+    lr = _require_exact_keys(identity["lr"], {"shape", "dtype", "sha256"}, "prediction LR identity")
+    provenance = _require_exact_keys(
+        identity["model_provenance"], _PROVENANCE_KEYS[model_name], "prediction provenance"
+    )
     cache_key = _sha256(canonical_json(identity))
     digest = entry.get("prediction_sha256")
     if (
@@ -289,10 +419,68 @@ def _validate_prediction_entry(
         or entry.get("model_name") != model_name
         or entry.get("seed") != seed
         or entry.get("cache_key") != cache_key
+        or (not require_files and entry.get("correlation_bin") != correlation_bin)
         or type(digest) is not str
         or _HEX64.fullmatch(digest) is None
+        or identity["source"] != _SOURCE
+        or identity["sample_id"] != sample_id
+        or lr != {"shape": [4, 128, 128], "dtype": "torch.float32", "sha256": lr_sha256}
+        or provenance.get("name") != model_name
+        or provenance.get("scale") != 4
+        or provenance.get("experiment_schema") != "trustsr.phase2b3a-predictions.v1"
+        or provenance.get("post_manifest_sha256") != POST_MANIFEST_SHA256
+        or provenance.get("input_audit_sha256") != INPUT_AUDIT_SHA256
+        or provenance.get("implementation_schema_version") != 1
+        or provenance.get("output_policy") != "clip_to_[0,1]"
+        or type(provenance.get("torch_version")) is not str
     ):
         raise ValueError("prediction cache internal identity/key/SHA reference is invalid")
+    if model_name == "bicubic-x4" and any(
+        provenance.get(key) != value
+        for key, value in {
+            "implementation": "torch.nn.functional.interpolate",
+            "mode": "bicubic",
+            "align_corners": False,
+            "antialias": True,
+        }.items()
+    ):
+        raise ValueError("prediction provenance is not the frozen bicubic adapter")
+    if model_name == "sen2srlite-x4":
+        if (
+            provenance.get("device") != "cpu"
+            or provenance.get("model_id") != "SEN2SRLite_NonReference_RGBN_x4"
+            or provenance.get("manifest_url")
+            != (
+                "https://huggingface.co/tacofoundation/sen2sr/resolve/main/"
+                "SEN2SRLite/NonReference_RGBN_x4/mlm.json"
+            )
+            or any(
+                type(provenance.get(key)) is not str or not provenance.get(key)
+                for key in ("mlstac_version", "sen2sr_version")
+            )
+            or any(provenance.get(key) != digest for key, digest in _SEN2SRLITE_ASSETS.items())
+        ):
+            raise ValueError("prediction provenance is not the frozen SEN2SRLite adapter")
+    if model_name == "ldsr-s2-x4" and (
+        provenance.get("seed") != seed
+        or provenance.get("device") != "cuda"
+        or provenance.get("opensr_model_version") != "1.1.1"
+        or type(provenance.get("cuda_runtime")) is not str
+        or not provenance.get("cuda_runtime")
+        or provenance.get("checkpoint_name") != "opensr-ldsrs2_v1_0_0.ckpt"
+        or provenance.get("checkpoint_url")
+        != "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt"
+        or provenance.get("checkpoint_size") != 1_130_715_795
+        or provenance.get("checkpoint_sha256")
+        != "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a"
+        or provenance.get("config_sha256")
+        != "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f"
+        or provenance.get("sampling_steps") != 100
+        or provenance.get("sampling_eta") != 0.95
+        or provenance.get("sampling_temperature") != 1.0
+        or provenance.get("histogram_matching") is not True
+    ):
+        raise ValueError("prediction provenance is not the frozen LDSR adapter")
     if require_files:
         _validate_file_evidence(entry.get("files"), cache_key)
     elif "files" in entry:
@@ -301,18 +489,39 @@ def _validate_prediction_entry(
 
 
 def _validate_score_entry(
-    entry: object, *, sample_id: object, name: str
+    entry: object,
+    *,
+    sample_id: object,
+    name: str,
+    lr_sha256: object,
+    correlation_bin: object,
+    input_sha256s: list[object],
 ) -> dict[str, object]:
-    if not isinstance(entry, dict) or not isinstance(entry.get("identity"), dict):
-        raise ValueError("score cache entry schema is invalid")
-    cache_key = _sha256(canonical_json(entry["identity"]))
+    entry = _require_exact_keys(
+        entry,
+        {"sample_id", "correlation_bin", "name", "cache_key", "identity", "score_sha256", "files"},
+        "score cache entry",
+    )
+    identity = _require_exact_keys(
+        entry["identity"],
+        {"score_name", "score_schema_version", "sample_id", "input_sha256s", "operator_parameters"},
+        "score identity",
+    )
+    cache_key = _sha256(canonical_json(identity))
     digest = entry.get("score_sha256")
+    expected_parameters = {**_score_configuration(name), "lr_sha256": lr_sha256}
     if (
         entry.get("sample_id") != sample_id
         or entry.get("name") != name
+        or entry.get("correlation_bin") != correlation_bin
         or entry.get("cache_key") != cache_key
         or type(digest) is not str
         or _HEX64.fullmatch(digest) is None
+        or identity.get("score_name") != name
+        or identity.get("score_schema_version") != 1
+        or identity.get("sample_id") != sample_id
+        or identity.get("input_sha256s") != input_sha256s
+        or identity.get("operator_parameters") != expected_parameters
     ):
         raise ValueError("score cache internal identity/key/SHA reference is invalid")
     _validate_file_evidence(entry.get("files"), cache_key)
@@ -322,9 +531,40 @@ def _validate_score_entry(
 def _validate_sample_score_reference(
     score: object, audit_entry: Mapping[str, object], name: str
 ) -> None:
+    score = _require_exact_keys(
+        score,
+        {"name", "cache_key", "score_sha256", "primary_window_9", "sensitivity_window_1"},
+        "scientific score record",
+    )
+    for key in ("primary_window_9", "sensitivity_window_1"):
+        diagnostic = _require_exact_keys(score[key], _DIAGNOSTIC_KEYS, "score diagnostic")
+        coverages = diagnostic["coverages"]
+        risks = diagnostic["selective_mean_risks"]
+        if (
+            type(diagnostic["constant_score"]) is not bool
+            or any(
+                not isinstance(diagnostic[field], int | float)
+                or not math.isfinite(float(diagnostic[field]))
+                for field in (
+                    "rho",
+                    "aurc",
+                    "random_aurc",
+                    "aurc_gain",
+                    "high_risk_miss_rate_at_80",
+                )
+            )
+            or not isinstance(coverages, list)
+            or not isinstance(risks, list)
+            or coverages != [index / 10 for index in range(1, 11)]
+            or len(risks) != 10
+            or any(
+                not isinstance(value, int | float) or not math.isfinite(float(value))
+                for value in [*coverages, *risks]
+            )
+        ):
+            raise ValueError("score diagnostic values are invalid")
     if (
-        not isinstance(score, dict)
-        or score.get("name") != name
+        score.get("name") != name
         or score.get("cache_key") != audit_entry.get("cache_key")
         or score.get("score_sha256") != audit_entry.get("score_sha256")
     ):
@@ -338,6 +578,58 @@ def _verify_a1_result_audit_runtime_replay(
     audit_bytes, audit = _file(files, _PHASE_FILES["a1"][1])
     runtime_bytes, runtime = _file(files, _PHASE_FILES["a1"][2])
     _, replay = _file(files, _PHASE_FILES["a1"][3])
+    _require_exact_keys(
+        result,
+        {
+            "schema",
+            "dataset_role",
+            "upstream",
+            "bands",
+            "scale",
+            "sample_count",
+            "prediction_count",
+            "score_count",
+            "seed_sets",
+            "stability_thresholds",
+            "k5_statistically_stable",
+            "include_ldsr_variance_k5",
+            "samples",
+            "runtime_manifest_sha256",
+        },
+        "A1 result",
+    )
+    _require_exact_keys(
+        audit,
+        {
+            "schema",
+            "experiment_schema",
+            "post_manifest_sha256",
+            "input_audit_sha256",
+            "sample_count",
+            "prediction_count",
+            "score_count",
+            "prediction_entries",
+            "score_entries",
+        },
+        "A1 audit",
+    )
+    _require_exact_keys(
+        runtime,
+        {
+            "schema",
+            "git_commit",
+            "single_repeatability_pass",
+            "single_peak_memory_bytes",
+            "gpu_total_memory_bytes",
+            "persistent_free_bytes",
+            "a1_uncached_ldsr_prediction_seconds",
+            "a1_median_uncached_ldsr_prediction_seconds",
+            "missing_a2_seed_predictions",
+            "projected_a2_uncached_seconds",
+            "resource_gate_pass",
+        },
+        "A1 runtime",
+    )
     if result.get("schema") != "trustsr.phase2b3a-development-smoke.v1":
         raise ValueError("A1 result schema is invalid")
     if audit.get("schema") != "trustsr.phase2b3a-development-smoke-cache-audit.v1":
@@ -346,6 +638,26 @@ def _verify_a1_result_audit_runtime_replay(
         raise ValueError("A1 cache-audit experiment schema reference is invalid")
     if runtime.get("schema") != "trustsr.phase2b3a-a1-runtime.v1":
         raise ValueError("A1 runtime schema is invalid")
+    if (
+        result.get("dataset_role") != "development_engineering_smoke_only"
+        or result.get("bands") != ["B04", "B03", "B02", "B08"]
+        or result.get("scale") != 4
+        or result.get("seed_sets")
+        != {
+            "k5a": list(range(3407, 3412)),
+            "k5b": list(range(3412, 3417)),
+            "k25": list(range(3407, 3432)),
+        }
+        or result.get("stability_thresholds")
+        != {
+            "k5a_k5b_median_minimum": 0.6,
+            "k5a_k5b_worst_minimum": 0.4,
+            "k5a_k25_median_minimum": 0.8,
+            "k5a_k25_worst_minimum": 0.6,
+            "k5a_k25_top10_jaccard_median_minimum": 0.5,
+        }
+    ):
+        raise ValueError("A1 frozen experiment configuration is invalid")
     _validate_common_references(result, audit)
     _require_scientific_payload_is_runtime_free(result)
     samples = result.get("samples")
@@ -364,8 +676,82 @@ def _verify_a1_result_audit_runtime_replay(
     sample_ids: set[object] = set()
     groups: set[object] = set()
     for sample in samples:
-        if not isinstance(sample, dict):
-            raise ValueError("A1 sample schema is invalid")
+        sample = _require_exact_keys(
+            sample,
+            {
+                "sample_id",
+                "spatial_group_id",
+                "correlation_bin",
+                "days_between",
+                "selection_round",
+                "lr_tensor_sha256",
+                "hr_tensor_sha256",
+                "central_prediction_sha256",
+                "risks",
+                "scores",
+                "stability",
+            },
+            "A1 sample",
+        )
+        risks = _require_exact_keys(sample["risks"], {"primary", "sensitivity"}, "A1 risks")
+        if risks != {
+            "primary": {
+                "name": "local_l1_risk",
+                "window": 9,
+                "risk_sha256": risks["primary"].get("risk_sha256")
+                if isinstance(risks["primary"], dict)
+                else None,
+            },
+            "sensitivity": {
+                "name": "local_l1_risk",
+                "window": 1,
+                "risk_sha256": risks["sensitivity"].get("risk_sha256")
+                if isinstance(risks["sensitivity"], dict)
+                else None,
+            },
+        } or not all(_is_sha(risks[key]["risk_sha256"]) for key in risks):
+            raise ValueError("A1 risk schema is invalid")
+        stability = _require_exact_keys(
+            sample["stability"],
+            {
+                "k5a_k5b_spearman",
+                "k5a_k25_spearman",
+                "k5a_k25_top10_jaccard",
+                "k5a_constant_score",
+                "k5b_constant_score",
+                "k25_constant_score",
+            },
+            "A1 stability",
+        )
+        if any(
+            not isinstance(stability[key], int | float)
+            or isinstance(stability[key], bool)
+            or not math.isfinite(float(stability[key]))
+            for key in (
+                "k5a_k5b_spearman",
+                "k5a_k25_spearman",
+                "k5a_k25_top10_jaccard",
+            )
+        ) or any(
+            type(stability[key]) is not bool
+            for key in ("k5a_constant_score", "k5b_constant_score", "k25_constant_score")
+        ):
+            raise ValueError("A1 stability evidence is invalid")
+        if not all(
+            _is_sha(sample[key])
+            for key in ("lr_tensor_sha256", "hr_tensor_sha256", "central_prediction_sha256")
+        ):
+            raise ValueError("A1 sample tensor SHA evidence is invalid")
+        if (
+            type(sample["sample_id"]) is not str
+            or not sample["sample_id"]
+            or type(sample["spatial_group_id"]) is not str
+            or not sample["spatial_group_id"]
+            or type(sample["days_between"]) is not int
+            or type(sample["correlation_bin"]) is not int
+            or type(sample["selection_round"]) is not int
+        ):
+            raise ValueError("A1 sample membership types are invalid")
         if sample.get("split", "development") != "development":
             raise ValueError("A1 contains non-development leakage evidence")
         observed.append(
@@ -410,6 +796,8 @@ def _verify_a1_result_audit_runtime_replay(
                 model_name=model_name,
                 seed=seed,
                 require_files=False,
+                lr_sha256=sample.get("lr_tensor_sha256"),
+                correlation_bin=sample.get("correlation_bin"),
             )
             for entry, (model_name, seed) in zip(
                 prediction_entries[start : start + len(prediction_slots)],
@@ -425,14 +813,28 @@ def _verify_a1_result_audit_runtime_replay(
         if not isinstance(sample_scores, list) or len(sample_scores) != 5:
             raise ValueError("A1 scientific score records are incomplete")
         score_start = index * len(score_names)
-        for score, entry, name in zip(
+        prediction_hashes = [item["prediction_sha256"] for item in verified_predictions]
+        score_inputs = (
+            prediction_hashes[2:7],
+            prediction_hashes[7:12],
+            prediction_hashes[2:27],
+            [prediction_hashes[2]],
+            [prediction_hashes[0], prediction_hashes[1], prediction_hashes[2]],
+        )
+        for score, entry, name, inputs in zip(
             sample_scores,
             score_entries[score_start : score_start + len(score_names)],
             score_names,
+            score_inputs,
             strict=True,
         ):
             verified_score = _validate_score_entry(
-                entry, sample_id=sample["sample_id"], name=name
+                entry,
+                sample_id=sample["sample_id"],
+                name=name,
+                lr_sha256=sample.get("lr_tensor_sha256"),
+                input_sha256s=inputs,
+                correlation_bin=sample.get("correlation_bin"),
             )
             _validate_sample_score_reference(score, verified_score, name)
     runtime_sha256 = _sha256(runtime_bytes)
@@ -441,19 +843,38 @@ def _verify_a1_result_audit_runtime_replay(
     projection = runtime.get("projected_a2_uncached_seconds")
     missing = runtime.get("missing_a2_seed_predictions")
     median = runtime.get("a1_median_uncached_ldsr_prediction_seconds")
+    durations = runtime.get("a1_uncached_ldsr_prediction_seconds")
     if (
         runtime.get("single_repeatability_pass") is not True
         or type(missing) is not int
         or missing < 0
         or not isinstance(median, int | float)
         or not isinstance(projection, int | float)
+        or not math.isfinite(float(median))
+        or not math.isfinite(float(projection))
+        or float(median) < 0.0
+        or float(projection) < 0.0
         or float(projection) != float(median) * missing
+        or not isinstance(durations, list)
+        or not durations
+        or any(
+            not isinstance(value, int | float)
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+            for value in durations
+        )
+        or float(median) != float(statistics.median(float(value) for value in durations))
     ):
         raise ValueError("A1 runtime repeatability or missing-seed projection is invalid")
     peak = runtime.get("single_peak_memory_bytes")
     total = runtime.get("gpu_total_memory_bytes")
     free = runtime.get("persistent_free_bytes")
-    if any(type(value) is not int for value in (peak, total, free)):
+    if (
+        type(runtime.get("git_commit")) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", runtime["git_commit"]) is None
+    ):
+        raise ValueError("A1 runtime Git commit is invalid")
+    if any(type(value) is not int or value < 0 for value in (peak, total, free)) or total == 0:
         raise ValueError("A1 runtime resource measurements are invalid")
     expected_gate = bool(
         peak <= int(0.80 * total)
@@ -508,8 +929,64 @@ def _validate_a2_samples(
         "selection_round",
     )
     for sample, group in zip(samples, groups, strict=True):
-        if not isinstance(sample, dict) or not isinstance(group, dict):
-            raise ValueError("A2 ROI or audit group schema is invalid")
+        sample = _require_exact_keys(
+            sample,
+            {
+                "sample_id",
+                "spatial_group_id",
+                "split",
+                "days_between",
+                "correlation_bin",
+                "selection_round",
+                "lr_tensor_sha256",
+                "hr_tensor_sha256",
+                "central_prediction_sha256",
+                "risks",
+                "scores",
+            },
+            "A2 ROI",
+        )
+        group = _require_exact_keys(
+            group,
+            {
+                "sample_id",
+                "spatial_group_id",
+                "days_between",
+                "correlation_bin",
+                "selection_round",
+                "prediction_entries",
+                "score_entries",
+            },
+            "A2 audit group",
+        )
+        risks = _require_exact_keys(
+            sample["risks"], {"primary_window_9", "sensitivity_window_1"}, "A2 risks"
+        )
+        for risk_name, window in (("primary_window_9", 9), ("sensitivity_window_1", 1)):
+            risk = _require_exact_keys(
+                risks[risk_name], {"name", "window", "risk_sha256"}, "A2 risk"
+            )
+            if risk != {
+                "name": "local_l1_risk",
+                "window": window,
+                "risk_sha256": risk["risk_sha256"],
+            } or not _is_sha(risk["risk_sha256"]):
+                raise ValueError("A2 risk evidence is invalid")
+        if not all(
+            _is_sha(sample[key])
+            for key in ("lr_tensor_sha256", "hr_tensor_sha256", "central_prediction_sha256")
+        ):
+            raise ValueError("A2 sample tensor SHA evidence is invalid")
+        if (
+            type(sample["sample_id"]) is not str
+            or not sample["sample_id"]
+            or type(sample["spatial_group_id"]) is not str
+            or not sample["spatial_group_id"]
+            or type(sample["days_between"]) is not int
+            or type(sample["correlation_bin"]) is not int
+            or type(sample["selection_round"]) is not int
+        ):
+            raise ValueError("A2 sample membership types are invalid")
         if sample.get("split") != "development":
             raise ValueError("A2 contains non-development leakage evidence")
         if tuple(sample.get(key) for key in keys) != tuple(group.get(key) for key in keys):
@@ -522,9 +999,10 @@ def _validate_a2_samples(
         prediction_slots = (
             ("bicubic-x4", None),
             ("sen2srlite-x4", None),
-            *(("ldsr-s2-x4", seed) for seed in (
-                range(3407, 3412) if include_ldsr_variance_k5 else (3407,)
-            )),
+            *(
+                ("ldsr-s2-x4", seed)
+                for seed in (range(3407, 3412) if include_ldsr_variance_k5 else (3407,))
+            ),
         )
         score_names = (
             "lr_reprojection_l1",
@@ -550,20 +1028,29 @@ def _validate_a2_samples(
                 model_name=model_name,
                 seed=seed,
                 require_files=True,
+                lr_sha256=sample.get("lr_tensor_sha256"),
+                correlation_bin=sample.get("correlation_bin"),
             )
-            for entry, (model_name, seed) in zip(
-                prediction_entries, prediction_slots, strict=True
-            )
+            for entry, (model_name, seed) in zip(prediction_entries, prediction_slots, strict=True)
         ]
         if sample.get("central_prediction_sha256") != verified_predictions[2].get(
             "prediction_sha256"
         ):
             raise ValueError("A2 central prediction SHA reference is invalid")
-        for score, entry, name in zip(
-            sample_scores, score_entries, score_names, strict=True
-        ):
+        hashes = [item["prediction_sha256"] for item in verified_predictions]
+        inputs_by_name = {
+            "lr_reprojection_l1": [hashes[2]],
+            "three_model_disagreement": [hashes[0], hashes[1], hashes[2]],
+            "ldsr_variance_k5": hashes[2:7],
+        }
+        for score, entry, name in zip(sample_scores, score_entries, score_names, strict=True):
             verified_score = _validate_score_entry(
-                entry, sample_id=sample["sample_id"], name=name
+                entry,
+                sample_id=sample["sample_id"],
+                name=name,
+                lr_sha256=sample.get("lr_tensor_sha256"),
+                correlation_bin=sample.get("correlation_bin"),
+                input_sha256s=inputs_by_name[name],
             )
             _validate_sample_score_reference(score, verified_score, name)
     expected_cells = {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
@@ -584,6 +1071,59 @@ def _verify_a2_result_audit_runtime_replay(
     audit_bytes, audit = _file(files, _PHASE_FILES["a2"][1])
     runtime_bytes, runtime = _file(files, _PHASE_FILES["a2"][2])
     _, replay = _file(files, _PHASE_FILES["a2"][3])
+    _require_exact_keys(
+        result,
+        {
+            "schema",
+            "dataset_role",
+            "upstream",
+            "code_revision",
+            "bands",
+            "scale",
+            "sample_count",
+            "statistical_unit",
+            "prediction_count",
+            "score_count",
+            "include_ldsr_variance_k5",
+            "candidate_names",
+            "score_configuration",
+            "risk_configuration",
+            "bootstrap",
+            "selection_risk",
+            "candidate_summaries",
+            "frozen_score",
+            "phase_decision",
+            "samples",
+            "runtime_manifest_sha256",
+        },
+        "A2 result",
+    )
+    _require_exact_keys(
+        audit,
+        {
+            "schema",
+            "experiment_schema",
+            "post_manifest_sha256",
+            "input_audit_sha256",
+            "code_revision",
+            "sample_count",
+            "prediction_count",
+            "score_count",
+            "groups",
+        },
+        "A2 audit",
+    )
+    _require_exact_keys(
+        runtime,
+        {
+            "schema",
+            "git_commit",
+            "a1_acceptance_pass",
+            "a1_replay_sha256",
+            "sample_count",
+        },
+        "A2 runtime",
+    )
     if result.get("schema") != "trustsr.phase2b3a-development-score-audit.v1":
         raise ValueError("A2 result schema is invalid")
     if audit.get("schema") != "trustsr.phase2b3a-development-score-cache-audit.v1":
@@ -592,6 +1132,20 @@ def _verify_a2_result_audit_runtime_replay(
         raise ValueError("A2 cache-audit experiment schema reference is invalid")
     if runtime.get("schema") != "trustsr.phase2b3a-a2-runtime.v1":
         raise ValueError("A2 runtime schema is invalid")
+    if (
+        result.get("dataset_role") != "development_score_selection_only"
+        or result.get("bands") != ["B04", "B03", "B02", "B08"]
+        or result.get("scale") != 4
+        or result.get("statistical_unit") != "roi"
+        or result.get("risk_configuration")
+        != {
+            "name": "local_l1_risk",
+            "primary_window": 9,
+            "sensitivity_window": 1,
+        }
+        or result.get("selection_risk") != "primary_window_9"
+    ):
+        raise ValueError("A2 frozen experiment configuration is invalid")
     _validate_common_references(result, audit)
     _require_scientific_payload_is_runtime_free(result)
     if result.get("sample_count") != 120 or audit.get("sample_count") != 120:
@@ -601,6 +1155,13 @@ def _verify_a2_result_audit_runtime_replay(
         raise ValueError("A2 K=5 inclusion decision is invalid")
     expected_predictions = 120 * (7 if include else 3)
     expected_scores = 120 * (3 if include else 2)
+    names = ["lr_reprojection_l1", "three_model_disagreement"] + (
+        ["ldsr_variance_k5"] if include else []
+    )
+    if result.get("candidate_names") != names or result.get("score_configuration") != {
+        name: _score_configuration(name) for name in names
+    }:
+        raise ValueError("A2 candidate names or score configuration is invalid")
     if (
         result.get("prediction_count") != expected_predictions
         or audit.get("prediction_count") != expected_predictions
@@ -612,6 +1173,11 @@ def _verify_a2_result_audit_runtime_replay(
         "code_revision"
     ) != runtime.get("git_commit"):
         raise ValueError("A2 code-revision references differ")
+    if (
+        type(result.get("code_revision")) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", result["code_revision"]) is None
+    ):
+        raise ValueError("A2 code revision is invalid")
     bootstrap = result.get("bootstrap")
     if bootstrap != {
         "algorithm": "numpy.PCG64",
@@ -620,11 +1186,104 @@ def _verify_a2_result_audit_runtime_replay(
         "ci_percentiles": [2.5, 97.5],
     }:
         raise ValueError("A2 bootstrap schema is invalid")
+    summaries = result.get("candidate_summaries")
+    if not isinstance(summaries, list) or len(summaries) != len(names):
+        raise ValueError("A2 candidate summaries are incomplete")
+    primary_keys = {
+        "name",
+        "eligible",
+        "failure_reasons",
+        "nonconstant_count",
+        "mean_rho",
+        "mean_rho_ci95",
+        "mean_aurc_gain",
+        "mean_aurc_gain_ci95",
+        "positive_strata",
+        "minimum_stratum_mean_rho",
+        "median_rho",
+        "rho_quartiles",
+        "median_aurc_gain",
+        "aurc_gain_quartiles",
+        "stratum_mean_rho",
+    }
+    sensitivity_keys = {
+        "selection_use",
+        "nonconstant_count",
+        "mean_rho",
+        "mean_rho_ci95",
+        "mean_aurc_gain",
+        "mean_aurc_gain_ci95",
+        "median_rho",
+        "rho_quartiles",
+        "median_aurc_gain",
+        "aurc_gain_quartiles",
+        "stratum_mean_rho",
+    }
+    for summary, name in zip(summaries, names, strict=True):
+        summary = _require_exact_keys(
+            summary,
+            {"name", "operator_parameters", "seeds", "primary_window_9", "sensitivity_window_1"},
+            "A2 candidate summary",
+        )
+        primary = _require_exact_keys(
+            summary["primary_window_9"], primary_keys, "A2 primary candidate evidence"
+        )
+        sensitivity = _require_exact_keys(
+            summary["sensitivity_window_1"], sensitivity_keys, "A2 sensitivity evidence"
+        )
+        expected_seeds = list(range(3407, 3412)) if name == "ldsr_variance_k5" else [3407]
+        numeric_fields = ("mean_rho", "mean_aurc_gain", "median_rho", "median_aurc_gain")
+        strata = primary["stratum_mean_rho"]
+        sensitivity_strata = sensitivity["stratum_mean_rho"]
+        if (
+            summary["name"] != name
+            or summary["operator_parameters"] != _score_configuration(name)
+            or summary["seeds"] != expected_seeds
+            or primary["name"] != name
+            or type(primary["eligible"]) is not bool
+            or not isinstance(primary["failure_reasons"], list)
+            or any(
+                not isinstance(primary[field], int | float)
+                or not math.isfinite(float(primary[field]))
+                for field in numeric_fields
+            )
+            or any(
+                not isinstance(sensitivity[field], int | float)
+                or not math.isfinite(float(sensitivity[field]))
+                for field in numeric_fields
+            )
+            or not isinstance(strata, list)
+            or not isinstance(sensitivity_strata, list)
+            or len(strata) != 12
+            or len(sensitivity_strata) != 12
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"days_between", "correlation_bin", "mean_rho", "mean_aurc_gain"}
+                for item in [*strata, *sensitivity_strata]
+            )
+            or {
+                (item.get("days_between"), item.get("correlation_bin"))
+                for item in strata
+                if isinstance(item, dict)
+            }
+            != {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
+            or {
+                (item.get("days_between"), item.get("correlation_bin"))
+                for item in sensitivity_strata
+                if isinstance(item, dict)
+            }
+            != {(day, bin_index) for day in (-1, 0, 1) for bin_index in range(4)}
+        ):
+            raise ValueError("A2 candidate summary/freeze evidence is invalid")
     _validate_a2_samples(result, audit, include_ldsr_variance_k5=include)
     runtime_sha256 = _sha256(runtime_bytes)
     if result.get("runtime_manifest_sha256") != runtime_sha256:
         raise ValueError("A2 runtime-manifest SHA reference is invalid")
-    if runtime.get("a1_acceptance_pass") is not True or runtime.get("sample_count") != 120:
+    if (
+        runtime.get("a1_acceptance_pass") is not True
+        or runtime.get("sample_count") != 120
+        or not _is_sha(runtime.get("a1_replay_sha256"))
+    ):
         raise ValueError("A2 runtime acceptance evidence is invalid")
     _validate_replay(
         replay,
@@ -643,9 +1302,46 @@ def _verify_a2_result_audit_runtime_replay(
         "development_only_pass": True,
     }
     if decision == "freeze_score" and isinstance(frozen, dict):
+        frozen = _require_exact_keys(
+            frozen,
+            {
+                "name",
+                "operator_parameters",
+                "seeds",
+                "post_manifest_sha256",
+                "code_revision",
+                "cost_rank",
+                "statistical_leader",
+                "indistinguishable_candidates",
+                "selected_candidate_evidence",
+                "candidate_eligibility_evidence",
+            },
+            "A2 frozen score",
+        )
+        selected_name = frozen["name"]
+        expected_seeds = list(range(3407, 3412)) if selected_name == "ldsr_variance_k5" else [3407]
+        primary_evidence = [summary["primary_window_9"] for summary in summaries]
+        if (
+            selected_name not in names
+            or frozen["operator_parameters"] != _score_configuration(selected_name)
+            or frozen["seeds"] != expected_seeds
+            or frozen["post_manifest_sha256"] != POST_MANIFEST_SHA256
+            or frozen["code_revision"] != result["code_revision"]
+            or frozen["selected_candidate_evidence"] != primary_evidence[names.index(selected_name)]
+            or frozen["candidate_eligibility_evidence"] != primary_evidence
+            or frozen["cost_rank"] != names.index(selected_name)
+            or frozen["statistical_leader"] not in names
+            or not isinstance(frozen["indistinguishable_candidates"], list)
+            or frozen["indistinguishable_candidates"]
+            != [name for name in names if name in frozen["indistinguishable_candidates"]]
+            or selected_name not in frozen["indistinguishable_candidates"]
+        ):
+            raise ValueError("A2 frozen score provenance/selection evidence is invalid")
         acceptance["frozen_score"] = frozen
         acceptance["no_eligible_score"] = False
     elif decision == "stop_no_eligible_score" and frozen is None:
+        if any(summary["primary_window_9"]["eligible"] is not False for summary in summaries):
+            raise ValueError("A2 no-eligible stop lacks complete ineligibility evidence")
         acceptance["frozen_score"] = None
         acceptance["no_eligible_score"] = True
     else:
@@ -682,12 +1378,31 @@ def _validate_output_path(output: Path, *, phase: str) -> Path:
 
 def _commit_acceptance(path: Path, acceptance: Mapping[str, object]) -> None:
     payload = canonical_json(dict(acceptance))
-    if path.exists():
-        if path.read_bytes() != payload:
-            raise ValueError("existing acceptance output has different bytes")
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(path, payload)
+    with _acceptance_lock(path):
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("existing acceptance output must be a regular file")
+            if path.read_bytes() != payload:
+                raise ValueError("existing acceptance output has different bytes")
+            return
+        atomic_write_bytes(path, payload)
+
+
+@contextmanager
+def _acceptance_lock(path: Path) -> Iterable[None]:
+    lock_path = path.with_name(f".{path.name}.lock")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("acceptance lock must be a regular file")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def main(argv: list[str] | None = None) -> int:
