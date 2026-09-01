@@ -333,3 +333,17 @@ The committed host-free evidence is:
 
 The reproducible staged procedure remains in
 [`docs/phase2b2b-cloud-runbook.md`](docs/phase2b2b-cloud-runbook.md).
+
+## Phase 2B3-A development score audit
+
+Phase 2B3-A adds six fail-closed stages for a four-ROI A1 stability/resource gate and an exact
+120-ROI A2 development score audit. Every invocation takes an explicit cloud base Python, mounted
+storage root, clean attached reviewed checkout, stage, and pinned reviewed commit. Compute stages
+require the two verified model directories; replay stages reject them and remain model-free.
+
+The safe pull workflow retrieves only a digest-addressed completed bundle manifest and its four
+allowlisted JSON files, verifies remote and local sizes/SHA-256 values, and publishes the bundle only
+after complete verification. Pixels, caches, tensors, models, logs, remote commit markers, lock
+files, instance endpoints, and credentials stay out of Git. The A0/A1/A2 checkpoints, exact command
+arrays, failure branches, local verification, and GPU pause conditions are in
+[`docs/phase2b3a-cloud-runbook.md`](docs/phase2b3a-cloud-runbook.md).
