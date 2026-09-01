@@ -2,9 +2,9 @@ import hashlib
 import json
 import multiprocessing
 import os
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from threading import BrokenBarrierError
 
 import pytest
 import torch
@@ -200,30 +200,50 @@ def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
     first_score = _score()
     second_score = torch.full((3, 4), 9.0, dtype=torch.float64)
     context = multiprocessing.get_context("fork")
-    both_writers_ready = context.Barrier(2)
+    first_acquired = context.Event()
+    second_attempting = context.Event()
     first_committed = context.Event()
-    original_commit = ScoreCache._atomic_commit
+    allow_first_release = context.Event()
+    observations = context.Queue()
+    original_lock = ScoreCache._identity_lock
 
-    def coordinated_commit(
-        cache: ScoreCache, committed_identity: ScoreIdentity, score: torch.Tensor
-    ) -> str:
-        if torch.equal(score, first_score):
-            try:
-                both_writers_ready.wait(timeout=1)
-            except BrokenBarrierError:
-                pass
-            result = original_commit(cache, committed_identity, score)
-            first_committed.set()
-            return result
-        both_writers_ready.wait(timeout=1)
-        assert first_committed.wait(timeout=1)
-        return original_commit(cache, committed_identity, score)
+    @contextmanager
+    def observed_lock(cache: ScoreCache, locked_identity: ScoreIdentity):
+        writer_name = multiprocessing.current_process().name
+        if writer_name == "first-score-writer":
+            with original_lock(cache, locked_identity):
+                observations.put("first-acquired")
+                first_acquired.set()
+                assert second_attempting.wait(timeout=2)
+                yield
+                observations.put("first-committed")
+                first_committed.set()
+                assert allow_first_release.wait(timeout=2)
+            observations.put("first-released")
+            return
+        assert writer_name == "second-score-writer"
+        assert first_acquired.wait(timeout=2)
+        observations.put("second-attempting")
+        second_attempting.set()
+        with original_lock(cache, locked_identity):
+            assert first_committed.is_set()
+            observations.put("second-acquired")
+            yield
 
-    monkeypatch.setattr(ScoreCache, "_atomic_commit", coordinated_commit)
-    first_writer = context.Process(target=_concurrent_put, args=(tmp_path, identity, first_score))
-    second_writer = context.Process(target=_concurrent_put, args=(tmp_path, identity, second_score))
+    monkeypatch.setattr(ScoreCache, "_identity_lock", observed_lock)
+    first_writer = context.Process(
+        name="first-score-writer", target=_concurrent_put, args=(tmp_path, identity, first_score)
+    )
+    second_writer = context.Process(
+        name="second-score-writer", target=_concurrent_put, args=(tmp_path, identity, second_score)
+    )
     first_writer.start()
     second_writer.start()
+
+    assert first_committed.wait(timeout=2)
+    tensor_path, metadata_path = _paths(tmp_path, identity)
+    first_committed_bytes = (tensor_path.read_bytes(), metadata_path.read_bytes())
+    allow_first_release.set()
     first_writer.join(timeout=5)
     second_writer.join(timeout=5)
 
@@ -231,6 +251,14 @@ def test_concurrent_score_writers_preserve_first_committed_valid_bytes(
     assert not second_writer.is_alive()
     assert first_writer.exitcode == 0
     assert second_writer.exitcode == 0
+    assert [observations.get(timeout=1) for _ in range(5)] == [
+        "first-acquired",
+        "second-attempting",
+        "first-committed",
+        "first-released",
+        "second-acquired",
+    ]
+    assert (tensor_path.read_bytes(), metadata_path.read_bytes()) == first_committed_bytes
     assert torch.equal(ScoreCache(tmp_path).get(identity), first_score)
 
 
