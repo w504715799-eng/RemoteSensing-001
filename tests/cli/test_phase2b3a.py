@@ -546,9 +546,21 @@ def test_preflight_validates_everything_before_constructing_models(
     assert events == ["preflight", "models"]
 
 
-@pytest.mark.parametrize("stage", ["single", "smoke", "development"])
+@pytest.mark.parametrize(
+    ("stage", "include_k5"),
+    [
+        ("single", None),
+        ("smoke", None),
+        ("development", False),
+        ("development", True),
+    ],
+    ids=("single", "smoke", "development-single-seed", "development-k5-enabled"),
+)
 def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    include_k5: bool | None,
 ) -> None:
     records = tuple({"sample_id": f"sample-{index}"} for index in range(120))
     hardware = SimpleNamespace(memory_total_mib=1024)
@@ -647,7 +659,9 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             for index in range(120)
         )
         monkeypatch.setattr(
-            phase2b3a, "_verify_a1_cloud_acceptance", lambda context: (False, "c" * 64)
+            phase2b3a,
+            "_verify_a1_cloud_acceptance",
+            lambda context: (include_k5, "c" * 64),
         )
         monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
         monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: pairs)
@@ -675,11 +689,12 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             del prediction_cache, score_cache
             assert passed_pairs is pairs
             assert iter(bundles) is bundles
-            expected = [(f"sample-{index}", (3407,)) for index in range(120)]
+            expected_seeds = phase2b3a.K5A_SEEDS if include_k5 else (3407,)
+            expected = [(f"sample-{index}", expected_seeds) for index in range(120)]
             assert list(bundles) == expected
             assert list(bundles) == []
             assert built == expected
-            assert include_ldsr_variance_k5 is False
+            assert include_ldsr_variance_k5 is include_k5
             assert code_revision == "a" * 40
             assert ordered_development_sample_ids == tuple(
                 f"sample-{index}" for index in range(120)
