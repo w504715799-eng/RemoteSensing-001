@@ -32,7 +32,7 @@ def _validate_configuration(
     sampling_temperature: float,
     histogram_matching: bool,
 ) -> None:
-    if type(seed) is not int or seed < 0:
+    if type(seed) is not int or not 0 <= seed <= np.iinfo(np.uint32).max:
         raise ValueError("seed must be a non-negative integer")
     if type(sampling_steps) is not int or sampling_steps <= 0:
         raise ValueError("sampling_steps must be a positive integer")
@@ -108,6 +108,17 @@ class LDSRS2X4:
         self.sampling_eta = sampling_eta
         self.sampling_temperature = sampling_temperature
         self.histogram_matching = histogram_matching
+
+    def for_seed(self, seed: int) -> LDSRS2X4:
+        return type(self)(
+            self._backend,
+            device=self.device,
+            seed=seed,
+            sampling_steps=self.sampling_steps,
+            sampling_eta=self.sampling_eta,
+            sampling_temperature=self.sampling_temperature,
+            histogram_matching=self.histogram_matching,
+        )
 
     @classmethod
     def from_pretrained(cls, model_dir: Path | str, *, device: str = "cuda:0") -> LDSRS2X4:

@@ -45,8 +45,58 @@ class FakeBackend:
         return self.output.to(value.device)
 
 
+class SeedSensitiveFakeBackend:
+    def __call__(self, value: torch.Tensor, **_kwargs: object) -> torch.Tensor:
+        return torch.rand((1, 4, 512, 512), device=value.device)
+
+
 def _input() -> torch.Tensor:
     return torch.full((4, 128, 128), 0.5, dtype=torch.float32)
+
+
+def test_for_seed_shares_backend_and_changes_only_seed_provenance() -> None:
+    backend = FakeBackend()
+    original = LDSRS2X4(backend, device="cpu", seed=3407)
+    seeded = original.for_seed(3412)
+
+    assert seeded is not original
+    assert seeded._backend is backend
+    assert seeded.seed == 3412
+    assert seeded.provenance() == original.provenance() | {"seed": 3412}
+
+
+def test_for_seed_predictions_are_repeatable_and_seed_distinct() -> None:
+    model = LDSRS2X4(SeedSensitiveFakeBackend(), device="cpu")
+
+    first = model.for_seed(3408).predict(_input())
+    replay = model.for_seed(3408).predict(_input())
+    other = model.for_seed(3409).predict(_input())
+
+    assert torch.equal(first, replay)
+    assert not torch.equal(first, other)
+
+
+@pytest.mark.parametrize("seed", [True, -1, 1.0, np.iinfo(np.uint32).max + 1])
+def test_for_seed_rejects_invalid_seed_without_mutating_original(seed: object) -> None:
+    original = LDSRS2X4(FakeBackend(), device="cpu", seed=3407)
+    provenance = original.provenance()
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        original.for_seed(seed)  # type: ignore[arg-type]
+
+    assert original.seed == 3407
+    assert original.provenance() == provenance
+
+
+def test_for_seed_does_not_mutate_original_prediction() -> None:
+    backend = SeedSensitiveFakeBackend()
+    original = LDSRS2X4(backend, device="cpu", seed=3407)
+    expected = original.predict(_input())
+
+    original.for_seed(3412).predict(_input())
+
+    assert original.seed == 3407
+    assert torch.equal(original.predict(_input()), expected)
 
 
 def _numpy_state_equal(left: tuple[object, ...], right: tuple[object, ...]) -> bool:
