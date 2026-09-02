@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -12,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-
 REPOSITORY = Path(__file__).resolve().parents[2]
 CHECKPOINT = REPOSITORY / "scripts" / "phase2b3a" / "checkpoint_workspace.sh"
+RESTORE = REPOSITORY / "scripts" / "phase2b3a" / "restore_workspace.sh"
 REVISION = "a" * 40
 SELECTION_BYTES = b'{"fixture":"selection"}\n'
 INPUT_AUDIT_BYTES = b'{"fixture":"input-audit"}\n'
@@ -125,6 +126,70 @@ def _checkpoint_environment(
         "  *) exit 97 ;;\n"
         "esac\n",
     )
+    _make_executable(
+        fake_bin / "mount",
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "calls_path = os.environ['FAKE_MOUNT_CALLS']\n"
+        "with open(calls_path, 'a', encoding='utf-8') as stream:\n"
+        "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "with open(calls_path, encoding='utf-8') as stream:\n"
+        "    call_number = sum(1 for _ in stream)\n"
+        "if call_number == int(os.environ.get('FAKE_MOUNT_FAIL_CALL', '0')):\n"
+        "    raise SystemExit(32)\n"
+        "state_path = os.environ['FAKE_MOUNT_STATE']\n"
+        "try:\n"
+        "    with open(state_path, encoding='utf-8') as stream:\n"
+        "        state = json.load(stream)\n"
+        "except FileNotFoundError:\n"
+        "    state = {}\n"
+        "if sys.argv[1:2] == ['--bind']:\n"
+        "    state[sys.argv[3]] = sys.argv[2]\n"
+        "with open(state_path, 'w', encoding='utf-8') as stream:\n"
+        "    json.dump(state, stream)\n",
+    )
+    _make_executable(
+        fake_bin / "umount",
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['FAKE_UMOUNT_CALLS'], 'a', encoding='utf-8') as stream:\n"
+        "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "state_path = os.environ['FAKE_MOUNT_STATE']\n"
+        "try:\n"
+        "    with open(state_path, encoding='utf-8') as stream:\n"
+        "        state = json.load(stream)\n"
+        "except FileNotFoundError:\n"
+        "    state = {}\n"
+        "state.pop(sys.argv[-1], None)\n"
+        "with open(state_path, 'w', encoding='utf-8') as stream:\n"
+        "    json.dump(state, stream)\n",
+    )
+    _make_executable(
+        fake_bin / "findmnt",
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "arguments = sys.argv[1:]\n"
+        "with open(os.environ['FAKE_FINDMNT_CALLS'], 'a', encoding='utf-8') as stream:\n"
+        "    stream.write(json.dumps(arguments) + '\\n')\n"
+        "if (len(arguments) != 5 or arguments[:2] != ['-n', '-o'] "
+        "or arguments[3] != '--target'):\n"
+        "    raise SystemExit(98)\n"
+        "with open(os.environ['FAKE_MOUNT_STATE'], encoding='utf-8') as stream:\n"
+        "    state = json.load(stream)\n"
+        "target = arguments[4]\n"
+        "if target not in state:\n"
+        "    raise SystemExit(1)\n"
+        "if arguments[2] == 'SOURCE':\n"
+        "    if target == os.environ.get('FAKE_FINDMNT_WRONG_SOURCE_TARGET'):\n"
+        "        print('/unexpected/source')\n"
+        "    else:\n"
+        "        print(state[target])\n"
+        "elif arguments[2] == 'OPTIONS':\n"
+        "    no_ro = target == os.environ.get('FAKE_FINDMNT_NO_RO_TARGET')\n"
+        "    print('rw,relatime,bind' if no_ro else 'rw,relatime,bind,ro')\n"
+        "else:\n"
+        "    raise SystemExit(98)\n",
+    )
     for command in ("conda", "pip", "curl", "wget"):
         _make_executable(
             fake_bin / command,
@@ -138,6 +203,9 @@ def _checkpoint_environment(
             "FAKE_GIT_BRANCH": git_branch,
             "FAKE_GIT_HEAD": git_head,
             "FAKE_GIT_STATUS": git_status,
+            "FAKE_FINDMNT_CALLS": str(tmp_path / "findmnt-calls.jsonl"),
+            "FAKE_MOUNT_CALLS": str(tmp_path / "mount-calls.jsonl"),
+            "FAKE_MOUNT_STATE": str(tmp_path / "mount-state.json"),
             "FAKE_PERSISTENT_AFTER_BUILD_KIB": "" if persistent_after_build_kib is None else str(persistent_after_build_kib),
             "FAKE_PERSISTENT_INODES": str(persistent_inodes),
             "FAKE_PERSISTENT_KIB": str(persistent_available_kib),
@@ -147,6 +215,7 @@ def _checkpoint_environment(
             "FAKE_WORK_KIB": str(work_available_kib),
             "FAKE_WORK_MOUNTED": "1" if work_mounted else "0",
             "FAKE_WORK_ROOT": str(work_root),
+            "FAKE_UMOUNT_CALLS": str(tmp_path / "umount-calls.jsonl"),
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "PROHIBITED_COMMAND": str(prohibited),
         },
@@ -234,6 +303,140 @@ def _invoke_checkpoint(
         env=environment,
     )
     return completed, persistent, prohibited
+
+
+def _recorded_calls(path: Path) -> list[list[str]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _invoke_restore(
+    tmp_path: Path, **boundary_state: object
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Path], Path]:
+    workspace = tmp_path / "work-mount"
+    persistent = tmp_path / "persistent-mount"
+    repository = workspace / "reviewed-repository"
+    _write_workspace(workspace, "a0")
+    persistent.mkdir()
+    (repository / "src" / "trustsr").mkdir(parents=True)
+    (repository / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
+    (repository / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    base_python = _real_base_python(tmp_path / "base-python")
+    restore_git_head = str(boundary_state.pop("git_head", REVISION))
+    environment, prohibited = _checkpoint_environment(
+        tmp_path, workspace, persistent, repository
+    )
+    environment.update(
+        {
+            "FAKE_INPUT_AUDIT_DIGEST": INPUT_AUDIT_DIGEST,
+            "FAKE_SELECTION_DIGEST": SELECTION_DIGEST,
+        }
+    )
+    built = subprocess.run(
+        [
+            "bash",
+            str(CHECKPOINT),
+            str(base_python),
+            str(workspace),
+            str(persistent),
+            str(repository),
+            "a0",
+            REVISION,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    if built.returncode != 0:
+        raise AssertionError(f"restore fixture checkpoint failed: {built.stderr}")
+    manifest_basename = next(
+        (persistent / "trustsr-phase2b3a-checkpoints").glob("*.json")
+    ).name
+    manifest_basename = str(
+        boundary_state.pop("manifest_basename", manifest_basename)
+    )
+    shutil.rmtree(workspace / "trustsr")
+    environment["FAKE_GIT_HEAD"] = restore_git_head
+
+    models = persistent / "models"
+    sen2_source = models / "sen2srlite"
+    ldsr_source = models / "ldsr-s2"
+    sen2_source.mkdir(parents=True)
+    ldsr_source.mkdir()
+    (sen2_source / "weights.bin").write_bytes(b"sen2")
+    (ldsr_source / "weights.bin").write_bytes(b"ldsr")
+    paths = {
+        "workspace": workspace,
+        "persistent": persistent,
+        "repository": repository,
+        "sen2_source": sen2_source,
+        "ldsr_source": ldsr_source,
+        "mount_calls": tmp_path / "mount-calls.jsonl",
+        "umount_calls": tmp_path / "umount-calls.jsonl",
+        "findmnt_calls": tmp_path / "findmnt-calls.jsonl",
+    }
+
+    state = str(boundary_state.pop("state", ""))
+    if state == "live-trustsr":
+        (workspace / "trustsr").mkdir()
+        (workspace / "trustsr" / "collision").write_text("live", encoding="utf-8")
+    elif state == "missing-model-source":
+        shutil.rmtree(sen2_source)
+    elif state == "outside-model-source":
+        sen2_source = tmp_path / "outside-model"
+        sen2_source.mkdir()
+        paths["sen2_source"] = sen2_source
+    elif state == "symlink-model-source":
+        real_source = models / "real-sen2srlite"
+        sen2_source.rename(real_source)
+        sen2_source.symlink_to(real_source, target_is_directory=True)
+    elif state == "symlink-model-target":
+        target_parent = workspace / "model-mounts"
+        target_parent.mkdir()
+        outside_target = tmp_path / "outside-target"
+        outside_target.mkdir()
+        (target_parent / "sen2srlite").symlink_to(outside_target, target_is_directory=True)
+    elif state == "nonempty-model-target":
+        target = workspace / "model-mounts" / "sen2srlite"
+        target.mkdir(parents=True)
+        (target / "collision").write_text("occupied", encoding="utf-8")
+
+    fail_call = boundary_state.pop("mount_fail_call", None)
+    if fail_call is not None:
+        environment["FAKE_MOUNT_FAIL_CALL"] = str(fail_call)
+    no_ro_target = boundary_state.pop("no_ro_target", None)
+    if no_ro_target is not None:
+        environment["FAKE_FINDMNT_NO_RO_TARGET"] = str(
+            workspace / "model-mounts" / str(no_ro_target)
+        )
+    wrong_source_target = boundary_state.pop("wrong_source_target", None)
+    if wrong_source_target is not None:
+        environment["FAKE_FINDMNT_WRONG_SOURCE_TARGET"] = str(
+            workspace / "model-mounts" / str(wrong_source_target)
+        )
+    if boundary_state:
+        raise AssertionError(f"unknown restore boundary state: {boundary_state}")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(RESTORE),
+            str(base_python),
+            str(workspace),
+            str(persistent),
+            str(repository),
+            manifest_basename,
+            str(sen2_source),
+            str(ldsr_source),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    return completed, paths, prohibited
 
 
 @pytest.mark.parametrize("stage", ["a0", "a1", "a2"])
@@ -333,4 +536,115 @@ def test_checkpoint_script_rejects_malformed_or_disagreeing_module_records(
     )
     assert completed.returncode == 2, completed.stderr
     assert completed.stdout == ""
+    assert not prohibited.exists()
+
+
+def test_restore_script_mounts_models_read_only_then_restores_explicit_checkpoint(
+    tmp_path: Path,
+) -> None:
+    completed, paths, prohibited = _invoke_restore(tmp_path)
+    workspace = paths["workspace"]
+    sen2_target = workspace / "model-mounts" / "sen2srlite"
+    ldsr_target = workspace / "model-mounts" / "ldsr-s2"
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.count("\n") == 1
+    assert json.loads(completed.stdout)["status"] == "restore"
+    assert _recorded_calls(paths["mount_calls"]) == [
+        ["--bind", str(paths["sen2_source"]), str(sen2_target)],
+        ["-o", "remount,bind,ro", str(sen2_target)],
+        ["--bind", str(paths["ldsr_source"]), str(ldsr_target)],
+        ["-o", "remount,bind,ro", str(ldsr_target)],
+    ]
+    assert _recorded_calls(paths["findmnt_calls"]) == [
+        ["-n", "-o", "SOURCE", "--target", str(sen2_target)],
+        ["-n", "-o", "OPTIONS", "--target", str(sen2_target)],
+        ["-n", "-o", "SOURCE", "--target", str(ldsr_target)],
+        ["-n", "-o", "OPTIONS", "--target", str(ldsr_target)],
+    ]
+    assert _recorded_calls(paths["umount_calls"]) == []
+    assert stat.S_IMODE(sen2_target.stat().st_mode) == 0o700
+    assert stat.S_IMODE(ldsr_target.stat().st_mode) == 0o700
+    assert (workspace / "trustsr/phase2b1b").is_dir()
+    assert (workspace / "trustsr/phase2b2a").is_dir()
+    assert (workspace / "trustsr/phase2b3a").is_dir()
+    assert not prohibited.exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "state"),
+    [
+        ("unsafe-manifest", {"manifest_basename": "../checkpoint.json"}),
+        ("mismatched-git-commit", {"git_head": "b" * 40}),
+        ("live-trustsr", {"state": "live-trustsr"}),
+        ("missing-model-source", {"state": "missing-model-source"}),
+        ("outside-model-source", {"state": "outside-model-source"}),
+        ("symlink-model-source", {"state": "symlink-model-source"}),
+        ("symlink-model-target", {"state": "symlink-model-target"}),
+        ("nonempty-model-target", {"state": "nonempty-model-target"}),
+    ],
+)
+def test_restore_script_rejects_pre_mount_boundary(
+    tmp_path: Path, name: str, state: dict[str, object]
+) -> None:
+    completed, paths, prohibited = _invoke_restore(tmp_path, **state)
+
+    assert completed.returncode == 2, (name, completed.stderr)
+    assert completed.stdout == ""
+    assert _recorded_calls(paths["mount_calls"]) == []
+    if name == "live-trustsr":
+        assert (paths["workspace"] / "trustsr/collision").read_text(encoding="utf-8") == "live"
+    else:
+        assert not (paths["workspace"] / "trustsr").exists()
+    assert not prohibited.exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "state", "expected_mount_count", "expected_unmount_targets"),
+    [
+        (
+            "second-bind-failure",
+            {"mount_fail_call": 3},
+            3,
+            ["sen2srlite"],
+        ),
+        (
+            "second-read-only-remount-failure",
+            {"mount_fail_call": 4},
+            4,
+            ["ldsr-s2", "sen2srlite"],
+        ),
+        (
+            "reported-options-lack-ro",
+            {"no_ro_target": "sen2srlite"},
+            2,
+            ["sen2srlite"],
+        ),
+        (
+            "reported-source-mismatch",
+            {"wrong_source_target": "sen2srlite"},
+            2,
+            ["sen2srlite"],
+        ),
+    ],
+)
+def test_restore_script_unwinds_failed_mount_transaction_in_reverse_order(
+    tmp_path: Path,
+    name: str,
+    state: dict[str, object],
+    expected_mount_count: int,
+    expected_unmount_targets: list[str],
+) -> None:
+    completed, paths, prohibited = _invoke_restore(tmp_path, **state)
+    workspace = paths["workspace"]
+
+    assert completed.returncode == 2, (name, completed.stderr)
+    assert completed.stdout == ""
+    assert len(_recorded_calls(paths["mount_calls"])) == expected_mount_count
+    assert _recorded_calls(paths["umount_calls"]) == [
+        ["--", str(workspace / "model-mounts" / basename)]
+        for basename in expected_unmount_targets
+    ]
+    assert not (workspace / "trustsr").exists()
+    assert not (workspace / "model-mounts").exists()
     assert not prohibited.exists()
