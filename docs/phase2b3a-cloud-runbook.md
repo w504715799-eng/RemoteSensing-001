@@ -146,10 +146,22 @@ for an existing checkpoint.
 
 ```bash
 set -euo pipefail
-mkdir -p -- "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a" "$PHASE2B3A_WORK_ROOT/model-mounts"
-[[ -d "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a" && ! -L "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a" ]]
-[[ -z "$(find "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a" -mindepth 1 -print -quit)" ]]
+trustsr_parent="$PHASE2B3A_WORK_ROOT/trustsr"
+phase2b3a_target="$trustsr_parent/phase2b3a"
+model_mount_parent="$PHASE2B3A_WORK_ROOT/model-mounts"
+[[ -d "$trustsr_parent" && ! -L "$trustsr_parent" ]]
+[[ "$(realpath -e -- "$trustsr_parent")" == "$trustsr_parent" ]]
+[[ ! -e "$phase2b3a_target" && ! -L "$phase2b3a_target" ]]
+[[ ! -e "$model_mount_parent" && ! -L "$model_mount_parent" ]]
+mkdir -- "$phase2b3a_target" "$model_mount_parent"
+[[ "$(realpath -e -- "$phase2b3a_target")" == "$phase2b3a_target" ]]
+[[ "$(realpath -e -- "$model_mount_parent")" == "$model_mount_parent" ]]
+[[ -z "$(find "$phase2b3a_target" -mindepth 1 -print -quit)" ]]
+[[ ! -e "$PHASE2B3A_SEN2SRLITE_DIR" && ! -L "$PHASE2B3A_SEN2SRLITE_DIR" ]]
+[[ ! -e "$PHASE2B3A_LDSR_DIR" && ! -L "$PHASE2B3A_LDSR_DIR" ]]
 mkdir -- "$PHASE2B3A_SEN2SRLITE_DIR" "$PHASE2B3A_LDSR_DIR"
+[[ "$(realpath -e -- "$PHASE2B3A_SEN2SRLITE_DIR")" == "$PHASE2B3A_SEN2SRLITE_DIR" ]]
+[[ "$(realpath -e -- "$PHASE2B3A_LDSR_DIR")" == "$PHASE2B3A_LDSR_DIR" ]]
 mount --bind "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_SEN2SRLITE_DIR"
 mount -o remount,bind,ro "$PHASE2B3A_SEN2SRLITE_DIR"
 mount --bind "$PHASE2B3A_LDSR_SOURCE" "$PHASE2B3A_LDSR_DIR"
@@ -187,18 +199,35 @@ PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" -m trustsr.artif
 
 ## A1 and A2
 
-For A1, from `PREFLIGHT_OK`, run `single`, `smoke`, then `replay`. Successful scientific
-verification establishes `A1_OK`. In the **local reviewed checkout**, pull, verify, and commit only
-the exact allowlist; do not run these commands in the cloud shell.
+For A1, in the cloud shell and from `PREFLIGHT_OK`, execute the reviewed-A0 wrappers in this exact
+order. Successful scientific verification establishes `A1_OK`.
+
+```bash
+phase2b3a_compute single
+phase2b3a_compute smoke
+phase2b3a_replay replay
+```
+
+Then, in the **local reviewed checkout**, pull, verify, and commit only the exact allowlist; do not
+run these commands in the cloud shell.
 
 ```bash
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
+: "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
+: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
 : "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
 : "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
 : "${PHASE2B3A_A1_BUNDLE:?set new absolute local A1 bundle destination}"
+[[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
+[[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
-"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_STORAGE_ROOT" "$PHASE2B3A_A1_BUNDLE"
+"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A1_BUNDLE"
 uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json
 cp -- "$PHASE2B3A_A1_BUNDLE/phase2b3a-a1-result.json" artifacts/phase2b3a/sen2naipv2-development-smoke-v1.json
 cp -- "$PHASE2B3A_A1_BUNDLE/phase2b3a-a1-cache-audit.json" artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v1.json
@@ -242,11 +271,20 @@ establishes terminal `A2_CHECKPOINTED`.
 ```bash
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
+: "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
+: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
 : "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
 : "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
 : "${PHASE2B3A_A2_BUNDLE:?set new absolute local A2 bundle destination}"
+[[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
+[[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
+[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
-"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_STORAGE_ROOT" "$PHASE2B3A_A2_BUNDLE"
+"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A2_BUNDLE"
 uv run trustsr-phase2b3a-verify a2 --bundle "$PHASE2B3A_A2_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
 cp -- "$PHASE2B3A_A2_BUNDLE/phase2b3a-a2-result.json" artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json
 cp -- "$PHASE2B3A_A2_BUNDLE/phase2b3a-a2-cache-audit.json" artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
