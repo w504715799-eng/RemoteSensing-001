@@ -8,9 +8,9 @@ import os
 import stat
 import tarfile
 import tempfile
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from trustsr.jsonio import canonical_json
 
@@ -109,69 +109,15 @@ def _require_directory(path: Path, description: str) -> os.stat_result:
     return result
 
 
-def _require_source_file(path: Path, description: str) -> os.stat_result:
-    result = _lstat(path, description)
-    if stat.S_ISLNK(result.st_mode):
-        raise CheckpointError(f"{description} must not be a symlink")
-    if not stat.S_ISREG(result.st_mode):
-        raise CheckpointError(f"{description} must be a regular file")
-    if result.st_nlink != 1:
-        raise CheckpointError(f"{description} must not be a hard link")
-    return result
-
-
-def _open_source_file(path: Path, expected: os.stat_result, description: str) -> int:
-    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise CheckpointError(f"{description} could not be opened safely") from exc
-    current = os.fstat(descriptor)
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or current.st_dev != expected.st_dev
-        or current.st_ino != expected.st_ino
-        or current.st_size != expected.st_size
-        or current.st_nlink != 1
-    ):
-        os.close(descriptor)
-        raise CheckpointError(f"{description} changed while being opened")
-    return descriptor
-
-
-def _hash_source_file(path: Path, description: str) -> str:
-    expected = _require_source_file(path, description)
-    descriptor = _open_source_file(path, expected, description)
-    digest = hashlib.sha256()
-    try:
-        with os.fdopen(descriptor, "rb") as stream:
-            for block in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
-                digest.update(block)
-            current = os.fstat(stream.fileno())
-            if current.st_size != expected.st_size or current.st_mtime_ns != expected.st_mtime_ns:
-                raise CheckpointError(f"{description} changed while being read")
-    except OSError as exc:
-        raise CheckpointError(f"{description} could not be read") from exc
-    return digest.hexdigest()
-
-
-def _validate_frozen_inputs(workspace_root: Path) -> None:
-    selection = (
-        workspace_root
-        / "trustsr/phase2b1b/selections"
-        / SELECTION_MANIFEST_SHA256
-        / "samples.jsonl"
-    )
-    if _hash_source_file(selection, "frozen selection input") != SELECTION_MANIFEST_SHA256:
-        raise CheckpointError("frozen selection input digest mismatch")
-    audit = (
-        workspace_root
-        / "trustsr/phase2b2a/input-audits"
-        / SELECTION_MANIFEST_SHA256
-        / "phase2b2a-input-audit.json"
-    )
-    if _hash_source_file(audit, "frozen input audit") != INPUT_AUDIT_SHA256:
-        raise CheckpointError("frozen input audit digest mismatch")
+def _frozen_input_digests() -> dict[str, str]:
+    return {
+        (
+            f"trustsr/phase2b1b/selections/{SELECTION_MANIFEST_SHA256}/samples.jsonl"
+        ): SELECTION_MANIFEST_SHA256,
+        (
+            f"trustsr/phase2b2a/input-audits/{SELECTION_MANIFEST_SHA256}/phase2b2a-input-audit.json"
+        ): INPUT_AUDIT_SHA256,
+    }
 
 
 def _validated_member_name(name: str) -> str:
@@ -201,71 +147,166 @@ def _normalized_info(name: str, source: os.stat_result) -> tarfile.TarInfo:
     return info
 
 
-def _scan_directory(
-    directory: Path, archive_name: str, expected: os.stat_result
-) -> Iterator[tuple[Path, str, os.stat_result]]:
-    yield directory, archive_name, expected
+class _DigestingReader:
+    """File reader that hashes exactly the bytes consumed by ``TarFile``."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = stream
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        payload = self._stream.read(size)
+        self.digest.update(payload)
+        return payload
+
+
+def _open_workspace_root(workspace_root: Path) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
     try:
-        with os.scandir(directory) as entries:
-            ordered = sorted(entries, key=lambda entry: entry.name.encode("utf-8"))
+        return os.open(workspace_root, flags)
+    except OSError as exc:
+        raise CheckpointError("workspace root must be a non-symlink directory") from exc
+
+
+def _open_child_directory(parent_descriptor: int, name: str, description: str) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        return os.open(name, flags, dir_fd=parent_descriptor)
+    except FileNotFoundError as exc:
+        raise CheckpointError(f"missing archive root: {description}") from exc
+    except OSError as exc:
+        raise CheckpointError(f"source path component {description} is unsafe") from exc
+
+
+def _open_archive_root(workspace_descriptor: int, root: str) -> int:
+    current = os.dup(workspace_descriptor)
+    try:
+        for component in PurePosixPath(root).parts:
+            child = _open_child_directory(current, component, root)
+            os.close(current)
+            current = child
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _directory_changed(before: os.stat_result, after: os.stat_result) -> bool:
+    return (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    )
+
+
+def _add_source_file(
+    archive: tarfile.TarFile,
+    directory_descriptor: int,
+    entry_name: str,
+    archive_name: str,
+    source: os.stat_result,
+    frozen_inputs: dict[str, str],
+) -> None:
+    if source.st_nlink != 1:
+        raise CheckpointError("source tree contains a hard link")
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(entry_name, flags, dir_fd=directory_descriptor)
+    except OSError as exc:
+        raise CheckpointError("source file could not be opened safely") from exc
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != source.st_dev
+                or opened.st_ino != source.st_ino
+                or opened.st_size != source.st_size
+                or opened.st_nlink != 1
+            ):
+                raise CheckpointError("source file changed while being opened")
+            reader = _DigestingReader(stream)
+            archive.addfile(_normalized_info(archive_name, source), reader)
+            current = os.fstat(stream.fileno())
+            if current.st_size != source.st_size or current.st_mtime_ns != source.st_mtime_ns:
+                raise CheckpointError("source file changed while being archived")
+    except OSError as exc:
+        raise CheckpointError("source file could not be archived") from exc
+    expected_digest = frozen_inputs.pop(archive_name, None)
+    if expected_digest is not None and reader.digest.hexdigest() != expected_digest:
+        raise CheckpointError("frozen selection or input audit digest mismatch")
+
+
+def _write_directory(
+    archive: tarfile.TarFile,
+    directory_descriptor: int,
+    archive_name: str,
+    frozen_inputs: dict[str, str],
+) -> None:
+    before = os.fstat(directory_descriptor)
+    if not stat.S_ISDIR(before.st_mode):
+        raise CheckpointError("source tree permits only regular files and directories")
+    archive.addfile(_normalized_info(archive_name, before))
+    try:
+        with os.scandir(directory_descriptor) as entries:
+            names = sorted((entry.name for entry in entries), key=lambda name: name.encode("utf-8"))
     except UnicodeEncodeError as exc:
         raise CheckpointError("source filename is not valid UTF-8") from exc
     except OSError as exc:
         raise CheckpointError("source directory could not be scanned") from exc
-    for entry in ordered:
-        path = directory / entry.name
-        name = _validated_member_name(f"{archive_name}/{entry.name}")
+    for entry_name in names:
+        name = _validated_member_name(f"{archive_name}/{entry_name}")
         try:
-            source = entry.stat(follow_symlinks=False)
+            source = os.stat(entry_name, dir_fd=directory_descriptor, follow_symlinks=False)
         except OSError as exc:
             raise CheckpointError("source entry is unavailable") from exc
         if stat.S_ISLNK(source.st_mode):
             raise CheckpointError("source tree contains a symlink")
         if stat.S_ISDIR(source.st_mode):
-            yield from _scan_directory(path, name, source)
+            child_descriptor = _open_child_directory(directory_descriptor, entry_name, name)
+            try:
+                opened = os.fstat(child_descriptor)
+                if opened.st_dev != source.st_dev or opened.st_ino != source.st_ino:
+                    raise CheckpointError("source directory changed while being opened")
+                _write_directory(archive, child_descriptor, name, frozen_inputs)
+            finally:
+                os.close(child_descriptor)
         elif stat.S_ISREG(source.st_mode):
-            if source.st_nlink != 1:
-                raise CheckpointError("source tree contains a hard link")
-            yield path, name, source
+            _add_source_file(
+                archive,
+                directory_descriptor,
+                entry_name,
+                name,
+                source,
+                frozen_inputs,
+            )
         else:
             raise CheckpointError("source tree permits only regular files and directories")
-    current = _lstat(directory, "source directory")
-    if current.st_dev != expected.st_dev or current.st_ino != expected.st_ino:
+    if _directory_changed(before, os.fstat(directory_descriptor)):
         raise CheckpointError("source directory changed while being scanned")
 
 
 def _write_archive(workspace_root: Path, temporary_path: Path) -> None:
-    with tarfile.open(
-        temporary_path,
-        mode="w:",
-        format=tarfile.USTAR_FORMAT,
-        dereference=False,
-    ) as archive:
-        for root in ARCHIVE_ROOTS:
-            root_path = workspace_root / root
-            try:
-                root_stat = _require_directory(root_path, f"archive root {root}")
-            except CheckpointError as exc:
-                if not root_path.exists() and not root_path.is_symlink():
-                    raise CheckpointError(f"missing archive root: {root}") from exc
-                raise
-            for path, name, source in _scan_directory(root_path, root, root_stat):
-                info = _normalized_info(name, source)
-                if info.isdir():
-                    archive.addfile(info)
-                    continue
-                descriptor = _open_source_file(path, source, "source file")
+    workspace_descriptor = _open_workspace_root(workspace_root)
+    frozen_inputs = _frozen_input_digests()
+    try:
+        with tarfile.open(
+            temporary_path,
+            mode="w:",
+            format=tarfile.USTAR_FORMAT,
+            dereference=False,
+        ) as archive:
+            for root in ARCHIVE_ROOTS:
+                root_descriptor = _open_archive_root(workspace_descriptor, root)
                 try:
-                    with os.fdopen(descriptor, "rb") as stream:
-                        archive.addfile(info, stream)
-                        current = os.fstat(stream.fileno())
-                        if (
-                            current.st_size != source.st_size
-                            or current.st_mtime_ns != source.st_mtime_ns
-                        ):
-                            raise CheckpointError("source file changed while being archived")
-                except OSError as exc:
-                    raise CheckpointError("source file could not be archived") from exc
+                    _write_directory(archive, root_descriptor, root, frozen_inputs)
+                finally:
+                    os.close(root_descriptor)
+        if frozen_inputs:
+            raise CheckpointError("frozen source input is missing from archive")
+    finally:
+        os.close(workspace_descriptor)
 
 
 def _fsync_path(path: Path) -> None:
@@ -343,13 +384,6 @@ def build_checkpoint(
     completed_stage, reviewed_commit = _validate_stage_and_commit(completed_stage, reviewed_commit)
     workspace_root = Path(workspace_root)
     output_directory = Path(output_directory)
-    _require_directory(workspace_root, "workspace root")
-    for root in ARCHIVE_ROOTS:
-        root_path = workspace_root / root
-        if not root_path.exists() and not root_path.is_symlink():
-            raise CheckpointError(f"missing archive root: {root}")
-        _require_directory(root_path, f"archive root {root}")
-    _validate_frozen_inputs(workspace_root)
     output_directory.mkdir(parents=True, exist_ok=True)
     _require_directory(output_directory, "output directory")
 

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
+import select
 import socket
 import tarfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -77,6 +81,55 @@ def _manifest_payload(built: checkpoint.BuiltCheckpoint) -> dict[str, object]:
 
 def _write_manifest(path: Path, payload: dict[str, object]) -> None:
     path.write_bytes(canonical_json(payload))
+
+
+def _mutate_after_archive_starts(
+    output_directory: Path, mutation: callable[[], None], *, delay_seconds: float = 0.0
+) -> tuple[threading.Thread, threading.Event]:
+    completed = threading.Event()
+
+    def mutate() -> None:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if any(output_directory.glob(".phase2b3a-archive-*")):
+                if delay_seconds:
+                    time.sleep(delay_seconds)
+                mutation()
+                completed.set()
+                return
+            time.sleep(0.001)
+
+    worker = threading.Thread(target=mutate)
+    worker.start()
+    return worker, completed
+
+
+def _mutate_after_file_opens(
+    path: Path, mutation: callable[[], None]
+) -> tuple[threading.Thread, threading.Event]:
+    libc = ctypes.CDLL(None, use_errno=True)
+    descriptor = libc.inotify_init1(os.O_CLOEXEC)
+    if descriptor < 0:
+        raise OSError(ctypes.get_errno(), "inotify_init1 failed")
+    watch = libc.inotify_add_watch(descriptor, os.fsencode(path), 0x00000020)
+    if watch < 0:
+        os.close(descriptor)
+        raise OSError(ctypes.get_errno(), "inotify_add_watch failed")
+    completed = threading.Event()
+
+    def mutate() -> None:
+        try:
+            readable, _, _ = select.select([descriptor], [], [], 10)
+            if readable:
+                os.read(descriptor, 4096)
+                mutation()
+                completed.set()
+        finally:
+            os.close(descriptor)
+
+    worker = threading.Thread(target=mutate)
+    worker.start()
+    return worker, completed
 
 
 def test_production_frozen_digests_match_the_approved_spec() -> None:
@@ -241,6 +294,71 @@ def test_build_checkpoint_rejects_changed_frozen_input(
         build_checkpoint(
             workspace, tmp_path / "out", completed_stage="a0", reviewed_commit="a" * 40
         )
+
+
+def test_build_checkpoint_hashes_the_frozen_stream_written_to_the_archive(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    before_selection = workspace / "trustsr/phase2b1b/000-before-selection.bin"
+    before_selection.write_bytes(b"x" * (16 * 1024 * 1024))
+    selection = workspace / "trustsr/phase2b1b/selections" / POST_SHA256 / "samples.jsonl"
+    output_directory = tmp_path / "out"
+    output_directory.mkdir()
+    worker, mutated = _mutate_after_archive_starts(
+        output_directory, lambda: selection.write_bytes(b"mutated after validation")
+    )
+    try:
+        with pytest.raises(CheckpointError, match="frozen selection"):
+            build_checkpoint(
+                workspace,
+                output_directory,
+                completed_stage="a0",
+                reviewed_commit="a" * 40,
+            )
+    finally:
+        worker.join(timeout=10)
+    assert mutated.is_set()
+
+
+def test_build_checkpoint_rejects_intermediate_source_symlink(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "trustsr").rename(outside / "trustsr")
+    (workspace / "trustsr").symlink_to(outside / "trustsr", target_is_directory=True)
+
+    with pytest.raises(CheckpointError, match="source|archive root|symlink"):
+        build_checkpoint(
+            workspace, tmp_path / "out", completed_stage="a0", reviewed_commit="a" * 40
+        )
+
+
+def test_build_checkpoint_rejects_directory_mutation_after_scandir_snapshot(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    phase_root = workspace / "trustsr/phase2b3a"
+    (phase_root / "000-slow.bin").write_bytes(b"x" * (64 * 1024 * 1024))
+    output_directory = tmp_path / "out"
+    output_directory.mkdir()
+    worker, mutated = _mutate_after_file_opens(
+        phase_root / "000-slow.bin",
+        lambda: (phase_root / "new-after-snapshot.bin").write_bytes(b"new"),
+    )
+    try:
+        with pytest.raises(CheckpointError, match="source directory changed"):
+            build_checkpoint(
+                workspace,
+                output_directory,
+                completed_stage="a0",
+                reviewed_commit="a" * 40,
+            )
+    finally:
+        worker.join(timeout=10)
+    assert mutated.is_set()
 
 
 def test_load_manifest_rejects_noncanonical_json(
