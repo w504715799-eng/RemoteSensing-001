@@ -680,6 +680,30 @@ def test_publish_checkpoint_copies_archive_before_accepting_manifest(
     assert not any("latest" in path.name for path in persistent.iterdir())
 
 
+def test_publish_checkpoint_does_not_require_unlink_to_drop_a_hard_link(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    original_unlink = Path.unlink
+
+    def preserve_persistent_partial(path: Path, *args: object, **kwargs: object) -> None:
+        if path.parent == persistent and path.name.endswith(".part"):
+            return
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", preserve_persistent_partial)
+
+    archive_path, manifest_path = publish_checkpoint(built, persistent)
+
+    assert archive_path.stat().st_nlink == 1
+    assert manifest_path.stat().st_nlink == 1
+    assert not any(path.name.endswith(".part") for path in persistent.iterdir())
+
+
 def test_publish_checkpoint_is_idempotent_but_never_overwrites(
     tmp_path: Path, frozen_fixture_digests: None
 ) -> None:

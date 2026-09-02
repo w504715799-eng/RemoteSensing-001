@@ -977,13 +977,13 @@ def _create_partial(path: Path) -> int:
 
 def _link_partial(partial_path: Path, final_path: Path, persistent_directory: Path) -> None:
     try:
-        os.link(partial_path, final_path, follow_symlinks=False)
-    except FileExistsError as exc:
+        _rename_noreplace(partial_path, final_path)
+    except CheckpointError as exc:
+        if final_path.exists() or final_path.is_symlink():
+            partial_path.unlink(missing_ok=True)
+            raise CheckpointError(f"checkpoint output collision: {final_path.name}") from exc
         partial_path.unlink(missing_ok=True)
-        raise CheckpointError(f"checkpoint output collision: {final_path.name}") from exc
-    except OSError as exc:
         raise CheckpointError("checkpoint output could not be published") from exc
-    partial_path.unlink()
     _fsync_directory(persistent_directory)
 
 
