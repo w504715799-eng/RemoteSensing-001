@@ -696,6 +696,7 @@ def test_publish_checkpoint_is_idempotent_but_never_overwrites(
     with pytest.raises(CheckpointError, match="collision"):
         publish_checkpoint(built, persistent)
     assert first[1].read_bytes() == b"different"
+    assert first[0].read_bytes() == built.archive_path.read_bytes()
 
 
 def test_publish_checkpoint_rejects_different_archive_collision(
@@ -848,6 +849,187 @@ def test_publish_checkpoint_rejects_local_manifest_mutation_during_archive_copy(
 
     assert (persistent / built.archive_path.name).is_file()
     assert not (persistent / built.manifest_path.name).exists()
+
+
+@pytest.mark.parametrize("kind", ["different", "identical", "symlink", "multiply-linked"])
+def test_publish_checkpoint_rejects_manifest_only_state_before_archive_publication(
+    tmp_path: Path, frozen_fixture_digests: None, kind: str
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    manifest_collision = persistent / built.manifest_path.name
+    if kind == "different":
+        payload = _manifest_payload(built)
+        payload["reviewed_commit"] = "b" * 40
+        _write_manifest(manifest_collision, payload)
+    elif kind == "identical":
+        manifest_collision.write_bytes(built.manifest_path.read_bytes())
+    elif kind == "symlink":
+        outside = tmp_path / "outside-manifest"
+        outside.write_bytes(built.manifest_path.read_bytes())
+        manifest_collision.symlink_to(outside)
+    else:
+        outside = tmp_path / "outside-manifest"
+        outside.write_bytes(built.manifest_path.read_bytes())
+        os.link(outside, manifest_collision)
+    before = manifest_collision.lstat()
+
+    with pytest.raises(CheckpointError, match="collision|unpaired|unsafe"):
+        publish_checkpoint(built, persistent)
+
+    after = manifest_collision.lstat()
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert not (persistent / built.archive_path.name).exists()
+
+
+def test_publish_checkpoint_rolls_back_new_archive_after_manifest_race(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    manifest_collision = persistent / built.manifest_path.name
+    payload = _manifest_payload(built)
+    payload["reviewed_commit"] = "b" * 40
+    collision_bytes = canonical_json(payload)
+
+    def copy_then_race_manifest(source: BinaryIO, target: BinaryIO) -> None:
+        shutil.copyfileobj(source, target)
+        manifest_collision.write_bytes(collision_bytes)
+
+    with pytest.raises(CheckpointError, match="collision"):
+        publish_checkpoint(built, persistent, copy_file=copy_then_race_manifest)
+
+    assert manifest_collision.read_bytes() == collision_bytes
+    assert not (persistent / built.archive_path.name).exists()
+
+
+def test_publish_checkpoint_completes_identical_archive_only_state(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    archive_path = persistent / built.archive_path.name
+    archive_path.write_bytes(built.archive_path.read_bytes())
+
+    published_archive, published_manifest = publish_checkpoint(built, persistent)
+
+    assert published_archive == archive_path
+    assert published_manifest.read_bytes() == built.manifest_path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "unrelated",
+        "partial",
+        "unpaired",
+        "lock-file",
+        "lock-symlink",
+        "selected-archive-multiply-linked",
+        "other-pair-multiply-linked",
+    ],
+)
+def test_verify_and_restore_reject_unsafe_persistent_hygiene(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    archive_path, manifest_path = publish_checkpoint(built, persistent)
+    if kind == "unrelated":
+        (persistent / "unrelated").write_bytes(b"unexpected")
+    elif kind == "partial":
+        (persistent / ".stale.part").write_bytes(b"partial")
+    elif kind == "unpaired":
+        (persistent / f"phase2b3a-workspace-a2-{'b' * 64}.tar").write_bytes(b"unpaired")
+    elif kind == "lock-file":
+        (persistent / ".checkpoint.lock").write_bytes(b"unsafe lock")
+    elif kind == "lock-symlink":
+        outside = tmp_path / "outside-lock"
+        outside.mkdir()
+        (persistent / ".checkpoint.lock").symlink_to(outside, target_is_directory=True)
+    elif kind == "selected-archive-multiply-linked":
+        os.link(archive_path, tmp_path / "selected-archive-hardlink")
+    else:
+        other_archive = persistent / f"phase2b3a-workspace-a2-{'b' * 64}.tar"
+        outside = tmp_path / "other-archive-hardlink"
+        outside.write_bytes(b"other")
+        os.link(outside, other_archive)
+        (other_archive.with_suffix(".json")).write_bytes(b"paired but multiply linked")
+
+    assert checkpoint.main(["verify", str(persistent), manifest_path.name]) == 2
+    verify_output = capsys.readouterr()
+    assert verify_output.out == ""
+    assert "error:" in verify_output.err
+
+    live = tmp_path / "live"
+    live.mkdir()
+    with pytest.raises(CheckpointError, match="persistent|entry|partial|pair|lock|link"):
+        restore_checkpoint(
+            persistent,
+            manifest_path.name,
+            live,
+            expected_reviewed_commit="a" * 40,
+        )
+    assert list(live.iterdir()) == []
+
+
+def test_verify_and_restore_accept_real_checkpoint_lock_directory(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    _, manifest_path = publish_checkpoint(built, persistent)
+    (persistent / ".checkpoint.lock").mkdir()
+
+    assert checkpoint.main(["verify", str(persistent), manifest_path.name]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "verify"
+    live = tmp_path / "live"
+    live.mkdir()
+    assert restore_checkpoint(
+        persistent,
+        manifest_path.name,
+        live,
+        expected_reviewed_commit="a" * 40,
+    ) == live / "trustsr"
+
+
+def test_multiple_syntactic_checkpoint_pairs_coexist_without_unselected_verification(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    built = _build_valid_checkpoint(tmp_path)
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    other_archive = persistent / f"phase2b3a-workspace-a2-{'b' * 64}.tar"
+    other_manifest = other_archive.with_suffix(".json")
+    other_archive.write_bytes(b"syntactically paired but deliberately not a tar")
+    other_manifest.write_bytes(b"syntactically paired but deliberately not JSON")
+
+    _, manifest_path = publish_checkpoint(built, persistent)
+
+    assert other_archive.read_bytes().startswith(b"syntactically paired")
+    assert other_manifest.read_bytes().startswith(b"syntactically paired")
+    assert checkpoint.main(["verify", str(persistent), manifest_path.name]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "verify"
+    live = tmp_path / "live"
+    live.mkdir()
+    assert restore_checkpoint(
+        persistent,
+        manifest_path.name,
+        live,
+        expected_reviewed_commit="a" * 40,
+    ) == live / "trustsr"
 
 
 def test_verify_checkpoint_accepts_complete_safe_inventory(

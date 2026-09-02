@@ -8,6 +8,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -39,6 +40,9 @@ _MAX_ARCHIVE_BYTES = (1 << 63) - 1
 _MAX_EVIDENCE_BYTES = 5 * 1024**2
 _HASH_CHUNK_SIZE = 1024 * 1024
 _BUNDLE_MANIFEST_BASENAME = "phase2b3a-bundle-manifest.json"
+_PERSISTENT_FINAL_PATTERN = re.compile(
+    r"phase2b3a-workspace-(?:a0|a1|a2)-[0-9a-f]{64}\.(?:tar|json)\Z"
+)
 _STAGE_EVIDENCE_BASENAMES = {
     stage: tuple(
         f"phase2b3a-{stage}-{suffix}.json"
@@ -899,16 +903,19 @@ def _matching_immutable_manifest(final_path: Path, expected_bytes: bytes) -> boo
 
 
 def _validate_persistent_entries(
-    persistent_directory: Path, archive_basename: str, manifest_basename: str
+    persistent_directory: Path,
+    archive_basename: str,
+    manifest_basename: str,
+    *,
+    allow_selected_archive_only: bool,
 ) -> None:
-    allowed_finals = {archive_basename, manifest_basename}
+    selected_stem = archive_basename.removesuffix(".tar")
+    observed_suffixes: dict[str, set[str]] = {}
     try:
         entries = list(os.scandir(persistent_directory))
     except OSError as exc:
         raise CheckpointError("persistent directory could not be scanned") from exc
     for entry in entries:
-        if entry.name in allowed_finals:
-            continue
         if entry.name == ".checkpoint.lock":
             try:
                 lock = entry.stat(follow_symlinks=False)
@@ -919,7 +926,43 @@ def _validate_persistent_entries(
             continue
         if entry.name.endswith(".part"):
             raise CheckpointError(f"checkpoint partial collision: {entry.name}")
-        raise CheckpointError(f"unexpected persistent-directory entry: {entry.name}")
+        if _PERSISTENT_FINAL_PATTERN.fullmatch(entry.name) is None:
+            raise CheckpointError(f"unexpected persistent-directory entry: {entry.name}")
+        try:
+            source = entry.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise CheckpointError("persistent checkpoint final is unsafe") from exc
+        if (
+            stat.S_ISLNK(source.st_mode)
+            or not stat.S_ISREG(source.st_mode)
+            or source.st_nlink != 1
+        ):
+            raise CheckpointError(
+                f"persistent checkpoint final collision: unsafe link for {entry.name}"
+            )
+        stem, suffix = entry.name.rsplit(".", 1)
+        observed_suffixes.setdefault(stem, set()).add(suffix)
+
+    for stem, suffixes in observed_suffixes.items():
+        if suffixes == {"tar", "json"}:
+            continue
+        if (
+            allow_selected_archive_only
+            and stem == selected_stem
+            and suffixes == {"tar"}
+        ):
+            continue
+        raise CheckpointError(f"persistent checkpoint pair is unpaired: {stem}")
+
+    selected_suffixes = observed_suffixes.get(selected_stem, set())
+    if allow_selected_archive_only:
+        if selected_suffixes not in (set(), {"tar"}, {"tar", "json"}):
+            raise CheckpointError("selected persistent checkpoint pair is unpaired")
+    elif selected_suffixes != {"tar", "json"}:
+        raise CheckpointError("selected persistent checkpoint pair is incomplete")
+
+    if manifest_basename != f"{selected_stem}.json":
+        raise CheckpointError("selected persistent checkpoint basenames do not match")
 
 
 def _create_partial(path: Path) -> int:
@@ -944,6 +987,26 @@ def _link_partial(partial_path: Path, final_path: Path, persistent_directory: Pa
     _fsync_directory(persistent_directory)
 
 
+def _rollback_created_final(
+    final_path: Path,
+    created: os.stat_result,
+    persistent_directory: Path,
+) -> None:
+    try:
+        current = final_path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise CheckpointError("new archive final could not be inspected for rollback") from exc
+    if current.st_dev != created.st_dev or current.st_ino != created.st_ino:
+        raise CheckpointError("new archive final changed before rollback")
+    try:
+        final_path.unlink()
+        _fsync_directory(persistent_directory)
+    except OSError as exc:
+        raise CheckpointError("new archive final could not be rolled back") from exc
+
+
 def publish_checkpoint(
     built: BuiltCheckpoint,
     persistent_directory: Path,
@@ -963,12 +1026,23 @@ def publish_checkpoint(
     if built.manifest_path.name != manifest_basename:
         raise CheckpointError("built manifest basename does not match archive")
     _validate_persistent_entries(
-        persistent_directory, manifest.archive_basename, manifest_basename
+        persistent_directory,
+        manifest.archive_basename,
+        manifest_basename,
+        allow_selected_archive_only=True,
     )
 
     archive_path = persistent_directory / manifest.archive_basename
     manifest_path = persistent_directory / manifest_basename
-    if not _matching_immutable_final(archive_path, built.archive_path, "archive"):
+    archive_exists = _matching_immutable_final(
+        archive_path, built.archive_path, "archive"
+    )
+    manifest_exists = _matching_immutable_manifest(manifest_path, manifest_bytes)
+    if manifest_exists and not archive_exists:
+        raise CheckpointError("checkpoint manifest-only collision")
+
+    created_archive: os.stat_result | None = None
+    if not archive_exists:
         archive_partial = persistent_directory / f".{manifest.archive_basename}.part"
         destination_descriptor: int | None = _create_partial(archive_partial)
         source_descriptor: int | None = None
@@ -997,28 +1071,43 @@ def publish_checkpoint(
             raise CheckpointError("checkpoint archive partial size mismatch")
         if archive_sha256 != manifest.archive_sha256:
             raise CheckpointError("checkpoint archive partial digest mismatch")
+        partial_source = _lstat(archive_partial, "checkpoint archive partial")
         _link_partial(archive_partial, archive_path, persistent_directory)
+        linked_archive = _lstat(archive_path, "new checkpoint archive final")
+        if (
+            linked_archive.st_dev != partial_source.st_dev
+            or linked_archive.st_ino != partial_source.st_ino
+        ):
+            raise CheckpointError("new checkpoint archive final changed after linking")
+        created_archive = partial_source
 
     _verify_archive_against_manifest(archive_path, manifest)
     if _read_manifest_bytes(built.manifest_path) != manifest_bytes:
         raise CheckpointError("built checkpoint manifest changed during publication")
 
-    if not _matching_immutable_manifest(manifest_path, manifest_bytes):
-        manifest_partial = persistent_directory / f".{manifest_basename}.part"
-        descriptor = _create_partial(manifest_partial)
-        try:
-            with os.fdopen(descriptor, "wb") as target:
-                target.write(manifest_bytes)
-                target.flush()
-                os.fsync(target.fileno())
-        except OSError as exc:
-            raise CheckpointError("checkpoint manifest copy failed") from exc
-        _link_partial(manifest_partial, manifest_path, persistent_directory)
+    try:
+        if not manifest_exists:
+            manifest_partial = persistent_directory / f".{manifest_basename}.part"
+            descriptor = _create_partial(manifest_partial)
+            try:
+                with os.fdopen(descriptor, "wb") as target:
+                    target.write(manifest_bytes)
+                    target.flush()
+                    os.fsync(target.fileno())
+            except OSError as exc:
+                raise CheckpointError("checkpoint manifest copy failed") from exc
+            _link_partial(manifest_partial, manifest_path, persistent_directory)
 
-    if _read_manifest_bytes(manifest_path) != manifest_bytes:
-        raise CheckpointError("published checkpoint manifest changed")
-    if load_manifest(manifest_path) != manifest:
-        raise CheckpointError("published checkpoint manifest does not match source")
+        if _read_manifest_bytes(manifest_path) != manifest_bytes:
+            raise CheckpointError("published checkpoint manifest changed")
+        if load_manifest(manifest_path) != manifest:
+            raise CheckpointError("published checkpoint manifest does not match source")
+    except BaseException:
+        if created_archive is not None:
+            _rollback_created_final(
+                archive_path, created_archive, persistent_directory
+            )
+        raise
 
     return archive_path, manifest_path
 
@@ -1232,6 +1321,12 @@ def restore_checkpoint(
     )
     if manifest_basename != expected_manifest_basename:
         raise CheckpointError("manifest basename does not match archive")
+    _validate_persistent_entries(
+        persistent_directory,
+        declared_manifest.archive_basename,
+        manifest_basename,
+        allow_selected_archive_only=False,
+    )
     archive_path = persistent_directory / declared_manifest.archive_basename
     manifest = verify_checkpoint(archive_path, manifest_path)
     if manifest.reviewed_commit != expected_reviewed_commit:
@@ -1270,7 +1365,11 @@ def _manifest_basename_is_safe(manifest_basename: object) -> bool:
 
 
 def _checkpoint_from_directory(
-    directory: Path, manifest_basename: str, description: str
+    directory: Path,
+    manifest_basename: str,
+    description: str,
+    *,
+    require_persistent_hygiene: bool = False,
 ) -> BuiltCheckpoint:
     directory = Path(directory)
     _require_directory(directory, description)
@@ -1283,6 +1382,13 @@ def _checkpoint_from_directory(
     )
     if manifest_basename != expected_manifest_basename:
         raise CheckpointError("manifest basename does not match archive")
+    if require_persistent_hygiene:
+        _validate_persistent_entries(
+            directory,
+            manifest.archive_basename,
+            manifest_basename,
+            allow_selected_archive_only=False,
+        )
     archive_path = directory / manifest.archive_basename
     verified = verify_checkpoint(archive_path, manifest_path)
     return BuiltCheckpoint(
@@ -1357,6 +1463,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.persistent_directory,
                 args.manifest_basename,
                 "persistent directory",
+                require_persistent_hygiene=True,
             )
             manifest = built.manifest
         elif args.command == "restore":
@@ -1364,6 +1471,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.persistent_directory,
                 args.manifest_basename,
                 "persistent directory",
+                require_persistent_hygiene=True,
             )
             restore_checkpoint(
                 args.persistent_directory,
