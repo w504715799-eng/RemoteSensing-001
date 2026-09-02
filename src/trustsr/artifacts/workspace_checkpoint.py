@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import os
+import shutil
 import stat
+import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -20,8 +26,26 @@ ARCHIVE_ROOTS = ("trustsr/phase2b1b", "trustsr/phase2b2a", "trustsr/phase2b3a")
 COMPLETED_STAGES = frozenset({"a0", "a1", "a2"})
 SELECTION_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a"
 INPUT_AUDIT_SHA256 = "fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b"
+SELECTION_RELATIVE = Path(
+    "trustsr/phase2b1b/selections/"
+    f"{SELECTION_MANIFEST_SHA256}/samples.jsonl"
+)
+INPUT_AUDIT_RELATIVE = Path(
+    "trustsr/phase2b2a/input-audits/"
+    f"{SELECTION_MANIFEST_SHA256}/phase2b2a-input-audit.json"
+)
 _MAX_MANIFEST_BYTES = 1024 * 1024
+_MAX_ARCHIVE_BYTES = (1 << 63) - 1
+_MAX_EVIDENCE_BYTES = 5 * 1024**2
 _HASH_CHUNK_SIZE = 1024 * 1024
+_BUNDLE_MANIFEST_BASENAME = "phase2b3a-bundle-manifest.json"
+_STAGE_EVIDENCE_BASENAMES = {
+    stage: tuple(
+        f"phase2b3a-{stage}-{suffix}.json"
+        for suffix in ("result", "cache-audit", "runtime", "replay")
+    )
+    for stage in ("a1", "a2")
+}
 _MANIFEST_KEYS = {
     "archive_basename",
     "archive_sha256",
@@ -79,6 +103,13 @@ class BuiltCheckpoint:
     manifest: CheckpointManifest
 
 
+@dataclass(frozen=True)
+class _ArchiveMember:
+    name: str
+    is_directory: bool
+    size: int
+
+
 def _is_lower_hex(value: object, length: int) -> bool:
     return (
         type(value) is str
@@ -126,7 +157,12 @@ def _validated_member_name(name: str) -> str:
     except UnicodeEncodeError as exc:
         raise CheckpointError("archive member name is not valid UTF-8") from exc
     path = PurePosixPath(name)
-    if not name or path.is_absolute() or ".." in path.parts:
+    if (
+        not name
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.as_posix() != name
+    ):
         raise CheckpointError("archive member name is not a confined relative path")
     if not any(name == root or name.startswith(f"{root}/") for root in ARCHIVE_ROOTS):
         raise CheckpointError("archive member falls outside allowed roots")
@@ -309,6 +345,183 @@ def _write_archive(workspace_root: Path, temporary_path: Path) -> None:
         os.close(workspace_descriptor)
 
 
+def _active_frozen_relatives() -> tuple[tuple[Path, str, str], ...]:
+    return (
+        (
+            Path(
+                "trustsr/phase2b1b/selections/"
+                f"{SELECTION_MANIFEST_SHA256}/samples.jsonl"
+            ),
+            SELECTION_MANIFEST_SHA256,
+            "frozen selection",
+        ),
+        (
+            Path(
+                "trustsr/phase2b2a/input-audits/"
+                f"{SELECTION_MANIFEST_SHA256}/phase2b2a-input-audit.json"
+            ),
+            INPUT_AUDIT_SHA256,
+            "frozen input audit",
+        ),
+    )
+
+
+def _read_relative_regular_file(
+    root: Path,
+    relative: Path,
+    description: str,
+    *,
+    max_bytes: int | None = None,
+    collect: bool = False,
+) -> tuple[bytes | None, str, int]:
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise CheckpointError(f"{description} relative path is invalid")
+    root_descriptor = _open_workspace_root(root)
+    current = root_descriptor
+    try:
+        for component in relative.parts[:-1]:
+            try:
+                child = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=current,
+                )
+            except OSError as exc:
+                raise CheckpointError(f"{description} source is missing or unsafe") from exc
+            if current != root_descriptor:
+                os.close(current)
+            current = child
+        try:
+            source = os.stat(relative.name, dir_fd=current, follow_symlinks=False)
+        except OSError as exc:
+            raise CheckpointError(f"{description} file is missing or unsafe") from exc
+        if (
+            stat.S_ISLNK(source.st_mode)
+            or not stat.S_ISREG(source.st_mode)
+            or source.st_nlink != 1
+        ):
+            raise CheckpointError(f"{description} file must be a one-link regular file")
+        if max_bytes is not None and source.st_size > max_bytes:
+            raise CheckpointError(f"{description} size exceeds the allowed limit")
+        try:
+            descriptor = os.open(
+                relative.name,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=current,
+            )
+        except OSError as exc:
+            raise CheckpointError(f"{description} file could not be opened safely") from exc
+        digest = hashlib.sha256()
+        payload = bytearray() if collect else None
+        try:
+            with os.fdopen(descriptor, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (
+                    opened.st_dev != source.st_dev
+                    or opened.st_ino != source.st_ino
+                    or opened.st_nlink != 1
+                ):
+                    raise CheckpointError(f"{description} file changed while being opened")
+                for block in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+                    digest.update(block)
+                    if payload is not None:
+                        payload.extend(block)
+                current_source = os.fstat(stream.fileno())
+                if (
+                    current_source.st_size != opened.st_size
+                    or current_source.st_mtime_ns != opened.st_mtime_ns
+                    or current_source.st_nlink != 1
+                ):
+                    raise CheckpointError(f"{description} file changed while being read")
+        except OSError as exc:
+            raise CheckpointError(f"{description} file could not be read") from exc
+        return bytes(payload) if payload is not None else None, digest.hexdigest(), source.st_size
+    finally:
+        if current != root_descriptor:
+            os.close(current)
+        os.close(root_descriptor)
+
+
+def _validate_workspace_evidence(trustsr_root: Path, completed_stage: str) -> None:
+    for relative, expected_digest, description in _active_frozen_relatives():
+        try:
+            _, observed_digest, _ = _read_relative_regular_file(
+                trustsr_root, relative, description
+            )
+        except CheckpointError as exc:
+            raise CheckpointError(
+                f"missing archive root or unsafe {description} source"
+            ) from exc
+        if observed_digest != expected_digest:
+            raise CheckpointError(f"{description} digest mismatch")
+    if completed_stage == "a0":
+        return
+
+    result_relative = Path(
+        "trustsr/phase2b3a/results"
+    ) / SELECTION_MANIFEST_SHA256
+    manifest_relative = result_relative / _BUNDLE_MANIFEST_BASENAME
+    manifest_bytes, _, _ = _read_relative_regular_file(
+        trustsr_root,
+        manifest_relative,
+        "stage evidence manifest",
+        max_bytes=_MAX_MANIFEST_BYTES,
+        collect=True,
+    )
+    assert manifest_bytes is not None
+    try:
+        value = json.loads(manifest_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CheckpointError("stage evidence manifest is not valid JSON") from exc
+    if canonical_json(value) != manifest_bytes:
+        raise CheckpointError("stage evidence manifest is not canonical JSON")
+    if (
+        type(value) is not dict
+        or set(value) != {"schema", "phase", "files"}
+        or value["schema"] != "trustsr.phase2b3a-bundle-manifest.v1"
+    ):
+        raise CheckpointError("stage evidence manifest schema is invalid")
+    if value["phase"] != completed_stage:
+        raise CheckpointError("stage evidence manifest phase does not match checkpoint")
+    expected_basenames = _STAGE_EVIDENCE_BASENAMES[completed_stage]
+    entries = value["files"]
+    if type(entries) is not list or len(entries) != 4:
+        raise CheckpointError("stage evidence manifest must declare four expected files")
+    observed_basenames: list[str] = []
+    for entry in entries:
+        if type(entry) is not dict or set(entry) != {
+            "basename",
+            "size_bytes",
+            "sha256",
+        }:
+            raise CheckpointError("stage evidence manifest file entry is invalid")
+        basename = entry["basename"]
+        size_bytes = entry["size_bytes"]
+        declared_digest = entry["sha256"]
+        if (
+            type(basename) is not str
+            or basename not in expected_basenames
+            or type(size_bytes) is not int
+            or size_bytes < 0
+            or size_bytes > _MAX_EVIDENCE_BYTES
+            or not _is_lower_hex(declared_digest, 64)
+        ):
+            raise CheckpointError("stage evidence basename, size, or digest is invalid")
+        _, observed_digest, observed_size = _read_relative_regular_file(
+            trustsr_root,
+            result_relative / basename,
+            "stage evidence file",
+            max_bytes=_MAX_EVIDENCE_BYTES,
+        )
+        if observed_size != size_bytes:
+            raise CheckpointError("stage evidence file size does not match manifest")
+        if observed_digest != declared_digest:
+            raise CheckpointError("stage evidence file digest does not match manifest")
+        observed_basenames.append(basename)
+    if observed_basenames != sorted(expected_basenames):
+        raise CheckpointError("stage evidence manifest must declare four expected files")
+
+
 def _fsync_path(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
     try:
@@ -318,7 +531,9 @@ def _fsync_path(path: Path) -> None:
 
 
 def _fsync_directory(directory: Path) -> None:
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    descriptor = os.open(
+        directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    )
     try:
         os.fsync(descriptor)
     finally:
@@ -383,6 +598,7 @@ def build_checkpoint(
     """Build a deterministic local archive and canonical manifest from allowed source roots."""
     completed_stage, reviewed_commit = _validate_stage_and_commit(completed_stage, reviewed_commit)
     workspace_root = Path(workspace_root)
+    _validate_workspace_evidence(workspace_root, completed_stage)
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     _require_directory(output_directory, "output directory")
@@ -425,8 +641,12 @@ def build_checkpoint(
 
 def _read_manifest_bytes(path: Path) -> bytes:
     source = _lstat(path, "manifest")
-    if stat.S_ISLNK(source.st_mode) or not stat.S_ISREG(source.st_mode):
-        raise CheckpointError("manifest must be a regular non-symlink file")
+    if (
+        stat.S_ISLNK(source.st_mode)
+        or not stat.S_ISREG(source.st_mode)
+        or source.st_nlink != 1
+    ):
+        raise CheckpointError("manifest must be a one-link regular non-symlink file")
     if source.st_size > _MAX_MANIFEST_BYTES:
         raise CheckpointError("manifest exceeds 1 MiB")
     try:
@@ -466,7 +686,11 @@ def _parse_manifest_value(value: object) -> CheckpointManifest:
         raise CheckpointError("input audit digest does not match the frozen input")
     if not _is_lower_hex(value["archive_sha256"], 64):
         raise CheckpointError("archive digest is invalid")
-    if type(value["archive_size_bytes"]) is not int or value["archive_size_bytes"] <= 0:
+    if (
+        type(value["archive_size_bytes"]) is not int
+        or value["archive_size_bytes"] <= 0
+        or value["archive_size_bytes"] > _MAX_ARCHIVE_BYTES
+    ):
         raise CheckpointError("archive size is invalid")
     if type(value["archive_basename"]) is not str:
         raise CheckpointError("archive basename is invalid")
@@ -502,9 +726,92 @@ def load_manifest(path: Path) -> CheckpointManifest:
     return _parse_manifest_value(value)
 
 
+def _inspect_archive(archive_path: Path) -> tuple[_ArchiveMember, ...]:
+    source = _lstat(archive_path, "archive")
+    if stat.S_ISLNK(source.st_mode) or not stat.S_ISREG(source.st_mode):
+        raise CheckpointError("archive must be a regular non-symlink file")
+    try:
+        descriptor = os.open(archive_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise CheckpointError("archive could not be opened safely") from exc
+    inventory: list[_ArchiveMember] = []
+    seen_names: set[str] = set()
+    seen_directories: set[str] = set()
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if opened.st_dev != source.st_dev or opened.st_ino != source.st_ino:
+                raise CheckpointError("archive changed while being opened")
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                for member in archive:
+                    name = _validated_member_name(member.name)
+                    if name in seen_names:
+                        raise CheckpointError("archive contains a duplicate member name")
+                    if not (member.isdir() or member.isreg()):
+                        raise CheckpointError(
+                            "archive permits only regular files and directories"
+                        )
+                    if member.size < 0 or member.size > opened.st_size:
+                        raise CheckpointError("archive member size is invalid")
+                    root = next(
+                        (
+                            candidate
+                            for candidate in ARCHIVE_ROOTS
+                            if name == candidate or name.startswith(f"{candidate}/")
+                        ),
+                        None,
+                    )
+                    if root is None:
+                        raise CheckpointError("archive member falls outside allowed roots")
+                    if name != root:
+                        parent = PurePosixPath(name).parent.as_posix()
+                        if parent not in seen_directories:
+                            raise CheckpointError(
+                                "archive member parent directory is missing or out of order"
+                            )
+                    seen_names.add(name)
+                    if member.isdir():
+                        seen_directories.add(name)
+                    inventory.append(
+                        _ArchiveMember(
+                            name=name,
+                            is_directory=member.isdir(),
+                            size=member.size,
+                        )
+                    )
+            current = os.fstat(stream.fileno())
+            if (
+                current.st_size != opened.st_size
+                or current.st_mtime_ns != opened.st_mtime_ns
+            ):
+                raise CheckpointError("archive changed while being inspected")
+    except CheckpointError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise CheckpointError("archive could not be fully inspected") from exc
+    missing_roots = set(ARCHIVE_ROOTS) - seen_directories
+    if missing_roots:
+        raise CheckpointError("archive is missing a required root directory record")
+    return tuple(inventory)
+
+
 def verify_checkpoint(archive_path: Path, manifest_path: Path) -> CheckpointManifest:
-    """Verify a local archive's name, size, and SHA-256 against its manifest."""
-    manifest = load_manifest(Path(manifest_path))
+    """Verify a local archive's name, bytes, and complete inventory against its manifest."""
+    manifest_path = Path(manifest_path)
+    manifest = load_manifest(manifest_path)
+    archive_path = Path(archive_path)
+    expected_manifest_basename = (
+        manifest.archive_basename.removesuffix(".tar") + ".json"
+    )
+    if manifest_path.name != expected_manifest_basename:
+        raise CheckpointError("manifest basename does not match archive")
+    _verify_archive_against_manifest(archive_path, manifest)
+    return manifest
+
+
+def _verify_archive_against_manifest(
+    archive_path: Path, manifest: CheckpointManifest
+) -> tuple[_ArchiveMember, ...]:
     archive_path = Path(archive_path)
     if archive_path.name != manifest.archive_basename:
         raise CheckpointError("archive basename does not match manifest")
@@ -513,4 +820,566 @@ def verify_checkpoint(archive_path: Path, manifest_path: Path) -> CheckpointMani
         raise CheckpointError("archive size does not match manifest")
     if archive_sha256 != manifest.archive_sha256:
         raise CheckpointError("archive digest does not match manifest")
-    return manifest
+    return _inspect_archive(archive_path)
+
+
+def _matching_immutable_final(final_path: Path, expected_path: Path, description: str) -> bool:
+    try:
+        final_source = final_path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise CheckpointError(f"checkpoint {description} collision") from exc
+    if (
+        stat.S_ISLNK(final_source.st_mode)
+        or not stat.S_ISREG(final_source.st_mode)
+        or final_source.st_nlink != 1
+    ):
+        raise CheckpointError(f"checkpoint {description} collision")
+    try:
+        final_descriptor = os.open(
+            final_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+        expected_descriptor = os.open(
+            expected_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+    except OSError as exc:
+        if "final_descriptor" in locals():
+            os.close(final_descriptor)
+        raise CheckpointError(f"checkpoint {description} collision") from exc
+    matches = True
+    try:
+        with (
+            os.fdopen(final_descriptor, "rb") as final_stream,
+            os.fdopen(expected_descriptor, "rb") as expected_stream,
+        ):
+            opened_final = os.fstat(final_stream.fileno())
+            if (
+                opened_final.st_dev != final_source.st_dev
+                or opened_final.st_ino != final_source.st_ino
+                or opened_final.st_nlink != 1
+            ):
+                raise CheckpointError(f"checkpoint {description} collision")
+            while True:
+                final_block = final_stream.read(_HASH_CHUNK_SIZE)
+                expected_block = expected_stream.read(_HASH_CHUNK_SIZE)
+                if final_block != expected_block:
+                    matches = False
+                    break
+                if not final_block:
+                    break
+            current_final = os.fstat(final_stream.fileno())
+            if (
+                current_final.st_size != opened_final.st_size
+                or current_final.st_mtime_ns != opened_final.st_mtime_ns
+                or current_final.st_nlink != 1
+            ):
+                raise CheckpointError(f"checkpoint {description} collision")
+    except OSError as exc:
+        raise CheckpointError(f"checkpoint {description} collision") from exc
+    if not matches:
+        raise CheckpointError(f"checkpoint {description} collision")
+    return True
+
+
+def _matching_immutable_manifest(final_path: Path, expected_bytes: bytes) -> bool:
+    try:
+        final_path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise CheckpointError("checkpoint manifest collision") from exc
+    try:
+        observed_bytes = _read_manifest_bytes(final_path)
+    except CheckpointError as exc:
+        raise CheckpointError("checkpoint manifest collision") from exc
+    if observed_bytes != expected_bytes:
+        raise CheckpointError("checkpoint manifest collision")
+    return True
+
+
+def _validate_persistent_entries(
+    persistent_directory: Path, archive_basename: str, manifest_basename: str
+) -> None:
+    allowed_finals = {archive_basename, manifest_basename}
+    try:
+        entries = list(os.scandir(persistent_directory))
+    except OSError as exc:
+        raise CheckpointError("persistent directory could not be scanned") from exc
+    for entry in entries:
+        if entry.name in allowed_finals:
+            continue
+        if entry.name == ".checkpoint.lock":
+            try:
+                lock = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise CheckpointError("checkpoint lock is unsafe") from exc
+            if stat.S_ISLNK(lock.st_mode) or not stat.S_ISDIR(lock.st_mode):
+                raise CheckpointError("checkpoint lock must be a non-symlink directory")
+            continue
+        if entry.name.endswith(".part"):
+            raise CheckpointError(f"checkpoint partial collision: {entry.name}")
+        raise CheckpointError(f"unexpected persistent-directory entry: {entry.name}")
+
+
+def _create_partial(path: Path) -> int:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        return os.open(path, flags, 0o600)
+    except FileExistsError as exc:
+        raise CheckpointError(f"checkpoint partial collision: {path.name}") from exc
+    except OSError as exc:
+        raise CheckpointError("checkpoint partial could not be created safely") from exc
+
+
+def _link_partial(partial_path: Path, final_path: Path, persistent_directory: Path) -> None:
+    try:
+        os.link(partial_path, final_path, follow_symlinks=False)
+    except FileExistsError as exc:
+        partial_path.unlink(missing_ok=True)
+        raise CheckpointError(f"checkpoint output collision: {final_path.name}") from exc
+    except OSError as exc:
+        raise CheckpointError("checkpoint output could not be published") from exc
+    partial_path.unlink()
+    _fsync_directory(persistent_directory)
+
+
+def publish_checkpoint(
+    built: BuiltCheckpoint,
+    persistent_directory: Path,
+    *,
+    copy_file: Callable[[BinaryIO, BinaryIO], None] = shutil.copyfileobj,
+) -> tuple[Path, Path]:
+    """Immutably publish a local checkpoint across filesystem boundaries."""
+    persistent_directory = Path(persistent_directory)
+    _require_directory(persistent_directory, "persistent directory")
+    manifest = verify_checkpoint(built.archive_path, built.manifest_path)
+    if manifest != built.manifest:
+        raise CheckpointError("built checkpoint metadata does not match its manifest")
+    manifest_bytes = canonical_json(manifest.as_dict())
+    if _read_manifest_bytes(built.manifest_path) != manifest_bytes:
+        raise CheckpointError("built checkpoint manifest changed after verification")
+    manifest_basename = manifest.archive_basename.removesuffix(".tar") + ".json"
+    if built.manifest_path.name != manifest_basename:
+        raise CheckpointError("built manifest basename does not match archive")
+    _validate_persistent_entries(
+        persistent_directory, manifest.archive_basename, manifest_basename
+    )
+
+    archive_path = persistent_directory / manifest.archive_basename
+    manifest_path = persistent_directory / manifest_basename
+    if not _matching_immutable_final(archive_path, built.archive_path, "archive"):
+        archive_partial = persistent_directory / f".{manifest.archive_basename}.part"
+        destination_descriptor: int | None = _create_partial(archive_partial)
+        source_descriptor: int | None = None
+        try:
+            source_descriptor = os.open(
+                built.archive_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            with os.fdopen(source_descriptor, "rb") as source:
+                source_descriptor = None
+                with os.fdopen(destination_descriptor, "wb") as target:
+                    destination_descriptor = None
+                    copy_file(source, target)
+                    target.flush()
+                    os.fsync(target.fileno())
+        except Exception as exc:
+            raise CheckpointError("checkpoint archive copy failed") from exc
+        finally:
+            if source_descriptor is not None:
+                os.close(source_descriptor)
+            if destination_descriptor is not None:
+                os.close(destination_descriptor)
+        archive_sha256, archive_size_bytes = _hash_regular_file(
+            archive_partial, "checkpoint archive partial"
+        )
+        if archive_size_bytes != manifest.archive_size_bytes:
+            raise CheckpointError("checkpoint archive partial size mismatch")
+        if archive_sha256 != manifest.archive_sha256:
+            raise CheckpointError("checkpoint archive partial digest mismatch")
+        _link_partial(archive_partial, archive_path, persistent_directory)
+
+    _verify_archive_against_manifest(archive_path, manifest)
+    if _read_manifest_bytes(built.manifest_path) != manifest_bytes:
+        raise CheckpointError("built checkpoint manifest changed during publication")
+
+    if not _matching_immutable_manifest(manifest_path, manifest_bytes):
+        manifest_partial = persistent_directory / f".{manifest_basename}.part"
+        descriptor = _create_partial(manifest_partial)
+        try:
+            with os.fdopen(descriptor, "wb") as target:
+                target.write(manifest_bytes)
+                target.flush()
+                os.fsync(target.fileno())
+        except OSError as exc:
+            raise CheckpointError("checkpoint manifest copy failed") from exc
+        _link_partial(manifest_partial, manifest_path, persistent_directory)
+
+    if _read_manifest_bytes(manifest_path) != manifest_bytes:
+        raise CheckpointError("published checkpoint manifest changed")
+    if load_manifest(manifest_path) != manifest:
+        raise CheckpointError("published checkpoint manifest does not match source")
+
+    return archive_path, manifest_path
+
+
+def _copy_archive_to_staging(source_path: Path, destination_path: Path) -> None:
+    source = _lstat(source_path, "persistent archive")
+    if (
+        stat.S_ISLNK(source.st_mode)
+        or not stat.S_ISREG(source.st_mode)
+        or source.st_nlink != 1
+    ):
+        raise CheckpointError("persistent archive must be a one-link regular file")
+    source_descriptor: int | None = None
+    destination_descriptor: int | None = None
+    try:
+        source_descriptor = os.open(
+            source_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+        destination_descriptor = os.open(
+            destination_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+        with (
+            os.fdopen(source_descriptor, "rb") as source_stream,
+            os.fdopen(destination_descriptor, "wb") as destination_stream,
+        ):
+            source_descriptor = None
+            destination_descriptor = None
+            opened = os.fstat(source_stream.fileno())
+            if (
+                opened.st_dev != source.st_dev
+                or opened.st_ino != source.st_ino
+                or opened.st_nlink != 1
+            ):
+                raise CheckpointError("persistent archive changed while being opened")
+            shutil.copyfileobj(source_stream, destination_stream)
+            destination_stream.flush()
+            os.fsync(destination_stream.fileno())
+            current = os.fstat(source_stream.fileno())
+            if (
+                current.st_size != opened.st_size
+                or current.st_mtime_ns != opened.st_mtime_ns
+                or current.st_nlink != 1
+            ):
+                raise CheckpointError("persistent archive changed while being copied")
+    except CheckpointError:
+        raise
+    except OSError as exc:
+        raise CheckpointError("persistent archive could not be copied to staging") from exc
+    finally:
+        if source_descriptor is not None:
+            os.close(source_descriptor)
+        if destination_descriptor is not None:
+            os.close(destination_descriptor)
+
+
+def _extract_archive_exclusively(
+    archive_path: Path,
+    inventory: tuple[_ArchiveMember, ...],
+    staging_directory: Path,
+) -> Path:
+    trustsr_path = staging_directory / "trustsr"
+    try:
+        os.mkdir(trustsr_path, 0o700)
+        _fsync_directory(staging_directory)
+        descriptor = os.open(
+            archive_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+        with os.fdopen(descriptor, "rb") as stream:
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                archive_members = iter(archive)
+                observed_count = 0
+                for member, expected in zip(archive_members, inventory, strict=False):
+                    observed_count += 1
+                    if (
+                        member.name != expected.name
+                        or member.isdir() != expected.is_directory
+                        or member.size != expected.size
+                        or not (member.isdir() or member.isreg())
+                    ):
+                        raise CheckpointError("archive inventory changed before extraction")
+                    destination = staging_directory / PurePosixPath(expected.name)
+                    if expected.is_directory:
+                        os.mkdir(destination, 0o700)
+                        _fsync_directory(destination.parent)
+                        continue
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise CheckpointError("archive regular file could not be extracted")
+                    output_descriptor: int | None = os.open(
+                        destination,
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | os.O_CLOEXEC
+                        | os.O_NOFOLLOW,
+                        0o600,
+                    )
+                    try:
+                        with source:
+                            with os.fdopen(output_descriptor, "wb") as output:
+                                output_descriptor = None
+                                shutil.copyfileobj(source, output)
+                                output.flush()
+                                os.fsync(output.fileno())
+                    finally:
+                        if output_descriptor is not None:
+                            os.close(output_descriptor)
+                    _fsync_directory(destination.parent)
+                if observed_count != len(inventory):
+                    raise CheckpointError("archive inventory changed before extraction")
+                try:
+                    next(archive_members)
+                except StopIteration:
+                    pass
+                else:
+                    raise CheckpointError("archive inventory changed before extraction")
+    except CheckpointError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise CheckpointError("archive could not be extracted exclusively") from exc
+    return trustsr_path
+
+
+def _normalize_staged_permissions(trustsr_path: Path) -> None:
+    paths = [trustsr_path, *trustsr_path.rglob("*")]
+    directories: list[Path] = []
+    for path in paths:
+        source = _lstat(path, "restored workspace entry")
+        if stat.S_ISDIR(source.st_mode):
+            os.chmod(path, 0o700, follow_symlinks=False)
+            directories.append(path)
+        elif stat.S_ISREG(source.st_mode) and source.st_nlink == 1:
+            os.chmod(path, 0o600, follow_symlinks=False)
+            _fsync_path(path)
+        else:
+            raise CheckpointError("restored workspace contains an unsafe entry")
+    for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+        _fsync_directory(directory)
+
+
+def _rename_noreplace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        renameat2 = libc.renameat2
+    except AttributeError as exc:
+        raise CheckpointError("renameat2 is unsupported; restore fails closed") from exc
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        -100,
+        os.fsencode(source),
+        -100,
+        os.fsencode(destination),
+        1,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        raise CheckpointError("live trustsr publication collision")
+    if error_number == errno.ENOSYS:
+        raise CheckpointError("renameat2 is unsupported; restore fails closed")
+    raise CheckpointError(
+        f"live trustsr publication failed: {os.strerror(error_number)}"
+    )
+
+
+def _require_absent_destination(destination: Path) -> None:
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise CheckpointError("live trustsr destination collision") from exc
+    raise CheckpointError("live trustsr destination collision")
+
+
+def restore_checkpoint(
+    persistent_directory: Path,
+    manifest_basename: str,
+    workspace_root: Path,
+    *,
+    expected_reviewed_commit: str,
+) -> Path:
+    """Restore one explicit checkpoint through private staging and no-replace publication."""
+    persistent_directory = Path(persistent_directory)
+    workspace_root = Path(workspace_root)
+    _require_directory(persistent_directory, "persistent directory")
+    _require_directory(workspace_root, "workspace root")
+    if (
+        type(manifest_basename) is not str
+        or PurePosixPath(manifest_basename).name != manifest_basename
+        or "\\" in manifest_basename
+    ):
+        raise CheckpointError("manifest basename is unsafe")
+    if not _is_lower_hex(expected_reviewed_commit, 40):
+        raise CheckpointError("expected reviewed commit must be a lowercase digest")
+
+    manifest_path = persistent_directory / manifest_basename
+    declared_manifest = load_manifest(manifest_path)
+    expected_manifest_basename = (
+        declared_manifest.archive_basename.removesuffix(".tar") + ".json"
+    )
+    if manifest_basename != expected_manifest_basename:
+        raise CheckpointError("manifest basename does not match archive")
+    archive_path = persistent_directory / declared_manifest.archive_basename
+    manifest = verify_checkpoint(archive_path, manifest_path)
+    if manifest.reviewed_commit != expected_reviewed_commit:
+        raise CheckpointError("checkpoint reviewed commit does not match expected commit")
+
+    destination = workspace_root / "trustsr"
+    _require_absent_destination(destination)
+    staging_directory = Path(
+        tempfile.mkdtemp(prefix=".phase2b3a-restore.", dir=workspace_root)
+    )
+    try:
+        os.chmod(staging_directory, 0o700)
+        staged_archive = staging_directory / manifest.archive_basename
+        _copy_archive_to_staging(archive_path, staged_archive)
+        inventory = _verify_archive_against_manifest(staged_archive, manifest)
+        _fsync_directory(staging_directory)
+        staged_trustsr = _extract_archive_exclusively(
+            staged_archive, inventory, staging_directory
+        )
+        _validate_workspace_evidence(staging_directory, manifest.completed_stage)
+        _normalize_staged_permissions(staged_trustsr)
+        _require_absent_destination(destination)
+        _rename_noreplace(staged_trustsr, destination)
+        _fsync_directory(workspace_root)
+        return destination
+    finally:
+        shutil.rmtree(staging_directory)
+
+
+def _manifest_basename_is_safe(manifest_basename: object) -> bool:
+    return (
+        type(manifest_basename) is str
+        and PurePosixPath(manifest_basename).name == manifest_basename
+        and "\\" not in manifest_basename
+    )
+
+
+def _checkpoint_from_directory(
+    directory: Path, manifest_basename: str, description: str
+) -> BuiltCheckpoint:
+    directory = Path(directory)
+    _require_directory(directory, description)
+    if not _manifest_basename_is_safe(manifest_basename):
+        raise CheckpointError("manifest basename is unsafe")
+    manifest_path = directory / manifest_basename
+    manifest = load_manifest(manifest_path)
+    expected_manifest_basename = (
+        manifest.archive_basename.removesuffix(".tar") + ".json"
+    )
+    if manifest_basename != expected_manifest_basename:
+        raise CheckpointError("manifest basename does not match archive")
+    archive_path = directory / manifest.archive_basename
+    verified = verify_checkpoint(archive_path, manifest_path)
+    return BuiltCheckpoint(
+        archive_path=archive_path,
+        manifest_path=manifest_path,
+        manifest=verified,
+    )
+
+
+def _success_payload(
+    manifest: CheckpointManifest, command_name: str
+) -> dict[str, object]:
+    return {
+        "archive_basename": manifest.archive_basename,
+        "archive_sha256": manifest.archive_sha256,
+        "archive_size_bytes": manifest.archive_size_bytes,
+        "completed_stage": manifest.completed_stage,
+        "manifest_basename": (
+            manifest.archive_basename.removesuffix(".tar") + ".json"
+        ),
+        "reviewed_commit": manifest.reviewed_commit,
+        "status": command_name,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    build = subparsers.add_parser("build")
+    build.add_argument("workspace_root", type=Path)
+    build.add_argument("local_scratch", type=Path)
+    build.add_argument("completed_stage")
+    build.add_argument("reviewed_commit")
+
+    publish = subparsers.add_parser("publish")
+    publish.add_argument("local_scratch", type=Path)
+    publish.add_argument("manifest_basename")
+    publish.add_argument("persistent_directory", type=Path)
+
+    verify = subparsers.add_parser("verify")
+    verify.add_argument("persistent_directory", type=Path)
+    verify.add_argument("manifest_basename")
+
+    restore = subparsers.add_parser("restore")
+    restore.add_argument("persistent_directory", type=Path)
+    restore.add_argument("manifest_basename")
+    restore.add_argument("workspace_root", type=Path)
+    restore.add_argument("expected_reviewed_commit")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "build":
+            built = build_checkpoint(
+                args.workspace_root,
+                args.local_scratch,
+                completed_stage=args.completed_stage,
+                reviewed_commit=args.reviewed_commit,
+            )
+            manifest = built.manifest
+        elif args.command == "publish":
+            built = _checkpoint_from_directory(
+                args.local_scratch, args.manifest_basename, "local scratch directory"
+            )
+            publish_checkpoint(built, args.persistent_directory)
+            manifest = built.manifest
+        elif args.command == "verify":
+            built = _checkpoint_from_directory(
+                args.persistent_directory,
+                args.manifest_basename,
+                "persistent directory",
+            )
+            manifest = built.manifest
+        elif args.command == "restore":
+            built = _checkpoint_from_directory(
+                args.persistent_directory,
+                args.manifest_basename,
+                "persistent directory",
+            )
+            restore_checkpoint(
+                args.persistent_directory,
+                args.manifest_basename,
+                args.workspace_root,
+                expected_reviewed_commit=args.expected_reviewed_commit,
+            )
+            manifest = built.manifest
+        else:  # pragma: no cover - argparse enforces the command choices.
+            raise CheckpointError("unknown checkpoint command")
+    except (CheckpointError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(canonical_json(_success_payload(manifest, args.command)).decode("utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
