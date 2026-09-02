@@ -88,7 +88,7 @@ parse_record() {
   local expected_status="$2"
   local pattern
   local archive archive_stage archive_digest digest size stage manifest commit status
-  pattern='^\{"archive_basename":"(phase2b3a-workspace-(a0|a1|a2)-([0-9a-f]{64})[.]tar)","archive_sha256":"([0-9a-f]{64})","archive_size_bytes":([0-9]+),"completed_stage":"(a0|a1|a2)","manifest_basename":"(phase2b3a-workspace-(a0|a1|a2)-[0-9a-f]{64}[.]json)","reviewed_commit":"([0-9a-f]{40})","status":"(build|publish|verify)"\}$'
+  pattern='^\{"archive_basename":"(phase2b3a-workspace-(a0|a1|a2)-([0-9a-f]{64})[.]tar)","archive_sha256":"([0-9a-f]{64})","archive_size_bytes":([1-9][0-9]*),"completed_stage":"(a0|a1|a2)","manifest_basename":"(phase2b3a-workspace-(a0|a1|a2)-[0-9a-f]{64}[.]json)","reviewed_commit":"([0-9a-f]{40})","status":"(build|publish|verify)"\}$'
   [[ "$record" =~ $pattern ]] || return 1
   archive="${BASH_REMATCH[1]}"
   archive_stage="${BASH_REMATCH[2]}"

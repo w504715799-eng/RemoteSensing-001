@@ -160,7 +160,7 @@ def _real_base_python(tmp_path: Path) -> Path:
     _make_executable(
         launcher,
         f"#!{sys.executable}\n"
-        "import os, sys\n"
+        "import contextlib, io, json, os, sys\n"
         "sys.path.insert(0, os.environ['CHECKPOINT_SOURCE'])\n"
         "from trustsr.artifacts import workspace_checkpoint as checkpoint\n"
         "checkpoint.SELECTION_MANIFEST_SHA256 = os.environ['FAKE_SELECTION_DIGEST']\n"
@@ -168,7 +168,21 @@ def _real_base_python(tmp_path: Path) -> Path:
         "arguments = sys.argv[1:]\n"
         "if arguments[:2] != ['-m', 'trustsr.artifacts.workspace_checkpoint']:\n"
         "    raise SystemExit(96)\n"
-        "result = checkpoint.main(arguments[2:])\n"
+        "captured = io.StringIO()\n"
+        "with contextlib.redirect_stdout(captured):\n"
+        "    result = checkpoint.main(arguments[2:])\n"
+        "output = captured.getvalue()\n"
+        "mutation = json.loads(os.environ.get('FAKE_RECORD_MUTATIONS', '{}')).get(arguments[2])\n"
+        "if mutation and result == 0:\n"
+        "    before, separator, after = output.partition('\\\"archive_size_bytes\\\":')\n"
+        "    if mutation in ('zero', 'leading-zero', 'size-one'):\n"
+        "        replacement = {'zero': '0', 'leading-zero': '00', 'size-one': '1'}[mutation]\n"
+        "        output = before + separator + replacement + ',' + after.split(',', 1)[1]\n"
+        "    elif mutation == 'extra-output':\n"
+        "        output += '{\\\"unexpected\\\":true}\\n'\n"
+        "    else:\n"
+        "        raise SystemExit(95)\n"
+        "sys.stdout.write(output)\n"
         "if arguments[2:3] == ['build'] and result == 0:\n"
         "    Path = __import__('pathlib').Path\n"
         "    Path(os.environ['FAKE_BUILD_FINISHED']).touch()\n"
@@ -184,6 +198,7 @@ def _invoke_checkpoint(
     persistent = tmp_path / "persistent-mount"
     repository = workspace / "reviewed-repository"
     corrupt = boundary_state.pop("corrupt", None)
+    record_mutations = boundary_state.pop("record_mutations", None)
     paths = boundary_state.pop("paths", None)
     equal_roots = bool(boundary_state.pop("equal_roots", False))
     _write_workspace(workspace, stage, corrupt=corrupt if isinstance(corrupt, str) else None)
@@ -201,6 +216,8 @@ def _invoke_checkpoint(
             "FAKE_SELECTION_DIGEST": SELECTION_DIGEST,
         }
     )
+    if isinstance(record_mutations, dict):
+        environment["FAKE_RECORD_MUTATIONS"] = json.dumps(record_mutations)
     arguments = [str(base_python), str(workspace), str(persistent), str(repository), stage, REVISION]
     if isinstance(paths, dict):
         positions = {"base_python": 0, "workspace": 1, "persistent": 2, "repository": 3}
@@ -296,4 +313,24 @@ def test_checkpoint_script_never_attempts_prohibited_environment_bootstrap(tmp_p
     completed, persistent, prohibited = _invoke_checkpoint(tmp_path)
     assert completed.returncode == 0, completed.stderr
     assert list((persistent / "trustsr-phase2b3a-checkpoints").glob("*.json"))
+    assert not prohibited.exists()
+
+
+@pytest.mark.parametrize(
+    "record_mutations",
+    [
+        {command: "zero" for command in ("build", "publish", "verify")},
+        {command: "leading-zero" for command in ("build", "publish", "verify")},
+        {"build": "extra-output"},
+        {"publish": "size-one"},
+    ],
+)
+def test_checkpoint_script_rejects_malformed_or_disagreeing_module_records(
+    tmp_path: Path, record_mutations: dict[str, str]
+) -> None:
+    completed, _, prohibited = _invoke_checkpoint(
+        tmp_path, record_mutations=record_mutations
+    )
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
     assert not prohibited.exists()
