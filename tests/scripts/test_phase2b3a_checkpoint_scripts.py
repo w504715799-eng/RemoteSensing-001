@@ -177,14 +177,20 @@ def _checkpoint_environment(
         "with open(os.environ['FAKE_MOUNT_STATE'], encoding='utf-8') as stream:\n"
         "    state = json.load(stream)\n"
         "target = arguments[4]\n"
-        "if target not in state:\n"
-        "    raise SystemExit(1)\n"
-        "if arguments[2] == 'SOURCE':\n"
-        "    if target == os.environ.get('FAKE_FINDMNT_WRONG_SOURCE_TARGET'):\n"
-        "        print('/unexpected/source')\n"
+        "if arguments[2] == 'MAJ:MIN,FSROOT,TARGET':\n"
+        "    if target in state:\n"
+        "        relative = os.path.relpath(state[target], os.environ['FAKE_PERSISTENT_ROOT'])\n"
+        "        fsroot = '/' + relative if relative != '.' else '/'\n"
+        "        if target == os.environ.get('FAKE_FINDMNT_WRONG_IDENTITY_TARGET'):\n"
+        "            fsroot = '/unexpected/model'\n"
+        "        print(f'0:42 {fsroot} {target}')\n"
+        "    elif target in state.values():\n"
+        "        print(f\"0:42 / {os.environ['FAKE_PERSISTENT_ROOT']}\")\n"
         "    else:\n"
-        "        print(state[target])\n"
+        "        raise SystemExit(1)\n"
         "elif arguments[2] == 'OPTIONS':\n"
+        "    if target not in state:\n"
+        "        raise SystemExit(1)\n"
         "    no_ro = target == os.environ.get('FAKE_FINDMNT_NO_RO_TARGET')\n"
         "    print('rw,relatime,bind' if no_ro else 'rw,relatime,bind,ro')\n"
         "else:\n"
@@ -374,6 +380,7 @@ def _invoke_restore(
         "sen2_source": sen2_source,
         "ldsr_source": ldsr_source,
         "mount_calls": tmp_path / "mount-calls.jsonl",
+        "mount_state": tmp_path / "mount-state.json",
         "umount_calls": tmp_path / "umount-calls.jsonl",
         "findmnt_calls": tmp_path / "findmnt-calls.jsonl",
     }
@@ -411,11 +418,14 @@ def _invoke_restore(
         environment["FAKE_FINDMNT_NO_RO_TARGET"] = str(
             workspace / "model-mounts" / str(no_ro_target)
         )
-    wrong_source_target = boundary_state.pop("wrong_source_target", None)
-    if wrong_source_target is not None:
-        environment["FAKE_FINDMNT_WRONG_SOURCE_TARGET"] = str(
-            workspace / "model-mounts" / str(wrong_source_target)
+    wrong_identity_target = boundary_state.pop("wrong_identity_target", None)
+    if wrong_identity_target is not None:
+        environment["FAKE_FINDMNT_WRONG_IDENTITY_TARGET"] = str(
+            workspace / "model-mounts" / str(wrong_identity_target)
         )
+    record_mutations = boundary_state.pop("record_mutations", None)
+    if isinstance(record_mutations, dict):
+        environment["FAKE_RECORD_MUTATIONS"] = json.dumps(record_mutations)
     if boundary_state:
         raise AssertionError(f"unknown restore boundary state: {boundary_state}")
 
@@ -557,9 +567,23 @@ def test_restore_script_mounts_models_read_only_then_restores_explicit_checkpoin
         ["-o", "remount,bind,ro", str(ldsr_target)],
     ]
     assert _recorded_calls(paths["findmnt_calls"]) == [
-        ["-n", "-o", "SOURCE", "--target", str(sen2_target)],
+        [
+            "-n",
+            "-o",
+            "MAJ:MIN,FSROOT,TARGET",
+            "--target",
+            str(paths["sen2_source"]),
+        ],
+        ["-n", "-o", "MAJ:MIN,FSROOT,TARGET", "--target", str(sen2_target)],
         ["-n", "-o", "OPTIONS", "--target", str(sen2_target)],
-        ["-n", "-o", "SOURCE", "--target", str(ldsr_target)],
+        [
+            "-n",
+            "-o",
+            "MAJ:MIN,FSROOT,TARGET",
+            "--target",
+            str(paths["ldsr_source"]),
+        ],
+        ["-n", "-o", "MAJ:MIN,FSROOT,TARGET", "--target", str(ldsr_target)],
         ["-n", "-o", "OPTIONS", "--target", str(ldsr_target)],
     ]
     assert _recorded_calls(paths["umount_calls"]) == []
@@ -621,8 +645,8 @@ def test_restore_script_rejects_pre_mount_boundary(
             ["sen2srlite"],
         ),
         (
-            "reported-source-mismatch",
-            {"wrong_source_target": "sen2srlite"},
+            "reported-bind-identity-mismatch",
+            {"wrong_identity_target": "sen2srlite"},
             2,
             ["sen2srlite"],
         ),
@@ -647,4 +671,29 @@ def test_restore_script_unwinds_failed_mount_transaction_in_reverse_order(
     ]
     assert not (workspace / "trustsr").exists()
     assert not (workspace / "model-mounts").exists()
+    assert not prohibited.exists()
+
+
+def test_restore_script_keeps_mounts_after_publication_when_output_is_malformed(
+    tmp_path: Path,
+) -> None:
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path, record_mutations={"restore": "extra-output"}
+    )
+    workspace = paths["workspace"]
+    sen2_target = workspace / "model-mounts" / "sen2srlite"
+    ldsr_target = workspace / "model-mounts" / "ldsr-s2"
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert (workspace / "trustsr/phase2b1b").is_dir()
+    assert (workspace / "trustsr/phase2b2a").is_dir()
+    assert (workspace / "trustsr/phase2b3a").is_dir()
+    assert _recorded_calls(paths["umount_calls"]) == []
+    assert json.loads(paths["mount_state"].read_text(encoding="utf-8")) == {
+        str(sen2_target): str(paths["sen2_source"]),
+        str(ldsr_target): str(paths["ldsr_source"]),
+    }
+    assert sen2_target.is_dir()
+    assert ldsr_target.is_dir()
     assert not prohibited.exists()

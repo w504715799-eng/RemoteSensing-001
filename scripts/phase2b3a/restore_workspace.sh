@@ -106,6 +106,20 @@ require_one_record() {
   record_output="$output"
 }
 
+mount_identity_major_minor=
+mount_identity_fsroot=
+mount_identity_target=
+
+read_mount_identity() {
+  local path="$1"
+  local output extra
+  output="$(findmnt -n -o MAJ:MIN,FSROOT,TARGET --target "$path")" || return 1
+  [[ -n "$output" && "$output" != *$'\n'* && "$output" != *$'\r'* ]] || return 1
+  read -r mount_identity_major_minor mount_identity_fsroot mount_identity_target extra <<< "$output"
+  [[ -z "$extra" && "$mount_identity_major_minor" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  [[ "$mount_identity_fsroot" == /* && "$mount_identity_target" == /* ]] || return 1
+}
+
 run_main() {
   (( $# == 7 )) || die 'argument count; usage: restore_workspace.sh BASE_PYTHON WORKSPACE_ROOT PERSISTENT_ROOT REPOSITORY MANIFEST_BASENAME SEN2SRLITE_SOURCE LDSR_SOURCE'
 
@@ -147,20 +161,23 @@ run_main() {
   local verify_file= restore_file=
   local model_mount_directory="$workspace_root/model-mounts"
   local created_model_mount_directory=0
+  local rollback_mounts=1
   local -a created_targets=()
   local -a mounted_targets=()
 
   cleanup_restore_transaction() {
     local index target
-    for ((index = ${#mounted_targets[@]} - 1; index >= 0; index--)); do
-      umount -- "${mounted_targets[index]}" 2>/dev/null || true
-    done
-    for ((index = ${#created_targets[@]} - 1; index >= 0; index--)); do
-      target="${created_targets[index]}"
-      rmdir -- "$target" 2>/dev/null || true
-    done
-    if (( created_model_mount_directory )); then
-      rmdir -- "$model_mount_directory" 2>/dev/null || true
+    if (( rollback_mounts )); then
+      for ((index = ${#mounted_targets[@]} - 1; index >= 0; index--)); do
+        umount -- "${mounted_targets[index]}" 2>/dev/null || true
+      done
+      for ((index = ${#created_targets[@]} - 1; index >= 0; index--)); do
+        target="${created_targets[index]}"
+        rmdir -- "$target" 2>/dev/null || true
+      done
+      if (( created_model_mount_directory )); then
+        rmdir -- "$model_mount_directory" 2>/dev/null || true
+      fi
     fi
     [[ -z "$verify_file" ]] || rm -f -- "$verify_file" 2>/dev/null || true
     [[ -z "$restore_file" ]] || rm -f -- "$restore_file" 2>/dev/null || true
@@ -194,7 +211,9 @@ run_main() {
     created_model_mount_directory=1
   fi
 
-  local source target observed_source options
+  local source target options index
+  local source_major_minor source_fsroot source_mount_target
+  local target_major_minor target_fsroot target_mount_target relative expected_fsroot
   local -a sources=("$sen2srlite_source" "$ldsr_source")
   local -a targets=("$model_mount_directory/sen2srlite" "$model_mount_directory/ldsr-s2")
   for target in "${targets[@]}"; do
@@ -213,9 +232,33 @@ run_main() {
     if ! mount -o remount,bind,ro "$target"; then
       die 'model bind mount could not be made read-only'
     fi
-    observed_source="$(findmnt -n -o SOURCE --target "$target")" ||
-      die 'model bind mount source cannot be inspected'
-    [[ "$observed_source" == "$source" ]] || die 'model bind mount source mismatch'
+    read_mount_identity "$source" || die 'model source mount identity cannot be inspected'
+    source_major_minor="$mount_identity_major_minor"
+    source_fsroot="$mount_identity_fsroot"
+    source_mount_target="$mount_identity_target"
+    [[ "$source_mount_target" == / || "$source" == "$source_mount_target" ||
+      "$source" == "$source_mount_target"/* ]] || die 'model source mount identity mismatch'
+    if [[ "$source_mount_target" == / ]]; then
+      relative="$source"
+    elif [[ "$source" == "$source_mount_target" ]]; then
+      relative=
+    else
+      relative="${source#"$source_mount_target"}"
+    fi
+    if [[ -z "$relative" ]]; then
+      expected_fsroot="$source_fsroot"
+    elif [[ "$source_fsroot" == / ]]; then
+      expected_fsroot="$relative"
+    else
+      expected_fsroot="${source_fsroot%/}$relative"
+    fi
+    read_mount_identity "$target" || die 'model bind mount identity cannot be inspected'
+    target_major_minor="$mount_identity_major_minor"
+    target_fsroot="$mount_identity_fsroot"
+    target_mount_target="$mount_identity_target"
+    [[ "$target_mount_target" == "$target" &&
+      "$target_major_minor" == "$source_major_minor" &&
+      "$target_fsroot" == "$expected_fsroot" ]] || die 'model bind mount identity mismatch'
     options="$(findmnt -n -o OPTIONS --target "$target")" ||
       die 'model bind mount options cannot be inspected'
     [[ -n "$options" && "$options" != *$'\n'* && "$options" != *$'\r'* ]] ||
@@ -229,6 +272,7 @@ run_main() {
     restore "$checkpoint_directory" "$manifest_basename" "$workspace_root" "$git_head" > "$restore_file"; then
     die 'checkpoint restore failed'
   fi
+  rollback_mounts=0
   require_one_record "$restore_file" restore || die 'checkpoint restore emitted an invalid record'
   [[ "$record_archive_basename" == "$verify_archive" &&
     "$record_archive_sha256" == "$verify_digest" &&
