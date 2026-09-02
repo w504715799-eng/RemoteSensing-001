@@ -201,20 +201,32 @@ run_main() {
 
   local log_directory="$storage_root/trustsr/phase2b3a/logs"
   local log_path="$log_directory/$stage.jsonl"
+  local lock_path="$log_path.lock"
   reject_symlink_components "$log_directory" || die 'log directory contains a symlink'
   mkdir -p -- "$log_directory"
   [[ -d "$log_directory" && ! -L "$log_directory" ]] || die 'log directory is invalid'
-  [[ ! -e "$log_path" && ! -L "$log_path" ]] || die 'stage log collision'
+  mkdir -- "$lock_path" 2>/dev/null || die 'stage log is reserved by another process'
 
-  local temporary_log
-  temporary_log="$(mktemp -- "$log_directory/.${stage}.XXXXXX")"
-  trap 'rm -f -- "$temporary_log"' EXIT
+  phase2b3a_temporary_log=
+  phase2b3a_log_lock="$lock_path"
+  cleanup_log_transaction() {
+    [[ -z "${phase2b3a_temporary_log:-}" ]] || rm -f -- "$phase2b3a_temporary_log"
+    [[ -z "${phase2b3a_log_lock:-}" ]] || rmdir -- "$phase2b3a_log_lock" 2>/dev/null || true
+  }
+  trap cleanup_log_transaction EXIT
+  [[ ! -e "$log_path" && ! -L "$log_path" ]] || die 'stage log collision'
+  phase2b3a_temporary_log="$(mktemp -- "$log_directory/.${stage}.XXXXXX")"
   cd -- "$repository"
   PYTHONPATH="$repository/src" "$base_python" -m trustsr.cli.phase2b3a "$stage" \
     --storage-root "$storage_root" \
     --project-root "$repository" \
-    "${stage_arguments[@]}" | tee -- "$temporary_log"
-  mv -- "$temporary_log" "$log_path"
+    "${stage_arguments[@]}" | tee -- "$phase2b3a_temporary_log"
+  ln -- "$phase2b3a_temporary_log" "$log_path" 2>/dev/null ||
+    die 'stage log appeared during execution'
+  rm -f -- "$phase2b3a_temporary_log"
+  phase2b3a_temporary_log=
+  rmdir -- "$lock_path" || die 'stage log reservation could not be released'
+  phase2b3a_log_lock=
   trap - EXIT
 }
 

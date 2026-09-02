@@ -97,6 +97,16 @@ least 10 GiB free and more than 1024 free inodes, and verifies the pinned commit
 attached `HEAD` before invoking Python. Each successful stage creates exactly one immutable log at
 `trustsr/phase2b3a/logs/<stage>.jsonl`. An existing log is a collision: inspect it and choose whether
 the old successful stage is authoritative; never delete or overwrite it merely to force a rerun.
+The runner atomically reserves that name with a sibling `<stage>.jsonl.lock` directory before Python
+starts and publishes through a no-replace hard link. Concurrent invocations therefore cannot both
+run the CLI or replace an existing log.
+
+An ordinary failure removes its temporary log and reservation. Process death can leave a stale lock;
+the runner fails closed instead of guessing that it is stale. Recovery requires an operator to prove
+that no matching runner or Python process exists, inspect whether the final stage log or a
+`.stage.XXXXXX` temporary remains, preserve any completed evidence, and only then remove the exact
+empty lock with `rmdir -- "$PHASE2B3A_STORAGE_ROOT/trustsr/phase2b3a/logs/<stage>.jsonl.lock"`.
+Never recursively remove the log directory or clear a live reservation.
 
 ## A1: four-ROI stability and resource gate
 
@@ -144,6 +154,19 @@ The puller first stages the digest-addressed completed bundle manifest, accepts 
 listed for its declared phase, checks their remote and local sizes/SHA-256 values, and publishes the
 five-file bundle only after all checks pass. It does not enumerate the result directory and therefore
 does not copy remote pair commit markers, lock files, caches, logs, or temporary files.
+The remote storage root is deliberately narrower than a general shell path: every component may use
+only ASCII letters, digits, `.`, `_`, and `-`, and may not be empty, `.`, `..`, or begin with `-`.
+This is required because OpenSSH and legacy SCP serialize remote commands through a shell. The remote
+metadata probe explicitly uses Bash; punctuation-heavy mount paths must be rejected, not quoted into
+remote commands.
+
+The puller also reserves `${PHASE2B3A_A1_BUNDLE}.lock` (or the corresponding A2 destination) and
+publishes with no directory following and no replacement. A concurrent winner is accepted only if
+its exact five-file membership and every byte match the fully verified staging bundle. Ordinary
+failures remove the staging directory and lock. After process death, leave a stale lock in place
+until no puller, SSH, or SCP process exists and the destination has been independently verified or
+shown absent; then remove only the exact empty sibling lock with
+`rmdir -- "${PHASE2B3A_A1_BUNDLE}.lock"` (or the guarded A2 destination lock).
 
 Do not begin A2 until the local A1 verifier succeeds and the acceptance JSON confirms the resource
 gate. If A1 verification fails, keep the remote instance and persistent evidence available for

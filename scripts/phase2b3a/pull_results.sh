@@ -21,6 +21,19 @@ validate_absolute_path() {
   done
 }
 
+validate_remote_storage_root() {
+  local value="$1"
+  local component
+  local -a components
+  [[ -n "$value" && "$value" == /* && "$value" != / && "$value" != /root ]] || return 1
+  [[ "$value" =~ ^(/[A-Za-z0-9._-]+)+$ ]] || return 1
+  IFS=/ read -r -a components <<< "${value#/}"
+  for component in "${components[@]}"; do
+    [[ -n "$component" && "$component" != . && "$component" != .. && "$component" != -* ]] ||
+      return 1
+  done
+}
+
 reject_symlink_components() {
   local value="$1"
   local current=/
@@ -36,7 +49,7 @@ reject_symlink_components() {
 
 remote_metadata() {
   local remote_path="$1"
-  ssh -p "$ssh_port" -- "$ssh_host" sh -s -- "$remote_path" <<'REMOTE'
+  ssh -p "$ssh_port" -- "$ssh_host" bash -s -- "$remote_path" <<'REMOTE'
 set -euo pipefail
 path="$1"
 [[ -f "$path" && ! -L "$path" ]]
@@ -63,7 +76,7 @@ local_destination="$4"
 [[ "$ssh_host" != *..* ]] || die 'SSH host is not normalized'
 [[ "$ssh_port" =~ ^[0-9]+$ ]] || die 'SSH port must be numeric'
 (( 10#$ssh_port >= 1 && 10#$ssh_port <= 65535 )) || die 'SSH port is outside 1..65535'
-validate_absolute_path "$remote_storage_root" || die 'remote storage root'
+validate_remote_storage_root "$remote_storage_root" || die 'remote storage root'
 validate_absolute_path "$local_destination" || die 'local destination'
 reject_symlink_components "$local_destination" || die 'local destination contains a symlink'
 
@@ -75,12 +88,16 @@ local_parent="$(realpath -e -- "$local_parent")" || die 'local destination paren
 post_manifest_sha256=c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a
 remote_bundle_root="${remote_storage_root%/}/trustsr/phase2b3a/results/$post_manifest_sha256"
 manifest_name=phase2b3a-bundle-manifest.json
+publication_lock="${local_destination}.lock"
 
-staging_directory="$(mktemp -d -- "$local_parent/.phase2b3a-pull.XXXXXX")"
+mkdir -- "$publication_lock" 2>/dev/null || die 'local destination is reserved by another pull'
+staging_directory=
 cleanup() {
-  rm -rf -- "$staging_directory"
+  [[ -z "$staging_directory" ]] || rm -rf -- "$staging_directory"
+  rmdir -- "$publication_lock" 2>/dev/null || true
 }
 trap cleanup EXIT
+staging_directory="$(mktemp -d -- "$local_parent/.phase2b3a-pull.XXXXXX")"
 
 manifest_path="$staging_directory/$manifest_name"
 scp -P "$ssh_port" -- "$ssh_host:$remote_bundle_root/$manifest_name" "$manifest_path" ||
@@ -182,22 +199,30 @@ for entry in "${manifest_entries[@]}"; do
   phase_files+=("$basename")
 done
 
-if [[ -e "$local_destination" || -L "$local_destination" ]]; then
-  [[ -d "$local_destination" && ! -L "$local_destination" ]] ||
-    die 'existing local destination is not a directory'
+published_bundle_is_identical() {
+  [[ -d "$local_destination" && ! -L "$local_destination" ]] || return 1
   existing_count="$(find "$local_destination" -mindepth 1 -maxdepth 1 -printf . | wc -c)"
-  (( existing_count == 5 )) || die 'existing local destination has different membership'
+  (( existing_count == 5 )) || return 1
   for basename in "$manifest_name" "${phase_files[@]}"; do
-    [[ -f "$local_destination/$basename" && ! -L "$local_destination/$basename" ]] ||
-      die 'existing local destination has invalid evidence'
-    cmp -s -- "$staging_directory/$basename" "$local_destination/$basename" ||
-      die 'existing local destination contains different evidence'
+    [[ -f "$local_destination/$basename" && ! -L "$local_destination/$basename" ]] || return 1
+    cmp -s -- "$staging_directory/$basename" "$local_destination/$basename" || return 1
   done
+}
+
+if [[ -e "$local_destination" || -L "$local_destination" ]]; then
+  published_bundle_is_identical || die 'existing local destination contains different evidence'
 else
-  mv -- "$staging_directory" "$local_destination"
-  staging_directory=
+  publication_status=0
+  mv -T --no-clobber -- "$staging_directory" "$local_destination" || publication_status=$?
+  if [[ -e "$staging_directory" ]]; then
+    published_bundle_is_identical || die 'local bundle publication lost a conflicting race'
+    rm -rf -- "$staging_directory"
+  elif (( publication_status != 0 )); then
+    die 'local bundle publication failed'
+  fi
 fi
 
+staging_directory=
+rmdir -- "$publication_lock" || die 'local destination reservation could not be released'
 trap - EXIT
-[[ -z "$staging_directory" ]] || rm -rf -- "$staging_directory"
 printf '%s\n' "$local_destination"
