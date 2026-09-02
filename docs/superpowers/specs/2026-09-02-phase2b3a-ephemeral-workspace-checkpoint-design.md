@@ -1,7 +1,7 @@
 # Phase 2B3-A Ephemeral Workspace Checkpoint Design
 
 Date: 2026-09-02
-Status: proposed for implementation
+Status: approved for implementation
 Parent workflow: `2026-09-01-phase2b3a-development-score-audit-design.md`
 
 ## 1. Purpose
