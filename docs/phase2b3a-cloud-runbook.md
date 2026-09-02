@@ -215,17 +215,19 @@ run these commands in the cloud shell.
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
 : "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
+: "${PHASE2B3A_LOCAL_REVIEWED_COMMIT:?set exact reviewed 40-hex A0 commit}"
 : "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
 : "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
 : "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
 : "${PHASE2B3A_A1_BUNDLE:?set new absolute local A1 bundle destination}"
 [[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+[[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
 [[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
-git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_REVIEWED_COMMIT" HEAD
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
 "$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A1_BUNDLE"
 uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json
@@ -272,17 +274,19 @@ establishes terminal `A2_CHECKPOINTED`.
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
 : "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
+: "${PHASE2B3A_LOCAL_REVIEWED_COMMIT:?set exact reviewed 40-hex A0 commit}"
 : "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
 : "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
 : "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
 : "${PHASE2B3A_A2_BUNDLE:?set new absolute local A2 bundle destination}"
 [[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+[[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
 [[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
 [[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
-git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_REVIEWED_COMMIT" HEAD
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
 "$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A2_BUNDLE"
 uv run trustsr-phase2b3a-verify a2 --bundle "$PHASE2B3A_A2_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
