@@ -62,7 +62,11 @@ def _write_workspace(workspace: Path, stage: str, *, corrupt: str | None = None)
         "schema": "trustsr.phase2b3a-bundle-manifest.v1",
         "phase": stage,
         "files": [
-            {"basename": name, "sha256": hashlib.sha256(payloads[name]).hexdigest(), "size_bytes": len(payloads[name])}
+            {
+                "basename": name,
+                "sha256": hashlib.sha256(payloads[name]).hexdigest(),
+                "size_bytes": len(payloads[name]),
+            }
             for name in sorted(payloads)
         ],
     }
@@ -107,11 +111,18 @@ def _checkpoint_environment(
         "root=\"$3\"\n"
         "case \"$1\" in\n"
         "  -Pk)\n"
-        "    if [[ \"$root\" == \"$FAKE_WORK_ROOT\" ]]; then available=\"$FAKE_WORK_KIB\"; "
-        "elif [[ -e \"$FAKE_BUILD_FINISHED\" && -n \"$FAKE_PERSISTENT_AFTER_BUILD_KIB\" ]]; then available=\"$FAKE_PERSISTENT_AFTER_BUILD_KIB\"; "
-        "elif [[ \"$root\" == \"$FAKE_PERSISTENT_ROOT\" ]]; then available=\"$FAKE_PERSISTENT_KIB\"; else exit 98; fi\n"
-        "    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/fake 1 1 %s 1%% /fake\\n' \"$available\" ;;\n"
-        "  -Pi) [[ \"$root\" == \"$FAKE_PERSISTENT_ROOT\" ]] || exit 98; printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\\n/dev/fake 1 1 %s 1%% /fake\\n' \"$FAKE_PERSISTENT_INODES\" ;;\n"
+        "    if [[ \"$root\" == \"$FAKE_WORK_ROOT\" ]]; then "
+        "available=\"$FAKE_WORK_KIB\"; "
+        "elif [[ -e \"$FAKE_BUILD_FINISHED\" && "
+        "-n \"$FAKE_PERSISTENT_AFTER_BUILD_KIB\" ]]; then "
+        "available=\"$FAKE_PERSISTENT_AFTER_BUILD_KIB\"; "
+        "elif [[ \"$root\" == \"$FAKE_PERSISTENT_ROOT\" ]]; then "
+        "available=\"$FAKE_PERSISTENT_KIB\"; else exit 98; fi\n"
+        "    printf 'Filesystem 1024-blocks Used Available Capacity "
+        "Mounted on\\n/dev/fake 1 1 %s 1%% /fake\\n' \"$available\" ;;\n"
+        "  -Pi) [[ \"$root\" == \"$FAKE_PERSISTENT_ROOT\" ]] || exit 98; "
+        "printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\\n"
+        "/dev/fake 1 1 %s 1%% /fake\\n' \"$FAKE_PERSISTENT_INODES\" ;;\n"
         "  *) exit 98 ;;\n"
         "esac\n",
     )
@@ -121,7 +132,8 @@ def _checkpoint_environment(
         "[[ \"$1\" == -C && \"$2\" == \"$FAKE_REPOSITORY\" ]]\n"
         "case \"$3 $4\" in\n"
         "  'rev-parse HEAD') printf '%s\\n' \"$FAKE_GIT_HEAD\" ;;\n"
-        "  'symbolic-ref --short') [[ \"${5:-}\" == HEAD ]]; printf '%s\\n' \"$FAKE_GIT_BRANCH\" ;;\n"
+        "  'symbolic-ref --short') [[ \"${5:-}\" == HEAD ]]; "
+        "printf '%s\\n' \"$FAKE_GIT_BRANCH\" ;;\n"
         "  'status --porcelain') printf '%s' \"$FAKE_GIT_STATUS\" ;;\n"
         "  *) exit 97 ;;\n"
         "esac\n",
@@ -212,7 +224,9 @@ def _checkpoint_environment(
             "FAKE_FINDMNT_CALLS": str(tmp_path / "findmnt-calls.jsonl"),
             "FAKE_MOUNT_CALLS": str(tmp_path / "mount-calls.jsonl"),
             "FAKE_MOUNT_STATE": str(tmp_path / "mount-state.json"),
-            "FAKE_PERSISTENT_AFTER_BUILD_KIB": "" if persistent_after_build_kib is None else str(persistent_after_build_kib),
+            "FAKE_PERSISTENT_AFTER_BUILD_KIB": (
+                "" if persistent_after_build_kib is None else str(persistent_after_build_kib)
+            ),
             "FAKE_PERSISTENT_INODES": str(persistent_inodes),
             "FAKE_PERSISTENT_KIB": str(persistent_available_kib),
             "FAKE_PERSISTENT_MOUNTED": "1" if persistent_mounted else "0",
@@ -293,7 +307,14 @@ def _invoke_checkpoint(
     )
     if isinstance(record_mutations, dict):
         environment["FAKE_RECORD_MUTATIONS"] = json.dumps(record_mutations)
-    arguments = [str(base_python), str(workspace), str(persistent), str(repository), stage, REVISION]
+    arguments = [
+        str(base_python),
+        str(workspace),
+        str(persistent),
+        str(repository),
+        stage,
+        REVISION,
+    ]
     if isinstance(paths, dict):
         positions = {"base_python": 0, "workspace": 1, "persistent": 2, "repository": 3}
         for name, value in paths.items():

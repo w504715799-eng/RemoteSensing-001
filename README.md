@@ -343,7 +343,9 @@ require the two verified model directories; replay stages reject them and remain
 
 The safe pull workflow retrieves only a digest-addressed completed bundle manifest and its four
 allowlisted JSON files, verifies remote and local sizes/SHA-256 values, and publishes the bundle only
-after complete verification. Pixels, caches, tensors, models, logs, remote commit markers, lock
-files, instance endpoints, and credentials stay out of Git. The A0/A1/A2 checkpoints, exact command
-arrays, failure branches, local verification, and GPU pause conditions are in
+after complete verification. Cloud pixels, tensors, caches, and checkpoint tar files are never
+downloaded locally or committed; only allowlisted JSON evidence enters Git. Models, logs, remote
+commit markers, lock files, instance endpoints, and credentials also stay out of Git. The disposable
+work/durable checkpoint workflow, A0/A1/A2 checkpoints, exact command arrays, failure branches,
+local verification, and pause conditions are in
 [`docs/phase2b3a-cloud-runbook.md`](docs/phase2b3a-cloud-runbook.md).
