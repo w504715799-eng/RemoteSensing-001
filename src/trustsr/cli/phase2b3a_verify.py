@@ -40,7 +40,7 @@ _PHASE_FILES = {
     ),
 }
 _OUTPUT_NAMES = {
-    "a1": "sen2naipv2-development-smoke-acceptance-v1.json",
+    "a1": "sen2naipv2-development-smoke-acceptance-v2.json",
     "a2": "sen2naipv2-development-score-acceptance-v1.json",
 }
 _SECRET_KEY = re.compile(
@@ -1081,7 +1081,7 @@ def _verify_a1_result_audit_runtime_replay(
     ):
         raise ValueError("A1 K=5 acceptance/stability decision is invalid")
     return {
-        "schema": "trustsr.phase2b3a-development-smoke-acceptance.v1",
+        "schema": "trustsr.phase2b3a-development-smoke-acceptance.v2",
         "digests": _bundle_digests(files),
         "bundle_integrity_pass": True,
         "replay_pass": True,

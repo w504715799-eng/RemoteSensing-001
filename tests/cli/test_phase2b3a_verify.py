@@ -710,7 +710,7 @@ assert phase2b3a_verify.build_parser().parse_args(["a1", "--help"]) is None
 @pytest.mark.parametrize(
     ("phase", "acceptance_name"),
     [
-        ("a1", "sen2naipv2-development-smoke-acceptance-v1.json"),
+        ("a1", "sen2naipv2-development-smoke-acceptance-v2.json"),
         ("a2", "sen2naipv2-development-score-acceptance-v1.json"),
     ],
 )
@@ -731,8 +731,28 @@ def test_valid_bundle_writes_exact_canonical_acceptance(
     output = repository / "artifacts" / "phase2b3a" / acceptance_name
 
     acceptance = getattr(phase2b3a_verify, f"verify_{phase}_bundle")(bundle)
+    assert acceptance["schema"] == (
+        "trustsr.phase2b3a-development-smoke-acceptance.v2"
+        if phase == "a1"
+        else "trustsr.phase2b3a-development-score-acceptance.v1"
+    )
     assert phase2b3a_verify.main([phase, "--bundle", str(bundle), "--output", str(output)]) == 0
     assert output.read_bytes() == canonical_json(acceptance)
+
+
+def test_a1_v2_rejects_the_historical_v1_acceptance_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = tmp_path / "repository"
+    (repository / "artifacts" / "phase2b3a").mkdir(parents=True)
+    monkeypatch.setattr(phase2b3a_verify, "resolve_project_root", lambda: repository)
+
+    with pytest.raises(ValueError, match="declared.*basename"):
+        phase2b3a_verify._validate_output_path(
+            repository
+            / "artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json",
+            phase="a1",
+        )
 
 
 def test_a2_verifier_rejects_noncanonical_a1_producer_commit(tmp_path: Path) -> None:
