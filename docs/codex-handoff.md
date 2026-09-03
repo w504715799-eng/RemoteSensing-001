@@ -6,12 +6,13 @@ Date: 2026-09-03 (Asia/Shanghai)
 
 - Integration branch: `main`; local Git is authoritative. Cloud code is disposable and must never
   be merged back.
-- This handoff was written from
-  `adb15824cc7381244195098968c8dc98344cea37`.
-- The main coordinator must replace that checkpoint with the final integrated `main` SHA after the
-  remaining parallel workflow is reviewed and merged.
-- Do not infer readiness from a branch name or this document; resume only from the recorded clean,
-  attached commit and re-run the scoped gates below.
+- Code checkpoint immediately before this handoff-document update:
+  `a7ff6a044245c7ab35e290b364c77fcd460573a1`.
+- The handoff commit is necessarily a child of that code checkpoint. Runtime wiring was subsequently
+  integrated as `d8b3cac`; the main coordinator must record the final integrated `main` SHA in the
+  final report. This document does not identify its own commit as a code checkpoint.
+- Do not infer readiness from a branch name or this document. Resume only from a clean, attached
+  commit and rerun the scoped gates below.
 
 ## Frozen Phase 2B3-A baseline
 
@@ -55,31 +56,50 @@ The active design is
 [Phase 2B3-B: Calibration-only conformal threshold design](superpowers/specs/2026-09-03-phase2b3b-calibration-design.md).
 It remains a draft pending scientific-parameter approval.
 
-At this checkpoint, local CPU engineering and synthetic tests cover:
+At the code checkpoint, local CPU engineering and synthetic tests cover:
 
 - frozen Phase 2B3-A evidence validation and clean Git revision/ancestry gates;
-- complete-manifest validation, exact 120-member calibration selection, and strict
-  calibration-only pair loading;
-- frozen LDSR-S2-x4 scientific model identity and fixed K5 seeds `3407..3411`;
-- prediction/score cache identities, ensemble-variance score maps, R9 local-L1 risk maps, cache
-  audit, and inference-free cache replay;
-- radiometric saturation receipts and an independent radiometry verifier;
-- exact ROI-level conformal fitting, including all-abstain and minimum-coverage decisions;
-- authoritative input receipts that bind frozen manifest membership to loaded LR/HR tensor
-  identities;
-- final result composition with per-sample input/cache/radiometry bindings;
-- an independent final result verifier with trusted local Git ancestry revalidation;
-- replay receipt composition; and
-- canonical atomic bundle I/O hardened against symlinks, FIFOs, overwrite races, partial staging,
-  noncanonical files, and mismatched digests.
+- complete-manifest validation, exact 120-member calibration selection, strict pair loading, and
+  authoritative input receipts binding frozen membership to loaded LR/HR tensor identities;
+- frozen LDSR-S2-x4 scientific identity, fixed K5 seeds `3407..3411`, prediction/cache identities,
+  score and risk maps, cache audit, and inference-free cache replay;
+- radiometric receipts plus an independent verifier, exact conformal fitting, final result
+  composition, replay receipt composition, and canonical atomic bundle I/O;
+- an independent final-result verifier that revalidates trusted local Git ancestry;
+- a semantic bundle verifier that cross-checks candidate documents but is explicitly metadata-only,
+  including exact runtime verification and digest cross-binding;
+- a downstream computation replay verifier that recomputes score, risk, fit, audit, and canonical
+  result from caller-supplied loaded inputs and cache entries; and
+- the exact design section 7.1 runtime manifest module.
 
-The semantic cross-document bundle verifier is still being developed in a separate isolated
-workflow. It is not part of this checkpoint and must not be described as complete until its commit
-is reviewed, integrated, and tested by the main coordinator.
+The runtime builder internally reverifies the raw result and raw input authority. Offline runtime
+verification invokes the authoritative result verifier again and reconstructs input authority from
+that verified result. Runtime contains no replay, bundle, or acceptance digest, so the evidence graph
+remains acyclic. Runtime is host-free: it contains no operational path or arbitrary filename; the
+fixed scientific checkpoint basename in `checkpoint_name` is the sole schema-approved
+filename-shaped exception.
+
+Runtime wiring is integrated: candidate bundle verification calls the exact runtime verifier and
+cross-binds its runtime, result, cache-audit, input, map-evidence, and revision identities. This does
+not elevate the bundle beyond metadata consistency or authorize acceptance.
+
+## Verification scopes are not interchangeable
+
+| Layer | Positive scope | Explicitly not authorized or proved |
+|---|---|---|
+| final-result verifier | `metadata_consistency_only`; `cache_computation_verified=false` | cache computations and acceptance |
+| semantic bundle verifier | `metadata_consistency_only`; `cache_computation_verified=false` | pixel/model computation and acceptance |
+| computation replay verifier | `cache_computation_replay`; `cache_computation_verified=true` | LDSR inference, independent membership authority, and acceptance |
+| runtime verifier | `metadata_inventory_only`; `cache_computation_verified=false` | computation and acceptance |
+
+For computation replay, `prediction_inference_verified=false`,
+`membership_authority_verified=false`, and `acceptance_authorized=false`. Its positive flag means
+only that cache-derived downstream score/risk/fit/result computations were replayed. A structurally
+self-consistent receipt is never a scientific authorization credential.
 
 ## Implemented command surface
 
-The only formal Phase 2B3-B command currently implemented is metadata-only preflight:
+Metadata-only preflight is available:
 
 ```text
 trustsr-phase2b3b preflight \
@@ -89,9 +109,21 @@ trustsr-phase2b3b preflight \
   --manifest MANIFEST
 ```
 
-There is no formal `calibration` or `calibration-replay` subcommand and no
-`trustsr-phase2b3b-verify` entry point yet. The similarly named functions and modules are library
-boundaries exercised with synthetic inputs; they do not authorize a real run.
+Candidate bundle verification is also implemented:
+
+```text
+trustsr-phase2b3b-verify \
+  --bundle BUNDLE \
+  --project-root PROJECT_ROOT \
+  --evidence-dir EVIDENCE_DIR \
+  --storage-root STORAGE_ROOT \
+  --manifest MANIFEST
+```
+
+This verifier reports metadata consistency only and always emits
+`acceptance_authorized=false`. There is still no formal `calibration` or
+`calibration-replay` command and no acceptance/publication command. Library functions exercised
+with synthetic inputs do not authorize a real run.
 
 ## Unapproved scientific parameters and hard stop
 
@@ -119,8 +151,8 @@ Keep the server off. Request the user's permission before starting it, and only 
 following are true:
 
 1. `alpha` and minimum coverage have been explicitly approved;
-2. the formal calibration, replay, and independent verifier commands are integrated and locally
-   verified;
+2. the formal calibration, replay, acceptance, and independent verification surfaces are integrated
+   and locally verified;
 3. the exact clean reviewed commit is ready for a disposable cloud checkout; and
 4. verified calibration K5 cache entries are missing and must be generated.
 
@@ -129,19 +161,15 @@ Git or become a merge source.
 
 ## Next local work
 
-1. Review and integrate the in-progress semantic bundle verifier.
-2. Add the exact host-free calibration runtime manifest and cross-bind model, dependency, input,
-   result, cache-audit, replay, and revision identities.
-3. Implement the formal fixed `calibration`, inference-free `calibration-replay`, and independent
-   `verify` command surfaces without alpha, coverage, score, seed, window, split, sample-limit, or
-   sample-ID override flags.
-4. Add the acceptance record and the strict three-file Git-safe publication boundary.
-5. Run the final integrated CPU test/static gates. Only then ask the user to approve or replace the
-   two preregistered numerical values.
-6. After approval, separately request GPU/cloud authorization if cache generation is necessary.
-7. Run calibration once, replay without inference, independently verify the copied bundle, review
-   the three Git-safe files, and publish either `freeze_calibration` or
-   `stop_insufficient_coverage` without relaxing the preregistered gates.
+1. Run the final integrated CPU tests and static gates and record the exact final `main` SHA.
+2. Obtain explicit approval or replacement of `alpha` and minimum coverage before opening real
+   calibration data or exposing any executable scientific path.
+3. Only after approval, finish and verify the fixed formal calibration, inference-free replay,
+   acceptance, and publication command surfaces without scientific override flags.
+4. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
+5. Run calibration once, replay without inference, independently verify the copied bundle, review
+   the Git-safe publication files, and publish either `freeze_calibration` or
+   `stop_insufficient_coverage` without relaxing preregistered gates.
 
 Phase 2B3-C remains out of scope. It requires a separate written and approved specification before
 any one-time `internal_test` access.
@@ -149,34 +177,39 @@ any one-time `internal_test` access.
 ## Verification at handoff
 
 Individual workstreams ran targeted tests, Ruff, and `git diff --check` before their commits. The
-main coordinator owns the final integrated run after all pending commits are merged:
+main coordinator owns the final integrated run:
 
 ```bash
 uv run pytest -q \
   tests/cli/test_phase2b3b.py \
+  tests/cli/test_phase2b3b_verify.py \
   tests/evaluation/test_phase2b3b_*.py \
   tests/evaluation/test_calibration_*.py
 uv run ruff check \
   src/trustsr/cli/phase2b3b.py \
+  src/trustsr/cli/phase2b3b_verify.py \
   src/trustsr/evaluation \
   tests/cli/test_phase2b3b.py \
+  tests/cli/test_phase2b3b_verify.py \
   tests/evaluation
 uv run trustsr-phase2b3b --help >/dev/null
 uv run trustsr-phase2b3b preflight --help >/dev/null
+uv run trustsr-phase2b3b-verify --help >/dev/null
 git diff --check
 git status --short --branch
 git rev-parse HEAD
 ```
 
-A final full `uv run pytest -q` is intentionally deferred to the main coordinator after the
-semantic bundle verifier and any final integration repairs land. Do not claim Phase 2B3-B complete
-from targeted tests alone.
+Final integrated/full-suite status: **PENDING FINAL COORDINATOR RUN**.
+
+Do not claim Phase 2B3-B complete from targeted workstream tests, metadata-only receipts, or this
+handoff draft.
 
 ## Persistent stop conditions
 
 - Accept only the exact 120 frozen `calibration` records in canonical manifest order.
 - Fail closed on any evidence, revision, membership, asset, tensor, model, policy, cache, replay,
-  canonical JSON, path, or digest mismatch.
+  runtime, canonical JSON, path, or digest mismatch.
 - Never use development or `internal_test` observations to tune Phase 2B3-B.
 - Never lower alpha or minimum coverage to rescue an unfavorable result.
 - Never treat a structurally self-consistent receipt or transport-valid bundle as scientific
