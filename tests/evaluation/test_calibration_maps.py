@@ -242,3 +242,61 @@ def test_rejects_wrong_pair_type_and_forged_or_mutable_result_state(tmp_path: Pa
         maps.sample_id = "mutated"  # type: ignore[misc]
     with pytest.raises(TypeError):
         maps.score.identity.operator_parameters["correction"] = 1  # type: ignore[index]
+
+
+def test_calibration_maps_rejects_risk_above_reflectance_bound(tmp_path: Path) -> None:
+    pair = _pair()
+    maps = load_or_compute_calibration_maps(
+        pair, _bundle(pair, tmp_path / "predictions"), ScoreCache(tmp_path / "scores")
+    )
+    risk = torch.full_like(maps.risk, 1.1)
+
+    with pytest.raises(ValueError, match=r"risk.*\[0, 1\]"):
+        CalibrationMaps(
+            sample_id=maps.sample_id,
+            score=maps.score,
+            score_prediction_sha256s=maps.score_prediction_sha256s,
+            risk_name=maps.risk_name,
+            risk_window=maps.risk_window,
+            risk_sha256=tensor_sha256(risk),
+            risk=risk,
+        )
+
+
+def test_cached_calibration_score_rejects_value_above_k5_variance_bound(tmp_path: Path) -> None:
+    pair = _pair()
+    maps = load_or_compute_calibration_maps(
+        pair, _bundle(pair, tmp_path / "predictions"), ScoreCache(tmp_path / "scores")
+    )
+    score = torch.full_like(maps.score.tensor, 0.2500001)
+
+    with pytest.raises(ValueError, match="score.*0.25"):
+        CachedCalibrationScore(
+            name=maps.score.name,
+            identity=maps.score.identity,
+            score_sha256=tensor_sha256(score),
+            tensor=score,
+        )
+
+
+def test_calibration_maps_rejects_forged_cached_score_state(tmp_path: Path) -> None:
+    pair = _pair()
+    maps = load_or_compute_calibration_maps(
+        pair, _bundle(pair, tmp_path / "predictions"), ScoreCache(tmp_path / "scores")
+    )
+    forged_score = object.__new__(CachedCalibrationScore)
+    object.__setattr__(forged_score, "name", maps.score.name)
+    object.__setattr__(forged_score, "identity", maps.score.identity)
+    object.__setattr__(forged_score, "score_sha256", "0" * 64)
+    object.__setattr__(forged_score, "tensor", maps.score.tensor)
+
+    with pytest.raises(ValueError, match="score.*digest"):
+        CalibrationMaps(
+            sample_id=maps.sample_id,
+            score=forged_score,
+            score_prediction_sha256s=maps.score_prediction_sha256s,
+            risk_name=maps.risk_name,
+            risk_window=maps.risk_window,
+            risk_sha256=maps.risk_sha256,
+            risk=maps.risk,
+        )

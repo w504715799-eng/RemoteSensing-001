@@ -43,7 +43,9 @@ _BINS = (0, 1, 2, 3)
 _ROUNDS = tuple(range(1, 11))
 
 
-def _validate_map_tensor(tensor: object, *, label: str) -> torch.Tensor:
+def _validate_map_tensor(
+    tensor: object, *, label: str, upper_bound: float | None = None
+) -> torch.Tensor:
     if not isinstance(tensor, torch.Tensor):
         raise TypeError(f"{label} must be a torch.Tensor")
     if (
@@ -57,6 +59,8 @@ def _validate_map_tensor(tensor: object, *, label: str) -> torch.Tensor:
         or (tensor < 0).any()
     ):
         raise ValueError(f"{label} must be a finite non-negative contiguous CPU float64 map")
+    if upper_bound is not None and (tensor > upper_bound).any():
+        raise ValueError(f"{label} values must be in [0, {upper_bound:g}]")
     return tensor
 
 
@@ -117,7 +121,7 @@ class CachedCalibrationScore:
         ):
             raise ValueError("cached calibration score identity is invalid")
         _validate_fixed_score_identity(self.identity)
-        _validate_map_tensor(self.tensor, label="cached calibration score")
+        _validate_map_tensor(self.tensor, label="cached calibration score", upper_bound=0.25)
         if not _is_sha256(self.score_sha256) or self.score_sha256 != tensor_sha256(self.tensor):
             raise ValueError("cached calibration score digest is invalid")
 
@@ -139,6 +143,7 @@ class CalibrationMaps:
             raise TypeError("calibration maps sample_id must be a non-empty string")
         if not isinstance(self.score, CachedCalibrationScore):
             raise TypeError("calibration maps requires a CachedCalibrationScore")
+        self.score.__post_init__()
         if self.score.identity.sample_id != self.sample_id:
             raise ValueError("calibration score identity does not match the sample")
         if (
@@ -152,7 +157,7 @@ class CalibrationMaps:
             raise ValueError("calibration score identity prediction digests are invalid")
         if self.risk_name != RISK_NAME or self.risk_window != RISK_WINDOW:
             raise ValueError("calibration maps has the wrong fixed risk configuration")
-        _validate_map_tensor(self.risk, label="calibration risk")
+        _validate_map_tensor(self.risk, label="calibration risk", upper_bound=1.0)
         if tuple(self.risk.shape) != tuple(self.score.tensor.shape):
             raise ValueError("calibration score and risk shapes differ")
         if not _is_sha256(self.risk_sha256) or self.risk_sha256 != tensor_sha256(self.risk):
