@@ -30,6 +30,57 @@ def _digest(payload: bytes) -> str:
 
 
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
+_NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
+
+
+def _saturation(
+    *,
+    minimum: int = 100,
+    maximum: int = 9000,
+    clipped: int = 0,
+    by_band: list[int] | None = None,
+) -> dict[str, object]:
+    return {
+        "raw_crop_minimum": minimum,
+        "raw_crop_maximum": maximum,
+        "clipped_high_count": clipped,
+        "clipped_high_by_band": [0, 0, 0, 0] if by_band is None else by_band,
+    }
+
+
+def _radiometric_policy(samples: list[dict[str, object]]) -> dict[str, object]:
+    lr_total = 0
+    hr_total = 0
+    affected_samples = 0
+    affected_assets = 0
+    maxima: list[int] = []
+    for sample in samples:
+        saturation = sample["radiometric_saturation"]
+        sample_affected = False
+        for name in ("lr", "hr"):
+            asset = saturation[name]
+            clipped = asset["clipped_high_count"]
+            maxima.append(asset["raw_crop_maximum"])
+            if clipped:
+                affected_assets += 1
+                sample_affected = True
+            if name == "lr":
+                lr_total += clipped
+            else:
+                hr_total += clipped
+        affected_samples += int(sample_affected)
+    return {
+        "normalization_policy": _NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": len(samples),
+        "affected_sample_count": affected_samples,
+        "affected_asset_count": affected_assets,
+        "lr_clipped_high_count": lr_total,
+        "hr_clipped_high_count": hr_total,
+        "raw_crop_maximum": max(maxima),
+    }
 
 
 def _prediction_identity(
@@ -43,6 +94,7 @@ def _prediction_identity(
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "implementation_schema_version": 1,
         "output_policy": "clip_to_[0,1]",
+        "normalization_policy": _NORMALIZATION_POLICY,
         "torch_version": "2.8.0",
     }
     if model_name == "bicubic-x4":
@@ -206,7 +258,8 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
     root.mkdir()
     if phase == "a1":
         result = {
-            "schema": "trustsr.phase2b3a-development-smoke.v1",
+            "schema": "trustsr.phase2b3a-development-smoke.v2",
+            "normalization_policy": _NORMALIZATION_POLICY,
             "dataset_role": "development_engineering_smoke_only",
             "upstream": {
                 "post_manifest_sha256": POST_MANIFEST_SHA256,
@@ -242,6 +295,12 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
                 for index in range(4)
             ],
         }
+        for sample in result["samples"]:
+            sample["radiometric_saturation"] = {
+                "lr": _saturation(),
+                "hr": _saturation(),
+            }
+        result["radiometric_policy"] = _radiometric_policy(result["samples"])
         prediction_entries = []
         score_entries = []
         score_names = (
@@ -326,8 +385,9 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
                     }
                 )
         audit = {
-            "schema": "trustsr.phase2b3a-development-smoke-cache-audit.v1",
+            "schema": "trustsr.phase2b3a-development-smoke-cache-audit.v2",
             "experiment_schema": result["schema"],
+            "normalization_policy": _NORMALIZATION_POLICY,
             "post_manifest_sha256": POST_MANIFEST_SHA256,
             "input_audit_sha256": INPUT_AUDIT_SHA256,
             "sample_count": 4,
@@ -337,8 +397,10 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
             "score_entries": score_entries,
         }
         runtime = {
-            "schema": "trustsr.phase2b3a-a1-runtime.v1",
+            "schema": "trustsr.phase2b3a-a1-runtime.v2",
             "git_commit": "a" * 40,
+            "normalization_policy": _NORMALIZATION_POLICY,
+            "radiometric_policy": result["radiometric_policy"],
             "single_repeatability_pass": True,
             "single_peak_memory_bytes": 80,
             "gpu_total_memory_bytes": 100,
@@ -371,6 +433,7 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
         ]
         result = {
             "schema": "trustsr.phase2b3a-development-score-audit.v1",
+            "normalization_policy": _NORMALIZATION_POLICY,
             "dataset_role": "development_score_selection_only",
             "upstream": {
                 "post_manifest_sha256": POST_MANIFEST_SHA256,
@@ -404,6 +467,16 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
             },
             "samples": samples,
         }
+        for sample in samples:
+            sample["radiometric_saturation"] = {
+                "lr": _saturation(),
+                "hr": _saturation(),
+            }
+        samples[0]["radiometric_saturation"] = {
+            "lr": _saturation(maximum=11968, clipped=8, by_band=[4, 0, 0, 4]),
+            "hr": _saturation(maximum=11968, clipped=117, by_band=[56, 0, 0, 61]),
+        }
+        result["radiometric_policy"] = _radiometric_policy(samples)
         primary_summaries = [_summary(name) for name in result["candidate_names"]]
         result["candidate_summaries"] = [
             {
@@ -533,6 +606,7 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
         audit = {
             "schema": "trustsr.phase2b3a-development-score-cache-audit.v1",
             "experiment_schema": result["schema"],
+            "normalization_policy": _NORMALIZATION_POLICY,
             "post_manifest_sha256": POST_MANIFEST_SHA256,
             "input_audit_sha256": INPUT_AUDIT_SHA256,
             "code_revision": "a" * 40,
@@ -544,6 +618,8 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
         runtime = {
             "schema": "trustsr.phase2b3a-a2-runtime.v1",
             "git_commit": "a" * 40,
+            "normalization_policy": _NORMALIZATION_POLICY,
+            "radiometric_policy": result["radiometric_policy"],
             "a1_acceptance_pass": True,
             "a1_producer_commit": "9" * 40,
             "a1_replay_sha256": _digest(b"a1-replay"),
@@ -564,7 +640,7 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
         names["runtime"]: runtime_bytes,
     }
     replay = {
-        "schema": f"trustsr.phase2b3a-{phase}-replay.v1",
+        "schema": f"trustsr.phase2b3a-{phase}-replay.{'v2' if phase == 'a1' else 'v1'}",
         "byte_identical": True,
         "result_sha256": _digest(payloads[names["result"]]),
         "cache_audit_sha256": _digest(payloads[names["audit"]]),
@@ -574,7 +650,11 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
     for name, payload in payloads.items():
         (root / name).write_bytes(payload)
     manifest = {
-        "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+        "schema": (
+            "trustsr.phase2b3a-bundle-manifest.v2"
+            if phase == "a1"
+            else "trustsr.phase2b3a-bundle-manifest.v1"
+        ),
         "phase": phase,
         "files": [
             {"basename": name, "size_bytes": len(payload), "sha256": _digest(payload)}
@@ -924,6 +1004,125 @@ def _refresh_manifest(manifest_path: Path, changed: Path) -> None:
             item["size_bytes"] = len(payload)
             item["sha256"] = _digest(payload)
     manifest_path.write_bytes(canonical_json(manifest))
+
+
+def _rewrite_bundle(
+    bundle: Path,
+    phase: str,
+    payloads: dict[str, dict[str, object]],
+    *,
+    changed: str,
+) -> None:
+    result_path = bundle / f"phase2b3a-{phase}-result.json"
+    audit_path = bundle / f"phase2b3a-{phase}-cache-audit.json"
+    runtime_path = bundle / f"phase2b3a-{phase}-runtime.json"
+    replay_path = bundle / f"phase2b3a-{phase}-replay.json"
+    if changed == "runtime":
+        runtime_path.write_bytes(canonical_json(payloads["runtime"]))
+        payloads["result"]["runtime_manifest_sha256"] = _digest(runtime_path.read_bytes())
+        payloads["replay"]["runtime_manifest_sha256"] = _digest(runtime_path.read_bytes())
+    elif changed == "audit":
+        audit_path.write_bytes(canonical_json(payloads["audit"]))
+        payloads["replay"]["cache_audit_sha256"] = _digest(audit_path.read_bytes())
+    elif changed != "result":
+        raise AssertionError(f"unknown changed payload: {changed}")
+    result_path.write_bytes(canonical_json(payloads["result"]))
+    payloads["replay"]["result_sha256"] = _digest(result_path.read_bytes())
+    replay_path.write_bytes(canonical_json(payloads["replay"]))
+    for path in (result_path, audit_path, runtime_path, replay_path):
+        _refresh_manifest(bundle / "phase2b3a-bundle-manifest.json", path)
+
+
+@pytest.mark.parametrize("phase", ["a1", "a2"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_policy",
+        "missing_sample_saturation",
+        "bool_scalar",
+        "negative_scalar",
+        "wrong_band_length",
+        "wrong_band_total",
+        "wrong_band_order",
+        "minimum_exceeds_maximum",
+        "maximum_exceeds_domain",
+        "aggregate_mismatch",
+        "runtime_policy_mismatch",
+        "audit_policy_mismatch",
+    ],
+)
+def test_radiometric_policy_and_samples_fail_closed(
+    tmp_path: Path, phase: str, mutation: str
+) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, phase)
+    result = payloads["result"]
+    changed = "result"
+    asset = result["samples"][0]["radiometric_saturation"]["lr"]
+    if mutation == "missing_policy":
+        result.pop("radiometric_policy")
+    elif mutation == "missing_sample_saturation":
+        result["samples"][0].pop("radiometric_saturation")
+    elif mutation == "bool_scalar":
+        asset["clipped_high_count"] = True
+    elif mutation == "negative_scalar":
+        asset["raw_crop_minimum"] = -1
+    elif mutation == "wrong_band_length":
+        asset["clipped_high_by_band"] = [0, 0, 0]
+    elif mutation == "wrong_band_total":
+        asset["clipped_high_by_band"] = [1, 0, 0, 0]
+    elif mutation == "wrong_band_order":
+        result["radiometric_policy"]["bands"] = ["B08", "B03", "B02", "B04"]
+    elif mutation == "minimum_exceeds_maximum":
+        asset["raw_crop_minimum"] = asset["raw_crop_maximum"] + 1
+    elif mutation == "maximum_exceeds_domain":
+        asset["raw_crop_maximum"] = 32768
+    elif mutation == "aggregate_mismatch":
+        result["radiometric_policy"]["affected_sample_count"] += 1
+    elif mutation == "runtime_policy_mismatch":
+        payloads["runtime"]["radiometric_policy"]["raw_crop_maximum"] += 1
+        changed = "runtime"
+    elif mutation == "audit_policy_mismatch":
+        payloads["audit"]["normalization_policy"] = "legacy"
+        changed = "audit"
+    else:
+        raise AssertionError(f"unknown mutation: {mutation}")
+    _rewrite_bundle(bundle, phase, payloads, changed=changed)
+
+    with pytest.raises(ValueError, match="radiometric|policy|schema|band|integer|maximum"):
+        getattr(phase2b3a_verify, f"verify_{phase}_bundle")(bundle)
+
+
+def test_a2_literal_saturation_aggregate_is_independently_accepted(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a2")
+
+    assert payloads["result"]["radiometric_policy"] == {
+        "normalization_policy": _NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 120,
+        "affected_sample_count": 1,
+        "affected_asset_count": 2,
+        "lr_clipped_high_count": 8,
+        "hr_clipped_high_count": 117,
+        "raw_crop_maximum": 11968,
+    }
+    assert phase2b3a_verify.verify_a2_bundle(bundle)["development_only_pass"] is True
+
+
+def test_radiometric_recomputation_rejects_non_builtin_integer() -> None:
+    sample = {
+        "radiometric_saturation": {
+            "lr": _saturation(),
+            "hr": _saturation(),
+        }
+    }
+    sample["radiometric_saturation"]["lr"]["raw_crop_minimum"] = np.int64(100)
+
+    with pytest.raises(ValueError, match="built-in integer"):
+        phase2b3a_verify._recompute_radiometric_policy([sample], expected_sample_count=1)
 
 
 @pytest.mark.parametrize("mutation", ["roi_count", "strata", "leakage"])

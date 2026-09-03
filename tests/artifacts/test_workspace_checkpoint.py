@@ -62,6 +62,49 @@ PHASE_EVIDENCE_FILES = {
     )
     for stage in ("a1", "a2")
 }
+NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
+
+
+def _checkpoint_saturation(
+    *, maximum: int = 9000, clipped: int = 0, by_band: list[int] | None = None
+) -> dict[str, object]:
+    return {
+        "raw_crop_minimum": 100,
+        "raw_crop_maximum": maximum,
+        "clipped_high_count": clipped,
+        "clipped_high_by_band": [0, 0, 0, 0] if by_band is None else by_band,
+    }
+
+
+def _checkpoint_policy(samples: list[dict[str, object]]) -> dict[str, object]:
+    lr = sum(sample["radiometric_saturation"]["lr"]["clipped_high_count"] for sample in samples)
+    hr = sum(sample["radiometric_saturation"]["hr"]["clipped_high_count"] for sample in samples)
+    return {
+        "normalization_policy": NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": len(samples),
+        "affected_sample_count": sum(
+            int(
+                sample["radiometric_saturation"]["lr"]["clipped_high_count"] > 0
+                or sample["radiometric_saturation"]["hr"]["clipped_high_count"] > 0
+            )
+            for sample in samples
+        ),
+        "affected_asset_count": sum(
+            int(sample["radiometric_saturation"][asset]["clipped_high_count"] > 0)
+            for sample in samples
+            for asset in ("lr", "hr")
+        ),
+        "lr_clipped_high_count": lr,
+        "hr_clipped_high_count": hr,
+        "raw_crop_maximum": max(
+            sample["radiometric_saturation"][asset]["raw_crop_maximum"]
+            for sample in samples
+            for asset in ("lr", "hr")
+        ),
+    }
 
 
 @pytest.fixture
@@ -104,23 +147,83 @@ def _write_preflight_evidence(
         )
 
 
-def _write_stage_evidence(workspace: Path, stage: str) -> Path:
+def _write_stage_evidence(workspace: Path, stage: str, *, legacy: bool = False) -> Path:
     result_directory = workspace / "trustsr/phase2b3a/results" / POST_SHA256
     result_directory.mkdir(parents=True, exist_ok=True)
-    payloads = {
-        name: canonical_json(
-            {
-                "byte_identical": True,
-                "name": name,
-                "phase": stage,
+    sample_count = 4 if stage == "a1" else 120
+    samples = [
+        {
+            "radiometric_saturation": {
+                "lr": _checkpoint_saturation(),
+                "hr": _checkpoint_saturation(),
             }
-        )
-        for name in PHASE_EVIDENCE_FILES[stage]
+        }
+        for _ in range(sample_count)
+    ]
+    if stage == "a2":
+        samples[0]["radiometric_saturation"] = {
+            "lr": _checkpoint_saturation(
+                maximum=11968, clipped=8, by_band=[4, 0, 0, 4]
+            ),
+            "hr": _checkpoint_saturation(
+                maximum=11968, clipped=117, by_band=[56, 0, 0, 61]
+            ),
+        }
+    policy = _checkpoint_policy(samples)
+    result_schema = (
+        "trustsr.phase2b3a-development-smoke.v2"
+        if stage == "a1"
+        else "trustsr.phase2b3a-development-score-audit.v1"
+    )
+    audit_schema = (
+        "trustsr.phase2b3a-development-smoke-cache-audit.v2"
+        if stage == "a1"
+        else "trustsr.phase2b3a-development-score-cache-audit.v1"
+    )
+    runtime_schema = (
+        "trustsr.phase2b3a-a1-runtime.v2"
+        if stage == "a1"
+        else "trustsr.phase2b3a-a2-runtime.v1"
+    )
+    replay_schema = (
+        "trustsr.phase2b3a-a1-replay.v2"
+        if stage == "a1"
+        else "trustsr.phase2b3a-a2-replay.v1"
+    )
+    result = {
+        "schema": result_schema,
+        "normalization_policy": NORMALIZATION_POLICY,
+        "radiometric_policy": policy,
+        "sample_count": sample_count,
+        "samples": samples,
     }
+    audit = {
+        "schema": audit_schema,
+        "normalization_policy": NORMALIZATION_POLICY,
+    }
+    runtime = {
+        "schema": runtime_schema,
+        "normalization_policy": NORMALIZATION_POLICY,
+        "radiometric_policy": policy,
+    }
+    replay = {"schema": replay_schema, "byte_identical": True}
+    if legacy:
+        result = {"schema": "trustsr.phase2b3a-development-smoke.v1"}
+        audit = {"schema": "trustsr.phase2b3a-development-smoke-cache-audit.v1"}
+        runtime = {"schema": "trustsr.phase2b3a-a1-runtime.v1"}
+        replay = {"schema": "trustsr.phase2b3a-a1-replay.v1", "byte_identical": True}
+    documents = dict(
+        zip(PHASE_EVIDENCE_FILES[stage], (result, audit, runtime, replay), strict=True)
+    )
+    payloads = {name: canonical_json(value) for name, value in documents.items()}
     for name, payload in payloads.items():
         (result_directory / name).write_bytes(payload)
     manifest = {
-        "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+        "schema": (
+            "trustsr.phase2b3a-bundle-manifest.v1"
+            if legacy or stage == "a2"
+            else "trustsr.phase2b3a-bundle-manifest.v2"
+        ),
         "phase": stage,
         "files": [
             {
@@ -137,7 +240,7 @@ def _write_stage_evidence(workspace: Path, stage: str) -> Path:
 
 
 def _stage_evidence_members(
-    stage: str, *, wrong_digest: bool = False
+    stage: str, *, wrong_digest: bool = False, legacy: bool = False
 ) -> list[tuple[tarfile.TarInfo, bytes]]:
     result_root = f"trustsr/phase2b3a/results/{POST_SHA256}"
     payloads = {
@@ -156,7 +259,11 @@ def _stage_evidence_members(
         entries[0]["sha256"] = "b" * 64
     manifest = canonical_json(
         {
-            "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+            "schema": (
+                "trustsr.phase2b3a-bundle-manifest.v2"
+                if stage == "a1" and not legacy
+                else "trustsr.phase2b3a-bundle-manifest.v1"
+            ),
             "phase": stage,
             "files": entries,
         }
@@ -1187,6 +1294,138 @@ def test_build_checkpoint_requires_digest_bound_stage_evidence(
 
     assert built.manifest.completed_stage == stage
     assert verify_checkpoint(built.archive_path, built.manifest_path) == built.manifest
+
+
+@pytest.mark.parametrize("stage", ["a1", "a2"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "result_schema",
+        "missing_policy",
+        "runtime_policy",
+        "audit_policy",
+        "sample_total",
+    ],
+)
+def test_build_checkpoint_requires_current_radiometric_policy_boundary(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    stage: str,
+    mutation: str,
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    manifest_path = _write_stage_evidence(workspace, stage)
+    result_path = manifest_path.parent / f"phase2b3a-{stage}-result.json"
+    audit_path = manifest_path.parent / f"phase2b3a-{stage}-cache-audit.json"
+    runtime_path = manifest_path.parent / f"phase2b3a-{stage}-runtime.json"
+    target = result_path
+    value = json.loads(result_path.read_bytes())
+    if mutation == "result_schema":
+        value["schema"] = "trustsr.phase2b3a-development-smoke.v1"
+    elif mutation == "missing_policy":
+        value.pop("radiometric_policy")
+    elif mutation == "runtime_policy":
+        target = runtime_path
+        value = json.loads(runtime_path.read_bytes())
+        value["radiometric_policy"]["raw_crop_maximum"] += 1
+    elif mutation == "audit_policy":
+        target = audit_path
+        value = json.loads(audit_path.read_bytes())
+        value["normalization_policy"] = "legacy"
+    elif mutation == "sample_total":
+        value["samples"][0]["radiometric_saturation"]["lr"][
+            "clipped_high_count"
+        ] += 1
+    else:
+        raise AssertionError(f"unknown mutation: {mutation}")
+    target.write_bytes(canonical_json(value))
+    manifest = json.loads(manifest_path.read_bytes())
+    for entry in manifest["files"]:
+        if entry["basename"] == target.name:
+            payload = target.read_bytes()
+            entry["size_bytes"] = len(payload)
+            entry["sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_bytes(canonical_json(manifest))
+
+    with pytest.raises(CheckpointError, match="schema|policy|radiometric|saturation"):
+        build_checkpoint(
+            workspace,
+            tmp_path / "out",
+            completed_stage=stage,
+            reviewed_commit="a" * 40,
+        )
+
+
+def test_build_checkpoint_never_blesses_legacy_a1_live_evidence(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    _write_stage_evidence(workspace, "a1", legacy=True)
+
+    with pytest.raises(CheckpointError, match="schema|legacy|policy"):
+        build_checkpoint(
+            workspace,
+            tmp_path / "out",
+            completed_stage="a1",
+            reviewed_commit="a" * 40,
+        )
+
+
+def test_restore_accepts_only_the_exact_immutable_legacy_a1_identity(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    members = [
+        *_minimal_checkpoint_members(),
+        *_stage_evidence_members("a1", legacy=True),
+    ]
+    persistent = tmp_path / "persistent"
+    archive_path, manifest_path = _write_tar_checkpoint(
+        persistent, members, completed_stage="a1"
+    )
+    monkeypatch.setattr(checkpoint, "LEGACY_A1_PRODUCER_COMMIT", "a" * 40)
+    monkeypatch.setattr(
+        checkpoint,
+        "LEGACY_A1_ARCHIVE_SHA256",
+        hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(checkpoint, "LEGACY_A1_ARCHIVE_SIZE", archive_path.stat().st_size)
+    live = tmp_path / "live"
+    live.mkdir()
+
+    assert verify_checkpoint(archive_path, manifest_path).completed_stage == "a1"
+    restored = restore_checkpoint(
+        persistent,
+        manifest_path.name,
+        live,
+        expected_reviewed_commit="a" * 40,
+    )
+
+    assert restored == live / "trustsr"
+
+
+def test_restore_rejects_non_allowlisted_legacy_a1_identity(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    members = [
+        *_minimal_checkpoint_members(),
+        *_stage_evidence_members("a1", legacy=True),
+    ]
+    persistent = tmp_path / "persistent"
+    _, manifest_path = _write_tar_checkpoint(persistent, members, completed_stage="a1")
+    live = tmp_path / "live"
+    live.mkdir()
+
+    with pytest.raises(CheckpointError, match="legacy|schema|policy"):
+        restore_checkpoint(
+            persistent,
+            manifest_path.name,
+            live,
+            expected_reviewed_commit="a" * 40,
+        )
+
+    assert not (live / "trustsr").exists()
 
 
 @pytest.mark.parametrize("missing", ["both", "log", "runtime"])

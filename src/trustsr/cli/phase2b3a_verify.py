@@ -49,6 +49,11 @@ _SECRET_KEY = re.compile(
 )
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
+_NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
+_RAW_RADIOMETRIC_MAX = 32767
+_SATURATION_THRESHOLD = 10000
+_RADIOMETRIC_BANDS = ["B04", "B03", "B02", "B08"]
+_UNSET = object()
 _A2_BOOTSTRAP_SEED = 23031
 _A2_BOOTSTRAP_RESAMPLES = 10_000
 _A2_ROI_COUNT = 120
@@ -65,6 +70,7 @@ _PREDICTION_COMMON = {
     "input_audit_sha256",
     "implementation_schema_version",
     "output_policy",
+    "normalization_policy",
     "torch_version",
 }
 _PROVENANCE_KEYS = {
@@ -230,8 +236,13 @@ def _verify_allowlisted_bundle(
     if observed != expected_names:
         raise ValueError("bundle must contain the exact allowlisted files; missing or extra file")
     manifest_raw, manifest = _read_canonical(bundle / _MANIFEST)
+    expected_schema = (
+        "trustsr.phase2b3a-bundle-manifest.v2"
+        if expected_phase == "a1"
+        else "trustsr.phase2b3a-bundle-manifest.v1"
+    )
     if (
-        manifest.get("schema") != "trustsr.phase2b3a-bundle-manifest.v1"
+        manifest.get("schema") != expected_schema
         or manifest.get("phase") != expected_phase
     ):
         raise ValueError("bundle manifest schema or phase is invalid")
@@ -358,8 +369,9 @@ def _validate_replay(
     audit_bytes: bytes,
     runtime_bytes: bytes,
 ) -> None:
+    replay_version = "v2" if phase == "a1" else "v1"
     if replay != {
-        "schema": f"trustsr.phase2b3a-{phase}-replay.v1",
+        "schema": f"trustsr.phase2b3a-{phase}-replay.{replay_version}",
         "byte_identical": True,
         "result_sha256": _sha256(result_bytes),
         "cache_audit_sha256": _sha256(audit_bytes),
@@ -370,6 +382,138 @@ def _validate_replay(
 
 def _bundle_digests(files: Mapping[str, tuple[bytes, dict[str, object]]]) -> dict[str, str]:
     return {name: _sha256(raw) for name, (raw, _) in sorted(files.items())}
+
+
+def _recompute_radiometric_policy(
+    sample_records: list[object],
+    *,
+    expected_sample_count: int,
+    claimed_policy: object = _UNSET,
+) -> dict[str, object]:
+    if type(expected_sample_count) is not int or expected_sample_count < 1:
+        raise ValueError("radiometric policy sample count is invalid")
+    if type(sample_records) is not list or len(sample_records) != expected_sample_count:
+        raise ValueError("radiometric policy sample count is inconsistent")
+    lr_total = 0
+    hr_total = 0
+    affected_samples = 0
+    affected_assets = 0
+    crop_maxima: list[int] = []
+    for sample in sample_records:
+        if type(sample) is not dict:
+            raise ValueError("radiometric sample record is invalid")
+        saturation = sample.get("radiometric_saturation")
+        if type(saturation) is not dict or set(saturation) != {"lr", "hr"}:
+            raise ValueError("radiometric saturation record is invalid")
+        sample_affected = False
+        for asset_name in ("lr", "hr"):
+            asset = saturation[asset_name]
+            if type(asset) is not dict or set(asset) != {
+                "raw_crop_minimum",
+                "raw_crop_maximum",
+                "clipped_high_count",
+                "clipped_high_by_band",
+            }:
+                raise ValueError("radiometric saturation asset record is invalid")
+            minimum = asset["raw_crop_minimum"]
+            maximum = asset["raw_crop_maximum"]
+            clipped = asset["clipped_high_count"]
+            by_band = asset["clipped_high_by_band"]
+            if any(type(value) is not int for value in (minimum, maximum, clipped)):
+                raise ValueError("radiometric saturation values must be built-in integers")
+            if (
+                type(by_band) is not list
+                or len(by_band) != 4
+                or any(type(value) is not int for value in by_band)
+            ):
+                raise ValueError(
+                    "radiometric saturation requires four built-in integer band counts"
+                )
+            if (
+                minimum < 0
+                or maximum < 0
+                or clipped < 0
+                or any(value < 0 for value in by_band)
+            ):
+                raise ValueError("radiometric saturation values must be non-negative")
+            if minimum > maximum:
+                raise ValueError("radiometric saturation minimum exceeds maximum")
+            if maximum > _RAW_RADIOMETRIC_MAX:
+                raise ValueError("radiometric saturation maximum exceeds raw domain")
+            if sum(by_band) != clipped:
+                raise ValueError("radiometric saturation band counts do not match total")
+            crop_maxima.append(maximum)
+            if clipped > 0:
+                affected_assets += 1
+                sample_affected = True
+            if asset_name == "lr":
+                lr_total += clipped
+            else:
+                hr_total += clipped
+        affected_samples += int(sample_affected)
+    recomputed = {
+        "normalization_policy": _NORMALIZATION_POLICY,
+        "raw_radiometric_max": _RAW_RADIOMETRIC_MAX,
+        "saturation_threshold": _SATURATION_THRESHOLD,
+        "bands": _RADIOMETRIC_BANDS,
+        "sample_count": expected_sample_count,
+        "affected_sample_count": affected_samples,
+        "affected_asset_count": affected_assets,
+        "lr_clipped_high_count": lr_total,
+        "hr_clipped_high_count": hr_total,
+        "raw_crop_maximum": max(crop_maxima),
+    }
+    if claimed_policy is not _UNSET:
+        _require_exact_radiometric_policy(claimed_policy, recomputed)
+    return recomputed
+
+
+def _require_exact_radiometric_policy(
+    claimed_policy: object, expected_policy: Mapping[str, object]
+) -> None:
+    integer_keys = {
+        "raw_radiometric_max",
+        "saturation_threshold",
+        "sample_count",
+        "affected_sample_count",
+        "affected_asset_count",
+        "lr_clipped_high_count",
+        "hr_clipped_high_count",
+        "raw_crop_maximum",
+    }
+    if (
+        type(claimed_policy) is not dict
+        or set(claimed_policy) != set(expected_policy)
+        or any(type(claimed_policy.get(key)) is not int for key in integer_keys)
+        or type(claimed_policy.get("bands")) is not list
+        or type(claimed_policy.get("normalization_policy")) is not str
+        or claimed_policy != expected_policy
+    ):
+        raise ValueError("radiometric policy aggregate is invalid")
+
+
+def _validate_radiometric_contract(
+    result: Mapping[str, object],
+    audit: Mapping[str, object],
+    runtime: Mapping[str, object],
+    samples: object,
+    *,
+    expected_sample_count: int,
+) -> None:
+    if (
+        result.get("normalization_policy") != _NORMALIZATION_POLICY
+        or audit.get("normalization_policy") != _NORMALIZATION_POLICY
+        or runtime.get("normalization_policy") != _NORMALIZATION_POLICY
+    ):
+        raise ValueError("bundle normalization policy is invalid")
+    if type(samples) is not list:
+        raise ValueError("radiometric samples are invalid")
+    recomputed = _recompute_radiometric_policy(
+        samples,
+        expected_sample_count=expected_sample_count,
+        claimed_policy=result.get("radiometric_policy"),
+    )
+    _require_exact_radiometric_policy(runtime.get("radiometric_policy"), recomputed)
 
 
 def _validate_file_evidence(value: object, cache_key: str) -> None:
@@ -442,6 +586,7 @@ def _validate_prediction_entry(
         or provenance.get("input_audit_sha256") != INPUT_AUDIT_SHA256
         or provenance.get("implementation_schema_version") != 1
         or provenance.get("output_policy") != "clip_to_[0,1]"
+        or provenance.get("normalization_policy") != _NORMALIZATION_POLICY
         or type(provenance.get("torch_version")) is not str
     ):
         raise ValueError("prediction cache internal identity/key/SHA reference is invalid")
@@ -592,6 +737,8 @@ def _verify_a1_result_audit_runtime_replay(
         result,
         {
             "schema",
+            "normalization_policy",
+            "radiometric_policy",
             "dataset_role",
             "upstream",
             "bands",
@@ -613,6 +760,7 @@ def _verify_a1_result_audit_runtime_replay(
         {
             "schema",
             "experiment_schema",
+            "normalization_policy",
             "post_manifest_sha256",
             "input_audit_sha256",
             "sample_count",
@@ -628,6 +776,8 @@ def _verify_a1_result_audit_runtime_replay(
         {
             "schema",
             "git_commit",
+            "normalization_policy",
+            "radiometric_policy",
             "single_repeatability_pass",
             "single_peak_memory_bytes",
             "gpu_total_memory_bytes",
@@ -640,13 +790,13 @@ def _verify_a1_result_audit_runtime_replay(
         },
         "A1 runtime",
     )
-    if result.get("schema") != "trustsr.phase2b3a-development-smoke.v1":
+    if result.get("schema") != "trustsr.phase2b3a-development-smoke.v2":
         raise ValueError("A1 result schema is invalid")
-    if audit.get("schema") != "trustsr.phase2b3a-development-smoke-cache-audit.v1":
+    if audit.get("schema") != "trustsr.phase2b3a-development-smoke-cache-audit.v2":
         raise ValueError("A1 cache-audit schema is invalid")
     if audit.get("experiment_schema") != result.get("schema"):
         raise ValueError("A1 cache-audit experiment schema reference is invalid")
-    if runtime.get("schema") != "trustsr.phase2b3a-a1-runtime.v1":
+    if runtime.get("schema") != "trustsr.phase2b3a-a1-runtime.v2":
         raise ValueError("A1 runtime schema is invalid")
     if (
         result.get("dataset_role") != "development_engineering_smoke_only"
@@ -702,6 +852,7 @@ def _verify_a1_result_audit_runtime_replay(
                 "central_prediction_sha256",
                 "risks",
                 "scores",
+                "radiometric_saturation",
                 "stability",
             },
             "A1 sample",
@@ -785,6 +936,9 @@ def _verify_a1_result_audit_runtime_replay(
         or len(groups) != 4
     ):
         raise ValueError("A1 canonical ROI bins or identities are invalid")
+    _validate_radiometric_contract(
+        result, audit, runtime, samples, expected_sample_count=4
+    )
     prediction_entries = audit.get("prediction_entries")
     score_entries = audit.get("score_entries")
     if not isinstance(prediction_entries, list) or len(prediction_entries) != 108:
@@ -1167,6 +1321,7 @@ def _validate_a2_samples(
                 "central_prediction_sha256",
                 "risks",
                 "scores",
+                "radiometric_saturation",
             },
             "A2 ROI",
         )
@@ -1315,6 +1470,8 @@ def _verify_a2_result_audit_runtime_replay(
         result,
         {
             "schema",
+            "normalization_policy",
+            "radiometric_policy",
             "dataset_role",
             "upstream",
             "code_revision",
@@ -1343,6 +1500,7 @@ def _verify_a2_result_audit_runtime_replay(
         {
             "schema",
             "experiment_schema",
+            "normalization_policy",
             "post_manifest_sha256",
             "input_audit_sha256",
             "code_revision",
@@ -1358,6 +1516,8 @@ def _verify_a2_result_audit_runtime_replay(
         {
             "schema",
             "git_commit",
+            "normalization_policy",
+            "radiometric_policy",
             "a1_acceptance_pass",
             "a1_producer_commit",
             "a1_replay_sha256",
@@ -1518,6 +1678,9 @@ def _verify_a2_result_audit_runtime_replay(
             raise ValueError("A2 candidate summary/freeze evidence is invalid")
     primary_results, sensitivity_results = _validate_a2_samples(
         result, audit, include_ldsr_variance_k5=include
+    )
+    _validate_radiometric_contract(
+        result, audit, runtime, result.get("samples"), expected_sample_count=120
     )
     indices = _a2_bootstrap_indices()
     primary_summaries = [

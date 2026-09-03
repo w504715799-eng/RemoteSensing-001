@@ -27,6 +27,13 @@ ARCHIVE_ROOTS = ("trustsr/phase2b1b", "trustsr/phase2b2a", "trustsr/phase2b3a")
 COMPLETED_STAGES = frozenset({"a0", "a1", "a2"})
 SELECTION_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a"
 INPUT_AUDIT_SHA256 = "fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b"
+LEGACY_A1_PRODUCER_COMMIT = "4df5195e0a28701391c3951659a42409f81a11c2"
+LEGACY_A1_ARCHIVE_SHA256 = "623535c33fee50e7d05b83386158b349c4056d1f4aa256efda1189933e9993f8"
+LEGACY_A1_ARCHIVE_SIZE = 933_263_360
+_NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
+_RAW_RADIOMETRIC_MAX = 32767
+_SATURATION_THRESHOLD = 10000
+_RADIOMETRIC_BANDS = ["B04", "B03", "B02", "B08"]
 SELECTION_RELATIVE = Path(
     "trustsr/phase2b1b/selections/"
     f"{SELECTION_MANIFEST_SHA256}/samples.jsonl"
@@ -483,8 +490,150 @@ def _validate_preflight_evidence(trustsr_root: Path, reviewed_commit: str) -> No
         raise CheckpointError("preflight runtime producer commit does not match checkpoint")
 
 
+def _parse_canonical_evidence(payload: bytes, description: str) -> dict[str, object]:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CheckpointError(f"{description} is not valid JSON") from exc
+    if type(value) is not dict or canonical_json(value) != payload:
+        raise CheckpointError(f"{description} is not canonical JSON")
+    return value
+
+
+def _checkpoint_radiometric_policy(
+    samples: object, *, expected_sample_count: int
+) -> dict[str, object]:
+    if type(samples) is not list or len(samples) != expected_sample_count:
+        raise CheckpointError("stage radiometric sample count is invalid")
+    lr_total = 0
+    hr_total = 0
+    affected_samples = 0
+    affected_assets = 0
+    maxima: list[int] = []
+    for sample in samples:
+        saturation = sample.get("radiometric_saturation") if type(sample) is dict else None
+        if type(saturation) is not dict or set(saturation) != {"lr", "hr"}:
+            raise CheckpointError("stage radiometric saturation schema is invalid")
+        sample_affected = False
+        for asset_name in ("lr", "hr"):
+            asset = saturation[asset_name]
+            if type(asset) is not dict or set(asset) != {
+                "raw_crop_minimum",
+                "raw_crop_maximum",
+                "clipped_high_count",
+                "clipped_high_by_band",
+            }:
+                raise CheckpointError("stage radiometric asset schema is invalid")
+            minimum = asset["raw_crop_minimum"]
+            maximum = asset["raw_crop_maximum"]
+            clipped = asset["clipped_high_count"]
+            by_band = asset["clipped_high_by_band"]
+            if any(type(value) is not int for value in (minimum, maximum, clipped)):
+                raise CheckpointError("stage radiometric values must be built-in integers")
+            if (
+                type(by_band) is not list
+                or len(by_band) != 4
+                or any(type(value) is not int for value in by_band)
+            ):
+                raise CheckpointError("stage radiometric band counts are invalid")
+            if (
+                minimum < 0
+                or maximum < minimum
+                or maximum > _RAW_RADIOMETRIC_MAX
+                or clipped < 0
+                or any(value < 0 for value in by_band)
+                or sum(by_band) != clipped
+            ):
+                raise CheckpointError("stage radiometric saturation values are invalid")
+            maxima.append(maximum)
+            if clipped:
+                affected_assets += 1
+                sample_affected = True
+            if asset_name == "lr":
+                lr_total += clipped
+            else:
+                hr_total += clipped
+        affected_samples += int(sample_affected)
+    return {
+        "normalization_policy": _NORMALIZATION_POLICY,
+        "raw_radiometric_max": _RAW_RADIOMETRIC_MAX,
+        "saturation_threshold": _SATURATION_THRESHOLD,
+        "bands": _RADIOMETRIC_BANDS,
+        "sample_count": expected_sample_count,
+        "affected_sample_count": affected_samples,
+        "affected_asset_count": affected_assets,
+        "lr_clipped_high_count": lr_total,
+        "hr_clipped_high_count": hr_total,
+        "raw_crop_maximum": max(maxima),
+    }
+
+
+def _require_checkpoint_policy(value: object, expected: dict[str, object]) -> None:
+    integer_keys = set(expected) - {"normalization_policy", "bands"}
+    if (
+        type(value) is not dict
+        or set(value) != set(expected)
+        or any(type(value.get(key)) is not int for key in integer_keys)
+        or type(value.get("normalization_policy")) is not str
+        or type(value.get("bands")) is not list
+        or value != expected
+    ):
+        raise CheckpointError("stage radiometric policy is invalid")
+
+
+def _validate_current_stage_policy(
+    documents: dict[str, dict[str, object]], completed_stage: str
+) -> None:
+    result, audit, runtime, replay = (
+        documents[name] for name in _STAGE_EVIDENCE_BASENAMES[completed_stage]
+    )
+    expected_schemas = (
+        (
+            "trustsr.phase2b3a-development-smoke.v2",
+            "trustsr.phase2b3a-development-smoke-cache-audit.v2",
+            "trustsr.phase2b3a-a1-runtime.v2",
+            "trustsr.phase2b3a-a1-replay.v2",
+        )
+        if completed_stage == "a1"
+        else (
+            "trustsr.phase2b3a-development-score-audit.v1",
+            "trustsr.phase2b3a-development-score-cache-audit.v1",
+            "trustsr.phase2b3a-a2-runtime.v1",
+            "trustsr.phase2b3a-a2-replay.v1",
+        )
+    )
+    if tuple(item.get("schema") for item in (result, audit, runtime, replay)) != expected_schemas:
+        raise CheckpointError("stage evidence schema is not current")
+    if any(
+        item.get("normalization_policy") != _NORMALIZATION_POLICY
+        for item in (result, audit, runtime)
+    ):
+        raise CheckpointError("stage normalization policy is invalid")
+    sample_count = 4 if completed_stage == "a1" else 120
+    expected_policy = _checkpoint_radiometric_policy(
+        result.get("samples"), expected_sample_count=sample_count
+    )
+    _require_checkpoint_policy(result.get("radiometric_policy"), expected_policy)
+    _require_checkpoint_policy(runtime.get("radiometric_policy"), expected_policy)
+
+
+def _is_exact_legacy_a1_checkpoint(manifest: CheckpointManifest) -> bool:
+    return (
+        manifest.completed_stage == "a1"
+        and manifest.reviewed_commit == LEGACY_A1_PRODUCER_COMMIT
+        and manifest.archive_sha256 == LEGACY_A1_ARCHIVE_SHA256
+        and manifest.archive_size_bytes == LEGACY_A1_ARCHIVE_SIZE
+        and manifest.selection_manifest_sha256 == SELECTION_MANIFEST_SHA256
+        and manifest.input_audit_sha256 == INPUT_AUDIT_SHA256
+    )
+
+
 def _validate_workspace_evidence(
-    trustsr_root: Path, completed_stage: str, reviewed_commit: str
+    trustsr_root: Path,
+    completed_stage: str,
+    reviewed_commit: str,
+    *,
+    allow_legacy_a1: bool = False,
 ) -> None:
     for relative, expected_digest, description in _active_frozen_relatives():
         try:
@@ -520,10 +669,15 @@ def _validate_workspace_evidence(
         raise CheckpointError("stage evidence manifest is not valid JSON") from exc
     if canonical_json(value) != manifest_bytes:
         raise CheckpointError("stage evidence manifest is not canonical JSON")
+    expected_manifest_schema = (
+        "trustsr.phase2b3a-bundle-manifest.v1"
+        if completed_stage == "a2" or allow_legacy_a1
+        else "trustsr.phase2b3a-bundle-manifest.v2"
+    )
     if (
         type(value) is not dict
         or set(value) != {"schema", "phase", "files"}
-        or value["schema"] != "trustsr.phase2b3a-bundle-manifest.v1"
+        or value["schema"] != expected_manifest_schema
     ):
         raise CheckpointError("stage evidence manifest schema is invalid")
     if value["phase"] != completed_stage:
@@ -533,6 +687,7 @@ def _validate_workspace_evidence(
     if type(entries) is not list or len(entries) != 4:
         raise CheckpointError("stage evidence manifest must declare four expected files")
     observed_basenames: list[str] = []
+    documents: dict[str, dict[str, object]] = {}
     for entry in entries:
         if type(entry) is not dict or set(entry) != {
             "basename",
@@ -552,19 +707,24 @@ def _validate_workspace_evidence(
             or not _is_lower_hex(declared_digest, 64)
         ):
             raise CheckpointError("stage evidence basename, size, or digest is invalid")
-        _, observed_digest, observed_size = _read_relative_regular_file(
+        payload, observed_digest, observed_size = _read_relative_regular_file(
             trustsr_root,
             result_relative / basename,
             "stage evidence file",
             max_bytes=_MAX_EVIDENCE_BYTES,
+            collect=True,
         )
         if observed_size != size_bytes:
             raise CheckpointError("stage evidence file size does not match manifest")
         if observed_digest != declared_digest:
             raise CheckpointError("stage evidence file digest does not match manifest")
+        assert payload is not None
+        documents[basename] = _parse_canonical_evidence(payload, "stage evidence file")
         observed_basenames.append(basename)
     if observed_basenames != sorted(expected_basenames):
         raise CheckpointError("stage evidence manifest must declare four expected files")
+    if not allow_legacy_a1:
+        _validate_current_stage_policy(documents, completed_stage)
 
 
 def _fsync_path(path: Path) -> None:
@@ -1388,7 +1548,10 @@ def restore_checkpoint(
             staged_archive, inventory, staging_directory
         )
         _validate_workspace_evidence(
-            staging_directory, manifest.completed_stage, manifest.reviewed_commit
+            staging_directory,
+            manifest.completed_stage,
+            manifest.reviewed_commit,
+            allow_legacy_a1=_is_exact_legacy_a1_checkpoint(manifest),
         )
         _normalize_staged_permissions(staged_trustsr)
         _require_absent_destination(destination)
