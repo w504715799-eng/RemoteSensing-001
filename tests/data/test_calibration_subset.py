@@ -73,6 +73,28 @@ def test_select_calibration_records_keeps_reversed_input_calibration_order() -> 
 
 
 @pytest.mark.parametrize(
+    ("split", "field", "value"),
+    [
+        ("development", "days_between", 2),
+        ("development", "correlation_bin", 4),
+        ("development", "selection_round", 11),
+        ("internal_test", "days_between", 2),
+        ("internal_test", "correlation_bin", 4),
+        ("internal_test", "selection_round", 11),
+    ],
+)
+def test_select_calibration_records_rejects_invalid_non_calibration_strata(
+    split: str, field: str, value: int
+) -> None:
+    records = [deepcopy(record) for record in _complete_records()]
+    record_index = next(index for index, record in enumerate(records) if record["split"] == split)
+    records[record_index][field] = value
+
+    with pytest.raises(ValueError, match="post-manifest strata"):
+        select_calibration_records(records)
+
+
+@pytest.mark.parametrize(
     ("mutation", "message"),
     [
         ("calibration_shortcut", "360"),
@@ -87,7 +109,7 @@ def test_select_calibration_records_keeps_reversed_input_calibration_order() -> 
         ("duplicate_spatial_group_id", "unique spatial_group_id"),
         ("missing_lr_asset", "asset"),
         ("missing_hr_asset", "asset"),
-        ("bad_day", "stratum"),
+        ("bad_day", "strat"),
         ("boolean_bin", "correlation_bin"),
         ("bad_round", "round"),
     ],

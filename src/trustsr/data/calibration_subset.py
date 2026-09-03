@@ -64,24 +64,25 @@ def select_calibration_records(
         raise ValueError("post-manifest must contain exactly 120 records for each split")
     _require_unique_identities(validated)
 
-    selected = tuple(record for record in validated if record["split"] == "calibration")
-    cells: dict[tuple[int, int], list[int]] = {
-        (day, bin_index): []
+    cells: dict[tuple[str, int, int], list[int]] = {
+        (split, day, bin_index): []
+        for split in _SPLITS
         for day in _CALIBRATION_DAYS
         for bin_index in _CALIBRATION_BINS
     }
-    for record in selected:
+    for record in validated:
+        split = _require_non_empty_string(record, "split")
         day = _require_integer(record, "days_between")
         bin_index = _require_integer(record, "correlation_bin")
         selection_round = _require_integer(record, "selection_round")
-        if (day, bin_index) not in cells:
-            raise ValueError("calibration record has an invalid stratum")
-        cells[(day, bin_index)].append(selection_round)
+        if (split, day, bin_index) not in cells:
+            raise ValueError("post-manifest strata contains an invalid cell")
+        cells[(split, day, bin_index)].append(selection_round)
     if any(tuple(sorted(rounds)) != _CALIBRATION_ROUNDS for rounds in cells.values()):
         raise ValueError(
-            "calibration strata must each contain selection rounds 1 through 10"
+            "post-manifest strata must each contain selection rounds 1 through 10"
         )
-    return selected
+    return tuple(record for record in validated if record["split"] == "calibration")
 
 
 def load_calibration_records(
