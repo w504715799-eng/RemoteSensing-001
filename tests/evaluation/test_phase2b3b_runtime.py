@@ -143,7 +143,6 @@ def test_builds_exact_host_free_runtime_projection(
         runtime,
         deepcopy(result),
         deepcopy(audit),
-        deepcopy(input_receipt),
         project_root=tmp_path,
         evidence_dir=tmp_path / "evidence",
         storage_root=tmp_path / "storage",
@@ -153,6 +152,51 @@ def test_builds_exact_host_free_runtime_projection(
     assert verified.verification_scope == "metadata_inventory_only"
     assert verified.cache_computation_verified is False
     assert verified.runtime_sha256 == hashlib.sha256(canonical_json(runtime)).hexdigest()
+
+
+def test_verify_uses_result_authority_without_raw_input_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
+    dependency_snapshot: dict[str, object],
+) -> None:
+    runtime = _build(monkeypatch, tmp_path, artifacts, dependency_snapshot)
+    result, audit, input_receipt, result_verification, _ = artifacts
+    calls: list[object] = []
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_phase2b3b_result",
+        lambda result, audit, **kwargs: calls.append((result, audit, kwargs))
+        or result_verification,
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_authoritative_calibration_input_receipt",
+        lambda receipt, **kwargs: pytest.fail("verify must not request raw input receipt"),
+    )
+
+    phase2b3b_runtime.verify_phase2b3b_runtime_manifest(
+        runtime,
+        result,
+        audit,
+        project_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        storage_root=tmp_path / "storage",
+        manifest_path=tmp_path / "manifest.json",
+    )
+    assert len(calls) == 1
+
+    with pytest.raises(TypeError):
+        phase2b3b_runtime.verify_phase2b3b_runtime_manifest(
+            runtime,
+            result,
+            audit,
+            project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
+            input_receipt=input_receipt,
+        )
 
 
 def test_public_api_forwards_raw_inputs_to_authority_verifiers(
@@ -331,7 +375,6 @@ def test_rejects_hostile_runtime_mutations(
             runtime,
             deepcopy(result),
             deepcopy(audit),
-            deepcopy(input_receipt),
             project_root=tmp_path,
             evidence_dir=tmp_path / "evidence",
             storage_root=tmp_path / "storage",

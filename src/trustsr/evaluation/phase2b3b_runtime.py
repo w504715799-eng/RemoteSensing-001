@@ -506,7 +506,53 @@ def _expected_runtime(
     return json.loads(canonical_json(runtime))
 
 
-def _authoritative_runtime_inputs(
+def _canonical_runtime_documents(
+    result: object,
+    cache_audit: object,
+) -> tuple[dict[str, object], dict[str, object]]:
+    result_value, _ = _canonical_document(
+        result, schema=_RESULT_SCHEMA, label="runtime result"
+    )
+    audit_value, _ = _canonical_document(
+        cache_audit, schema=_AUDIT_SCHEMA, label="runtime cache audit"
+    )
+    return result_value, audit_value
+
+
+def _verify_result_authority(
+    result: dict[str, object],
+    cache_audit: dict[str, object],
+    *,
+    project_root: Path,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
+) -> VerifiedPhase2B3BResult:
+    return verify_phase2b3b_result(
+        result,
+        cache_audit,
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+
+
+def _input_receipt_from_result(
+    result_verification: object,
+) -> VerifiedCalibrationInputReceipt:
+    if type(result_verification) is not VerifiedPhase2B3BResult:
+        raise TypeError("runtime requires an exact authoritative result receipt")
+    return VerifiedCalibrationInputReceipt(
+        source_sha256=result_verification.input_receipt_sha256,
+        ordered_inputs_sha256=result_verification.ordered_inputs_sha256,
+        ordered_sample_ids_sha256=result_verification.ordered_sample_ids_sha256,
+        ordered_membership_sha256=result_verification.ordered_membership_sha256,
+        sample_count=120,
+    )
+
+
+def _build_authoritative_runtime_inputs(
     result: object,
     cache_audit: object,
     input_receipt: object,
@@ -521,13 +567,8 @@ def _authoritative_runtime_inputs(
     VerifiedPhase2B3BResult,
     VerifiedCalibrationInputReceipt,
 ]:
-    result_value, _ = _canonical_document(
-        result, schema=_RESULT_SCHEMA, label="runtime result"
-    )
-    audit_value, _ = _canonical_document(
-        cache_audit, schema=_AUDIT_SCHEMA, label="runtime cache audit"
-    )
-    result_verification = verify_phase2b3b_result(
+    result_value, audit_value = _canonical_runtime_documents(result, cache_audit)
+    result_verification = _verify_result_authority(
         result_value,
         audit_value,
         project_root=project_root,
@@ -542,6 +583,37 @@ def _authoritative_runtime_inputs(
         manifest_path=manifest_path,
     )
     return result_value, audit_value, result_verification, input_verification
+
+
+def _verify_authoritative_runtime_inputs(
+    result: object,
+    cache_audit: object,
+    *,
+    project_root: Path,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    VerifiedPhase2B3BResult,
+    VerifiedCalibrationInputReceipt,
+]:
+    result_value, audit_value = _canonical_runtime_documents(result, cache_audit)
+    result_verification = _verify_result_authority(
+        result_value,
+        audit_value,
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+    return (
+        result_value,
+        audit_value,
+        result_verification,
+        _input_receipt_from_result(result_verification),
+    )
 
 
 def _validate_runtime_shape(value: object) -> dict[str, object]:
@@ -603,7 +675,7 @@ def build_phase2b3b_runtime_manifest(
     """Compose a runtime inventory after re-verifying raw result and input authority."""
 
     result_value, audit_value, result_verification, input_verification = (
-        _authoritative_runtime_inputs(
+        _build_authoritative_runtime_inputs(
             result,
             cache_audit,
             input_receipt,
@@ -627,7 +699,6 @@ def verify_phase2b3b_runtime_manifest(
     runtime: object,
     result: object,
     cache_audit: object,
-    input_receipt: object,
     *,
     project_root: Path,
     evidence_dir: Path,
@@ -640,10 +711,9 @@ def verify_phase2b3b_runtime_manifest(
     _validate_runtime_shape(value)
     _reject_leaks(value)
     result_value, audit_value, result_verification, input_verification = (
-        _authoritative_runtime_inputs(
+        _verify_authoritative_runtime_inputs(
             result,
             cache_audit,
-            input_receipt,
             project_root=project_root,
             evidence_dir=evidence_dir,
             storage_root=storage_root,
