@@ -422,13 +422,28 @@ def _saturation_pair_fixture(
     if raw_out_of_range:
         lr[0, 0, 0] = 32768
 
-    # The aligned LR crop starts at (1, 1), HR at (4, 4).
+    # The aligned LR crop starts at (1, 1), HR at (4, 4).  The saturation
+    # counts are deliberately asymmetric in every ordered B04/B03/B02/B08 band.
     lr[0, 1, 1] = 10001
     lr[0, 2, 2] = 11288
+    lr[1, 4, 4] = 11968
+    lr[2, 5, 5] = 10001
+    lr[2, 6, 6] = 11288
+    lr[2, 7, 7] = 11968
     lr[3, 3, 3] = 11968
+    lr[3, 4, 4] = 10001
+    lr[3, 5, 5] = 11288
+    lr[3, 6, 6] = 11968
     hr[0, 4, 4] = 10001
     hr[0, 5, 5] = 11288
+    hr[1, 7, 7] = 11968
+    hr[2, 8, 8] = 10001
+    hr[2, 9, 9] = 11288
+    hr[2, 10, 10] = 11968
     hr[3, 6, 6] = 11968
+    hr[3, 7, 7] = 10001
+    hr[3, 8, 8] = 11288
+    hr[3, 9, 9] = 11968
 
     lr_path = pair_root / "lr.tif"
     hr_path = pair_root / "hr.tif"
@@ -538,12 +553,12 @@ def test_v2_saturates_only_aligned_crops_and_records_ordered_band_statistics(
     assert loaded.pair.hr[1, 0, 0].item() == pytest.approx(0.5)
     assert loaded.metadata.lr_saturation.raw_crop_minimum == 5000
     assert loaded.metadata.lr_saturation.raw_crop_maximum == 11968
-    assert loaded.metadata.lr_saturation.clipped_high_count == 3
-    assert loaded.metadata.lr_saturation.clipped_high_by_band == (2, 0, 0, 1)
+    assert loaded.metadata.lr_saturation.clipped_high_count == 10
+    assert loaded.metadata.lr_saturation.clipped_high_by_band == (2, 1, 3, 4)
     assert loaded.metadata.hr_saturation.raw_crop_minimum == 5000
     assert loaded.metadata.hr_saturation.raw_crop_maximum == 11968
-    assert loaded.metadata.hr_saturation.clipped_high_count == 3
-    assert loaded.metadata.hr_saturation.clipped_high_by_band == (2, 0, 0, 1)
+    assert loaded.metadata.hr_saturation.clipped_high_count == 10
+    assert loaded.metadata.hr_saturation.clipped_high_by_band == (2, 1, 3, 4)
 
 
 def test_v2_preserves_raw_geotiff_pixels_while_saturating_tensor_copy(tmp_path: Path) -> None:
@@ -565,6 +580,27 @@ def test_v2_preserves_raw_geotiff_pixels_while_saturating_tensor_copy(tmp_path: 
         relative_path = record[asset_key]["relative_path"]  # type: ignore[index]
         with rasterio.open(tmp_path / "trustsr" / "phase2b1b" / relative_path) as dataset:
             assert int(dataset.read()[index]) == expected
+
+
+def test_v2_crop_transform_does_not_mutate_its_owned_source_array() -> None:
+    """Fails if v2 clips in place with ``out=crop`` rather than creating a copy."""
+
+    source = np.array(
+        [
+            [[5000, 10001], [5000, 5000]],
+            [[5000, 11288], [5000, 5000]],
+            [[5000, 11968], [5000, 5000]],
+            [[5000, 10001], [5000, 5000]],
+        ],
+        dtype=np.uint16,
+    )
+    original = source.copy()
+
+    saturated, _ = crosssensor_pairs._saturate_crop_v2(source)
+
+    assert source.tobytes() == original.tobytes()
+    assert saturated is not source
+    assert saturated[:, 0, 1].tolist() == [10000, 10000, 10000, 10000]
 
 
 def test_legacy_v1_rejects_saturated_fixture_by_default(tmp_path: Path) -> None:

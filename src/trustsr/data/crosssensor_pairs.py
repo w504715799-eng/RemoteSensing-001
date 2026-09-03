@@ -300,6 +300,19 @@ def _require_asset_metadata(
         raise ValueError("asset GeoTIFF metadata does not match the sidecar")
 
 
+def _saturate_crop_v2(crop: np.ndarray) -> tuple[np.ndarray, RadiometricSaturation]:
+    clipped = crop > REFLECTANCE_SCALE
+    saturation = RadiometricSaturation(
+        raw_crop_minimum=int(crop.min()),
+        raw_crop_maximum=int(crop.max()),
+        clipped_high_count=int(np.count_nonzero(clipped)),
+        clipped_high_by_band=tuple(
+            int(np.count_nonzero(clipped[index])) for index in range(len(_BANDS))
+        ),
+    )
+    return np.minimum(crop, int(REFLECTANCE_SCALE)), saturation
+
+
 def _load_asset(
     storage_root: Path,
     record: Mapping[str, object],
@@ -381,17 +394,7 @@ def _load_asset(
         ]
         saturation = None
         if normalization_policy == PHASE2B3A_NORMALIZATION_POLICY:
-            clipped = crop > REFLECTANCE_SCALE
-            saturation = RadiometricSaturation(
-                raw_crop_minimum=int(crop.min()),
-                raw_crop_maximum=int(crop.max()),
-                clipped_high_count=int(np.count_nonzero(clipped)),
-                clipped_high_by_band=tuple(
-                    int(np.count_nonzero(clipped[index]))
-                    for index in range(len(_BANDS))
-                ),
-            )
-            crop = np.minimum(crop, int(REFLECTANCE_SCALE))
+            crop, saturation = _saturate_crop_v2(crop)
         crop_transform = _transform_tuple(transform(window, dataset.transform))
         crop_bounds = tuple(float(value) for value in bounds(window, dataset.transform))
     return _LoadedRaster(
