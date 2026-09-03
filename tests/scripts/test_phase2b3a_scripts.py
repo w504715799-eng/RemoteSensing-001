@@ -421,6 +421,33 @@ def test_runner_rejects_duplicate_ldsr_worker_option(tmp_path: Path) -> None:
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("suffix", "message"),
+    [
+        (["--ldsr-workers"], "missing value for --ldsr-workers"),
+        (
+            ["--ldsr-workers", "--confirm-cloud-storage"],
+            "option-like value for --ldsr-workers",
+        ),
+    ],
+)
+def test_runner_rejects_missing_or_option_like_ldsr_worker_value(
+    tmp_path: Path, suffix: list[str], message: str
+) -> None:
+    root = tmp_path / "persistent"
+    arguments = [*_stage_arguments(root, "development"), *suffix]
+
+    completed, calls, _ = _invoke_runner(
+        tmp_path,
+        stage="development",
+        stage_arguments=arguments,
+    )
+
+    assert completed.returncode == 2
+    assert message in completed.stderr
+    assert calls == []
+
+
 @pytest.mark.parametrize("workers", ["0", "5", "two", "1.5"])
 def test_runner_rejects_invalid_ldsr_worker_count(
     tmp_path: Path, workers: str
