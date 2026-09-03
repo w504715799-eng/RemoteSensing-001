@@ -6,8 +6,12 @@ import argparse
 import hashlib
 import json
 import math
+import multiprocessing
+import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,9 +20,14 @@ import torch
 
 from trustsr.artifacts.predictions import PredictionCache, build_identity
 from trustsr.cli import phase2b3a
+from trustsr.contracts import SRPair
 from trustsr.data.crosssensor_pairs import (
+    CROP_POLICY,
     PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
+    CrosssensorPairMetadata,
+    LoadedCrosssensorPair,
+    RadiometricSaturation,
 )
 from trustsr.evaluation.development_predictions import build_cache_provenance
 
@@ -29,6 +38,113 @@ def _spawn_write_marker(path: Path, marker: str) -> None:
 
 def _spawn_fail(_path: Path, _marker: str) -> None:
     raise RuntimeError("worker failed")
+
+
+def _spawn_fail_fast_worker(
+    role: str,
+    sibling_pid_path: Path,
+    sibling_started: object,
+    release_sibling: object,
+) -> None:
+    if role == "fail":
+        if not sibling_started.wait(timeout=5):  # type: ignore[union-attr]
+            raise RuntimeError("sibling worker did not start")
+        raise RuntimeError("worker failed")
+    sibling_pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    sibling_started.set()  # type: ignore[union-attr]
+    while not release_sibling.is_set():  # type: ignore[union-attr]
+        time.sleep(0.01)
+
+
+def _release_spawn_sibling_after_short_window(
+    sibling_started: object, release_sibling: object
+) -> None:
+    if sibling_started.wait(timeout=10):  # type: ignore[union-attr]
+        release_sibling.wait(timeout=1)  # type: ignore[union-attr]
+        release_sibling.set()  # type: ignore[union-attr]
+
+
+class _LocalCacheModel:
+    scale = 4
+
+    def __init__(self, name: str, seed: int | None = None) -> None:
+        self.name = name
+        self.seed = seed
+        self.predict_calls = 0
+
+    def provenance(self) -> dict[str, object]:
+        result: dict[str, object] = {"name": self.name, "scale": self.scale}
+        if self.seed is not None:
+            result["seed"] = self.seed
+        return result
+
+    def predict(self, lr: torch.Tensor) -> torch.Tensor:
+        self.predict_calls += 1
+        return lr.repeat_interleave(4, dim=1).repeat_interleave(4, dim=2)
+
+
+class _LocalCacheLdsr(_LocalCacheModel):
+    def __init__(self) -> None:
+        super().__init__("ldsr-s2-x4")
+        self.seed_models: list[_LocalCacheModel] = []
+
+    def for_seed(self, seed: int) -> _LocalCacheModel:
+        model = _LocalCacheModel(self.name, seed)
+        self.seed_models.append(model)
+        return model
+
+
+def _local_development_records_and_pairs() -> tuple[
+    tuple[dict[str, object], ...], tuple[LoadedCrosssensorPair, ...]
+]:
+    records: list[dict[str, object]] = []
+    pairs: list[LoadedCrosssensorPair] = []
+    saturation = RadiometricSaturation(0, 10_000, 0, (0, 0, 0, 0))
+    for days_between in (-1, 0, 1):
+        for correlation_bin in range(4):
+            for selection_round in range(1, 11):
+                index = len(records)
+                sample_id = f"sample-{index}"
+                record = {
+                    "sample_id": sample_id,
+                    "split": "development",
+                    "spatial_group_id": f"{index:064x}",
+                    "days_between": days_between,
+                    "correlation_bin": correlation_bin,
+                    "selection_round": selection_round,
+                }
+                records.append(record)
+                lr = torch.full((4, 1, 1), 0.25, dtype=torch.float32)
+                pairs.append(
+                    LoadedCrosssensorPair(
+                        SRPair(
+                            sample_id=sample_id,
+                            source=phase2b3a._SOURCE,
+                            lr=lr,
+                            hr=torch.full((4, 4, 4), 0.25, dtype=torch.float32),
+                            scale=4,
+                        ),
+                        CrosssensorPairMetadata(
+                            manifest_sha256=POST_MANIFEST_SHA256,
+                            sample_id=sample_id,
+                            split="development",
+                            spatial_group_id=record["spatial_group_id"],
+                            days_between=days_between,
+                            correlation_bin=correlation_bin,
+                            selection_round=selection_round,
+                            lr_asset_sha256="a" * 64,
+                            hr_asset_sha256="b" * 64,
+                            lr_crop_transform=(1, 0, 0, 0, -1, 1),
+                            hr_crop_transform=(0.25, 0, 0, 0, -0.25, 1),
+                            crop_bounds=(0, 0, 1, 1),
+                            crop_policy=CROP_POLICY,
+                            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
+                            lr_saturation=saturation,
+                            hr_saturation=saturation,
+                        ),
+                    )
+                )
+    return tuple(records), tuple(pairs)
 
 
 def _stage_argv(stage: str) -> list[str]:
@@ -102,6 +218,162 @@ def test_spawn_worker_failure_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="prediction cache prewarm worker failed"):
         phase2b3a._run_spawn_workers(_spawn_fail, arguments)
+
+
+def test_spawn_worker_failure_terminates_running_siblings_without_orphans(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    sibling_started = context.Event()
+    release_sibling = context.Event()
+    sibling_pid_path = tmp_path / "sibling.pid"
+    releaser = threading.Thread(
+        target=_release_spawn_sibling_after_short_window,
+        args=(sibling_started, release_sibling),
+    )
+    releaser.start()
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="prediction cache prewarm worker failed: phase2b3a-prediction-cache-0",
+        ):
+            phase2b3a._run_spawn_workers(
+                _spawn_fail_fast_worker,
+                (
+                    ("fail", sibling_pid_path, sibling_started, release_sibling),
+                    ("linger", sibling_pid_path, sibling_started, release_sibling),
+                ),
+            )
+        assert not release_sibling.is_set(), "worker failure waited for the running sibling"
+        sibling_pid = int(sibling_pid_path.read_text(encoding="utf-8"))
+        assert not (Path("/proc") / str(sibling_pid)).exists()
+    finally:
+        release_sibling.set()
+        releaser.join(timeout=10)
+
+
+def test_development_fails_closed_when_prewarm_leaves_prediction_cache_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records, pairs = _local_development_records_and_pairs()
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=records,
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=SimpleNamespace(memory_total_mib=1024),
+    )
+    args = argparse.Namespace(
+        selection_manifest_sha256=POST_MANIFEST_SHA256,
+        sen2srlite_model_dir=tmp_path / "sen2srlite",
+        ldsr_model_dir=tmp_path / "ldsr",
+        ldsr_workers=2,
+    )
+    created_models: list[tuple[_LocalCacheModel, _LocalCacheModel, _LocalCacheLdsr]] = []
+
+    def model_factory(_args: argparse.Namespace):
+        models = (
+            _LocalCacheModel("bicubic-x4"),
+            _LocalCacheModel("sen2srlite-x4"),
+            _LocalCacheLdsr(),
+        )
+        created_models.append(models)
+        return models
+
+    def unexpected_evaluation(*args: object, **kwargs: object) -> None:
+        pytest.fail("parent evaluation must not run with an empty prewarm cache")
+
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(
+        phase2b3a, "_verify_a1_cloud_acceptance", lambda context: (False, "b" * 64, "c" * 40)
+    )
+    monkeypatch.setattr(phase2b3a, "_prewarm_development_cache", lambda *args: None)
+    monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda *args: pairs)
+    monkeypatch.setattr(phase2b3a, "_model_factory", model_factory)
+    monkeypatch.setattr(phase2b3a, "evaluate_a2_development", unexpected_evaluation)
+
+    with pytest.raises(RuntimeError, match="prediction cache prewarm is incomplete"):
+        phase2b3a.run_development(args)
+
+    assert created_models
+    assert all(model.predict_calls == 0 for model in created_models[-1][:2])
+    assert all(model.predict_calls == 0 for model in created_models[-1][2].seed_models)
+
+
+def test_development_serially_consumes_cache_produced_by_prewarm_shard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records, pairs = _local_development_records_and_pairs()
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=records,
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=SimpleNamespace(memory_total_mib=1024),
+    )
+    args = argparse.Namespace(
+        selection_manifest_sha256=POST_MANIFEST_SHA256,
+        sen2srlite_model_dir=tmp_path / "sen2srlite",
+        ldsr_model_dir=tmp_path / "ldsr",
+        ldsr_workers=2,
+    )
+    pairs_by_id = {pair.pair.sample_id: pair for pair in pairs}
+    created_models: list[tuple[_LocalCacheModel, _LocalCacheModel, _LocalCacheLdsr]] = []
+
+    def model_factory(_args: argparse.Namespace):
+        models = (
+            _LocalCacheModel("bicubic-x4"),
+            _LocalCacheModel("sen2srlite-x4"),
+            _LocalCacheLdsr(),
+        )
+        created_models.append(models)
+        return models
+
+    def prewarm(
+        prewarm_context: phase2b3a._StageContext,
+        prewarm_args: argparse.Namespace,
+        seeds: tuple[int, ...],
+        workers: int,
+    ) -> None:
+        assert workers == 2
+        phase2b3a._prewarm_development_shard(
+            prewarm_context.root,
+            tuple(records),
+            prewarm_args.selection_manifest_sha256,
+            prewarm_args.sen2srlite_model_dir,
+            prewarm_args.ldsr_model_dir,
+            seeds,
+        )
+
+    def consume(
+        _pairs: object, bundles: object, **_kwargs: object
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        assert len(tuple(bundles)) == 120
+        return {"radiometric_policy": {"policy": "local"}}, {}
+
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(
+        phase2b3a, "_verify_a1_cloud_acceptance", lambda context: (False, "b" * 64, "c" * 40)
+    )
+    monkeypatch.setattr(
+        phase2b3a,
+        "load_crosssensor_pair",
+        lambda _root, record, **_kwargs: pairs_by_id[record["sample_id"]],
+    )
+    monkeypatch.setattr(phase2b3a, "_prewarm_development_cache", prewarm)
+    monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda *args: pairs)
+    monkeypatch.setattr(phase2b3a, "_model_factory", model_factory)
+    monkeypatch.setattr(phase2b3a, "evaluate_a2_development", consume)
+    monkeypatch.setattr(phase2b3a, "_write_runtime", lambda *args: (b"{}", "d" * 64))
+    monkeypatch.setattr(phase2b3a, "_commit_pair", lambda *args: (b"{}", b"{}"))
+
+    assert phase2b3a.run_development(args)["stage"] == "development"
+    parent_models = created_models[-1]
+    assert all(model.predict_calls == 0 for model in parent_models[:2])
+    assert all(model.predict_calls == 0 for model in parent_models[2].seed_models)
+    assert len(tuple(phase2b3a._prediction_cache_directory(tmp_path).glob("*.json"))) == 360
 
 
 def test_parser_exposes_only_frozen_stages_and_no_arbitrary_selection() -> None:
@@ -1232,6 +1504,9 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: pairs)
         monkeypatch.setattr(
             phase2b3a, "_model_factory", lambda args: (object(), object(), object())
+        )
+        monkeypatch.setattr(
+            phase2b3a, "_require_prewarmed_prediction_cache", lambda *args: None
         )
         built = []
 

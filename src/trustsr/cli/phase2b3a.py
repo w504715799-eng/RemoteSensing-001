@@ -428,8 +428,23 @@ def _run_spawn_workers(
             )
             process.start()
             processes.append(process)
-        for process in processes:
-            process.join()
+        pending = list(processes)
+        while pending:
+            completed = []
+            for process in tuple(pending):
+                process.join(timeout=0)
+                if process.exitcode is None:
+                    continue
+                completed.append(process)
+            if not completed:
+                time.sleep(0.01)
+                continue
+            for process in completed:
+                pending.remove(process)
+                if process.exitcode != 0:
+                    raise RuntimeError(
+                        "prediction cache prewarm worker failed: " + process.name
+                    )
     except BaseException:
         for process in processes:
             if process.is_alive():
@@ -494,6 +509,30 @@ def _prewarm_development_cache(
         for shard in shards
     )
     _run_spawn_workers(_prewarm_development_shard, arguments)
+
+
+def _require_prewarmed_prediction_cache(
+    pairs: Sequence[LoadedCrosssensorPair],
+    models: Sequence[Any],
+    seeds: tuple[int, ...],
+    cache: PredictionCache,
+) -> None:
+    model_provenances = (
+        build_cache_provenance(models[0].provenance()),
+        build_cache_provenance(models[1].provenance()),
+    )
+    ldsr_provenances = tuple(
+        build_cache_provenance(models[2].for_seed(seed).provenance()) for seed in seeds
+    )
+    for pair in pairs:
+        identities = (
+            *(build_identity(provenance, pair.pair.source, pair.pair.sample_id, pair.pair.lr)
+              for provenance in model_provenances),
+            *(build_identity(provenance, pair.pair.source, pair.pair.sample_id, pair.pair.lr)
+              for provenance in ldsr_provenances),
+        )
+        if any(cache.get(identity) is None for identity in identities):
+            raise RuntimeError("prediction cache prewarm is incomplete")
 
 
 def _sha256(payload: bytes) -> str:
@@ -1124,6 +1163,8 @@ def run_development(args: argparse.Namespace) -> dict[str, object]:
     _validate_models(models)
     prediction_cache = PredictionCache(_prediction_cache_directory(context.root))
     score_cache = ScoreCache(_score_cache_directory(context.root))
+    if workers > 1:
+        _require_prewarmed_prediction_cache(pairs, models, seeds, prediction_cache)
     bundles = _one_shot_bundles(pairs, models, seeds, prediction_cache)
     result, audit = evaluate_a2_development(
         pairs,
