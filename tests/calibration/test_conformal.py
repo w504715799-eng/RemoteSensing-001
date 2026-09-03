@@ -6,10 +6,114 @@ import torch
 
 from trustsr.calibration.conformal import (
     ConformalCalibration,
+    _sweep_thresholds,
     calibrate_fidelity_mask,
     trusted_mask,
 )
 from trustsr.evaluation.selective import evaluate_selective_point
+
+
+def _naive_calibration(
+    scores: tuple[torch.Tensor, ...],
+    risks: tuple[torch.Tensor, ...],
+    *,
+    alpha: float,
+    risk_upper_bound: float = 1.0,
+) -> tuple[float, float, int]:
+    """Independent literal implementation of the Phase 2A threshold definition."""
+    candidates = sorted(
+        {float(value) for score in scores for value in score.reshape(-1).tolist()}
+    )
+    threshold = float("-inf")
+    bound = risk_upper_bound / (len(scores) + 1)
+    trusted_pixels = 0
+    for candidate in candidates:
+        worst_risks = []
+        for score, risk in zip(scores, risks, strict=True):
+            selected = [
+                float(risk_value)
+                for score_value, risk_value in zip(
+                    score.reshape(-1).tolist(), risk.reshape(-1).tolist(), strict=True
+                )
+                if score_value <= candidate
+            ]
+            worst_risks.append(max(selected, default=0.0))
+        candidate_bound = (sum(worst_risks) + risk_upper_bound) / (len(scores) + 1)
+        if candidate_bound <= alpha:
+            threshold = candidate
+            bound = candidate_bound
+            trusted_pixels = sum(
+                sum(value <= candidate for value in score.reshape(-1).tolist())
+                for score in scores
+            )
+    return threshold, bound, trusted_pixels
+
+
+def test_sweep_groups_unique_scores_with_one_event_per_roi_score_group() -> None:
+    """A dense score map must be scanned as grouped events, not ROI masks per threshold."""
+    pixels_per_roi = 48 * 48
+    values = torch.arange(4 * pixels_per_roi, dtype=torch.float64).reshape(4, 48, 48)
+    scores = tuple(score / values.numel() for score in values)
+    risks = tuple(torch.remainder(score * 37, 1.0) for score in scores)
+
+    sweep = _sweep_thresholds(scores, risks)
+
+    assert sweep.event_count == values.numel()
+    assert sweep.thresholds.numel() == values.numel()
+    assert sweep.worst_risk_sums.numel() == values.numel()
+
+
+def test_sweep_preserves_repeated_score_boundaries_and_roi_worst_risks() -> None:
+    scores = (
+        torch.tensor([[0.1, 0.2, 0.2, 0.5]], dtype=torch.float64),
+        torch.tensor([[0.1, 0.3, 0.5, 0.5]], dtype=torch.float64),
+    )
+    risks = (
+        torch.tensor([[0.8, 0.2, 0.7, 0.1]], dtype=torch.float64),
+        torch.tensor([[0.1, 0.9, 0.3, 0.4]], dtype=torch.float64),
+    )
+
+    sweep = _sweep_thresholds(scores, risks)
+
+    torch.testing.assert_close(
+        sweep.thresholds, torch.tensor([0.1, 0.2, 0.3, 0.5], dtype=torch.float64)
+    )
+    torch.testing.assert_close(
+        sweep.worst_risk_sums,
+        torch.tensor([0.9, 0.9, 1.7, 1.7], dtype=torch.float64),
+    )
+
+
+def test_calibration_matches_independent_naive_reference_for_random_small_rois() -> None:
+    generator = torch.Generator().manual_seed(20260903)
+    scores = tuple(torch.rand((3, 4), generator=generator, dtype=torch.float64) for _ in range(4))
+    risks = tuple(torch.rand((3, 4), generator=generator, dtype=torch.float64) for _ in range(4))
+
+    expected_threshold, expected_bound, expected_trusted_pixels = _naive_calibration(
+        scores, risks, alpha=0.72
+    )
+    result = calibrate_fidelity_mask(scores, risks, alpha=0.72)
+
+    assert result.threshold == expected_threshold
+    assert result.risk_bound == expected_bound
+    assert result.trusted_pixels == expected_trusted_pixels
+
+
+def test_calibration_keeps_equal_score_boundary_and_nonmonotone_roi_risks() -> None:
+    scores = (
+        torch.tensor([[0.1, 0.4, 0.6]], dtype=torch.float64),
+        torch.tensor([[0.2, 0.4, 0.5]], dtype=torch.float64),
+    )
+    risks = (
+        torch.tensor([[0.9, 0.1, 0.2]], dtype=torch.float64),
+        torch.tensor([[0.2, 0.8, 0.85]], dtype=torch.float64),
+    )
+
+    result = calibrate_fidelity_mask(scores, risks, alpha=0.9)
+
+    assert result.threshold == 0.4
+    assert result.trusted_pixels == 4
+    assert result.risk_bound == pytest.approx((0.9 + 0.8 + 1.0) / 3.0)
 
 
 def test_calibration_uses_roi_maxima_and_finite_sample_correction() -> None:

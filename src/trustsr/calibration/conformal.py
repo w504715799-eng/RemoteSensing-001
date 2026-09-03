@@ -31,6 +31,15 @@ class ConformalCalibration:
             raise ValueError("-inf threshold must have zero trusted_pixels")
 
 
+@dataclass(frozen=True)
+class _ThresholdSweep:
+    """Grouped score events used by the private exact threshold sweep."""
+
+    thresholds: torch.Tensor
+    worst_risk_sums: torch.Tensor
+    event_count: int
+
+
 def _validate_positive_finite(value: float, *, name: str) -> float:
     if not _is_runtime_real(value):
         raise ValueError(f"{name} must be a positive finite number")
@@ -155,6 +164,60 @@ def _risk_bound(
     return (sum(worst_risks) + risk_upper_bound) / (len(scores) + 1)
 
 
+def _roi_score_events(
+    score: torch.Tensor, risk: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return score-group events for one ROI's cumulative maximum risk."""
+    sorted_score, order = torch.sort(score.reshape(-1))
+    sorted_risk = risk.reshape(-1)[order]
+    group_starts = torch.ones_like(sorted_score, dtype=torch.bool)
+    group_starts[1:] = sorted_score[1:] != sorted_score[:-1]
+    group_ids = group_starts.cumsum(dim=0, dtype=torch.int64) - 1
+    group_count = int(group_starts.sum().item())
+
+    group_maxima = torch.zeros(group_count, dtype=torch.float64)
+    group_maxima.scatter_reduce_(
+        0, group_ids, sorted_risk, reduce="amax", include_self=False
+    )
+    running_maxima = torch.cummax(group_maxima, dim=0).values
+    increments = running_maxima.clone()
+    increments[1:] -= running_maxima[:-1]
+    return sorted_score[group_starts], increments
+
+
+def _sweep_thresholds(
+    scores: Sequence[torch.Tensor], risks: Sequence[torch.Tensor]
+) -> _ThresholdSweep:
+    """Sweep all observed thresholds with one grouped event per ROI score value."""
+    total_pixels = sum(score.numel() for score in scores)
+    event_scores = torch.empty(total_pixels, dtype=torch.float64)
+    event_increments = torch.empty(total_pixels, dtype=torch.float64)
+    event_offset = 0
+    for score, risk in zip(scores, risks, strict=True):
+        roi_scores, roi_increments = _roi_score_events(score, risk)
+        next_offset = event_offset + roi_scores.numel()
+        event_scores[event_offset:next_offset] = roi_scores
+        event_increments[event_offset:next_offset] = roi_increments
+        event_offset = next_offset
+
+    event_scores = event_scores[:event_offset]
+    event_increments = event_increments[:event_offset]
+    sorted_scores, order = torch.sort(event_scores)
+    sorted_increments = event_increments[order]
+    del event_scores, event_increments, order
+    thresholds, threshold_pixel_counts = torch.unique_consecutive(
+        sorted_scores, return_counts=True
+    )
+    risk_increments = torch.segment_reduce(
+        sorted_increments, reduce="sum", lengths=threshold_pixel_counts
+    )
+    return _ThresholdSweep(
+        thresholds=thresholds,
+        worst_risk_sums=torch.cumsum(risk_increments, dim=0),
+        event_count=event_offset,
+    )
+
+
 def calibrate_fidelity_mask(
     scores: Sequence[torch.Tensor],
     risks: Sequence[torch.Tensor],
@@ -171,23 +234,19 @@ def calibrate_fidelity_mask(
         scores, risks, risk_upper_bound=validated_upper_bound
     )
 
-    candidates = torch.unique(torch.cat([score.reshape(-1) for score in validated_scores]))
-    candidates = torch.sort(candidates).values
-    threshold = float("-inf")
-    for candidate in candidates:
-        candidate_threshold = candidate.item()
-        candidate_bound = _risk_bound(
-            validated_scores,
-            validated_risks,
-            threshold=candidate_threshold,
-            risk_upper_bound=validated_upper_bound,
-        )
-        if candidate_bound <= validated_alpha:
-            threshold = candidate_threshold
-
-    trusted_pixels = sum(
-        int((score <= threshold).sum().item()) for score in validated_scores
+    sweep = _sweep_thresholds(validated_scores, validated_risks)
+    bounds = (sweep.worst_risk_sums + validated_upper_bound) / (
+        len(validated_scores) + 1
     )
+    passing_indices = torch.nonzero(bounds <= validated_alpha, as_tuple=False)
+    threshold = float("-inf")
+    trusted_pixels = 0
+    if passing_indices.numel() != 0:
+        selected_index = int(passing_indices[-1].item())
+        threshold = sweep.thresholds[selected_index].item()
+        trusted_pixels = sum(
+            int((score <= threshold).sum().item()) for score in validated_scores
+        )
     total_pixels = sum(score.numel() for score in validated_scores)
     selected_bound = _risk_bound(
         validated_scores,
