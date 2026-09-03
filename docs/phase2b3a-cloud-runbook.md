@@ -1,7 +1,9 @@
 # Phase 2B3-A staged cloud runbook
 
 Phase 2B3-A audits the frozen `development` split. A1 is the four-ROI stability/resource gate and
-A2 is the exact 120-ROI audit; neither is calibration or `internal_test` evaluation. The disposable
+A2 is the exact 120-ROI audit; neither is calibration or `internal_test` evaluation. Historical
+paths retain `uint16_divide_10000_no_clip_v1`; every new Phase 2B3-A pixel stage explicitly uses
+`uint16_saturate_10000_divide_10000_v2`. The disposable
 work mount holds live pixels, tensors, caches, logs, and the checkpointed `trustsr` trees. The
 durable mount holds immutable checkpoint pairs and durable model sources. GitHub is the durable
 source for code and Git history. Local development, review, and synthetic/CPU verification finish
@@ -10,7 +12,9 @@ restore uses an explicit verified copy into disposable storage; bind mode is all
 provider explicitly grants mount capability.
 
 No command below installs software, downloads data, or controls an instance. Instance-identifying
-values remain in the operator shell and never enter tracked files.
+values remain in the operator shell and never enter tracked files. The final reviewed integration
+commit is pending. Keep the GPU rerun paused until local integration passes, that exact commit is
+pushed, and the user reports that the GPU has been restarted.
 
 ## A0: local review and immutable handoff
 
@@ -55,16 +59,17 @@ Use the canonical, non-symlink base interpreter path. On the current cloud image
 `/opt/conda/bin/python3.12`; `/opt/conda/bin/python` is a symlink and is intentionally rejected by
 the restore boundary.
 
-The allowed compute-session transitions are exactly:
+The saturation-v2 rerun transitions are exactly:
 
 ```text
-UNVERIFIED -> RESTORED -> PREFLIGHT_OK -> A1_OK -> A1_CHECKPOINTED
-A1_CHECKPOINTED -> RESTORED -> PREFLIGHT_OK -> A2_OK -> A2_CHECKPOINTED
+UNVERIFIED -> LEGACY_A1_RESTORED -> LIVE_PHASE2B3A_RESET -> PREFLIGHT_OK
+PREFLIGHT_OK -> A1_V2_OK -> A1_V2_CHECKPOINTED -> A2_OK -> A2_CHECKPOINTED
 ```
 
-Only `UNVERIFIED` with no mutation, `A1_CHECKPOINTED`, and `A2_CHECKPOINTED` are safe pause
-points. `A2_CHECKPOINTED` is terminal for compute. A later offline inspection restore is not a
-compute-state transition.
+Only `UNVERIFIED` with no mutation, `A1_V2_CHECKPOINTED`, and `A2_CHECKPOINTED` are safe pause
+points. A resumed compute session may restore the newly produced v2 A1 checkpoint, but must never
+resume A2 directly from the accepted historical v1 A1. `A2_CHECKPOINTED` is terminal for compute.
+A later offline inspection restore is not a compute-state transition.
 
 ## One-time inode recovery before the initial session
 
@@ -151,7 +156,7 @@ df -h -- "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT"
 df -Pi -- "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT"
 ```
 
-## Initial setup, preflight, and A0 checkpoint
+## Greenfield-only setup and A0 checkpoint
 
 The initial verified input tree provides ordinary `trustsr/phase2b1b` and `trustsr/phase2b2a`
 under work storage. Create the empty ordinary `trustsr/phase2b3a` directory. For the current
@@ -159,6 +164,11 @@ unprivileged provider, copy both durable model trees through the reviewed verifi
 canonical type/mode/per-file-SHA-256 inventory before publication, removes all write permission
 from the copies, and leaves the durable sources unchanged. The restore script is used once an
 existing workspace checkpoint is available.
+
+The directory creation and model publication commands in this subsection are only for a greenfield
+A0. The current saturation-v2 recovery skips them and uses the accepted legacy A1 restore in the
+next subsection. In either case, define the frozen inputs and command wrappers below; defining them
+does not read pixels or run a stage.
 
 ```bash
 set -euo pipefail
@@ -197,145 +207,185 @@ phase2b3a_compute() {
 phase2b3a_replay() {
   "$PHASE2B3A_REPOSITORY/scripts/phase2b3a/run_cloud.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_STORAGE_ROOT" "$PHASE2B3A_REPOSITORY" "$1" "${PHASE2B3A_COMMON_ARGS[@]}"
 }
-phase2b3a_compute preflight
 ```
 
-Successful preflight establishes `PREFLIGHT_OK`. Create and independently verify the full
-three-root `a0` checkpoint before GPU compute. Copy the emitted manifest basename exactly; never
-glob for a newest file.
+For a greenfield A0 only, run preflight, then create and independently verify the full three-root
+checkpoint before GPU compute. The saturation-v2 recovery does not execute this A0 block. Copy the
+emitted manifest basename exactly; never glob for a newest file.
 
 ```bash
+phase2b3a_compute preflight
 "$PHASE2B3A_REPOSITORY/scripts/phase2b3a/checkpoint_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" a0 "$PHASE2B3A_REVIEWED_COMMIT"
 : "${PHASE2B3A_A0_MANIFEST_BASENAME:?copy emitted a0 manifest basename exactly}"
 PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" -m trustsr.artifacts.workspace_checkpoint verify "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" "$PHASE2B3A_A0_MANIFEST_BASENAME"
 ```
 
-## A1 and A2
+## Saturation-v2 A1 and A2 rerun
 
-For A1, in the cloud shell and from `PREFLIGHT_OK`, execute the reviewed-A0 wrappers in this exact
-order. Successful scientific verification establishes `A1_OK`.
+The first exact A2 attempt stopped on the ninth development ROI before model construction or
+inference because a raw reflectance value exceeded the former `[0,10000]` assumption. No A2
+result, runtime, or replay was produced, and GPU processes returned to zero. The host-free diagnosis
+found exactly one affected ROI out of 120: LR has eight values above `10000` in ordered bands
+B04/B03/B02/B08 as `[4,0,0,4]`; HR has 117 as `[56,0,0,61]`; the raw crop maximum is `11968`.
+The v2 policy saturates aligned-crop values at `10000`, records these counts, and rejects the full
+raw input when any value exceeds `32767`. It preserves all 120 development ROIs and never reads
+calibration or `internal_test` pixels.
+
+The immutable accepted legacy A1 is recovery input only. Its exact manifest is
+`phase2b3a-workspace-a1-623535c33fee50e7d05b83386158b349c4056d1f4aa256efda1189933e9993f8.json`,
+its archive is `933263360` bytes, and its producer is
+`4df5195e0a28701391c3951659a42409f81a11c2`. Verify that pair, restore it only to recover frozen data
+and verified models, then delete and recreate only the disposable live `trustsr/phase2b3a` stage.
+The durable checkpoint pair and durable model sources are never reset targets.
 
 ```bash
+set -euo pipefail
+: "${PHASE2B3A_A1_MANIFEST_BASENAME:=phase2b3a-workspace-a1-623535c33fee50e7d05b83386158b349c4056d1f4aa256efda1189933e9993f8.json}"
+test "$PHASE2B3A_A1_MANIFEST_BASENAME" = phase2b3a-workspace-a1-623535c33fee50e7d05b83386158b349c4056d1f4aa256efda1189933e9993f8.json
+PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" \
+  -m trustsr.artifacts.workspace_checkpoint verify \
+  "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" \
+  "$PHASE2B3A_A1_MANIFEST_BASENAME"
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/restore_workspace.sh" \
+  "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" \
+  "$PHASE2B3A_REPOSITORY" "$PHASE2B3A_A1_MANIFEST_BASENAME" \
+  "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE" \
+  "$PHASE2B3A_MODEL_RESTORE_MODE" "$PHASE2B3A_A1_CHECKPOINT_COMMIT"
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/reset_live_phase2b3a.sh" \
+  "$PHASE2B3A_WORK_ROOT"
+test -d "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a"
+test ! -L "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a"
+test -z "$(find "$PHASE2B3A_WORK_ROOT/trustsr/phase2b3a" -mindepth 1 -print -quit)"
+```
+
+The restore success JSON must record copy mode, the exact historical checkpoint producer, and the
+new pushed restore-code commit. The historical producer must be an ancestor of that code commit.
+Do not retry with bind mode after a permission failure, replace model directories with symlinks,
+broaden the reset target, or bypass any path, mount, digest, inventory, ancestry, lock, capacity, or
+GPU-idleness guard. Successful reset establishes `LIVE_PHASE2B3A_RESET`.
+
+Run formal preflight, then produce a completely fresh A1 under v2. Do not reuse the historical A1
+result, cache, runtime, or replay. Checkpoint and independently verify the new A1 before A2.
+
+```bash
+phase2b3a_compute preflight
 phase2b3a_compute single
 phase2b3a_compute smoke
 phase2b3a_replay replay
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/checkpoint_workspace.sh" \
+  "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" \
+  "$PHASE2B3A_REPOSITORY" a1 "$PHASE2B3A_REVIEWED_COMMIT"
+: "${PHASE2B3A_A1_V2_MANIFEST_BASENAME:?copy emitted v2 a1 manifest basename exactly}"
+PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" \
+  -m trustsr.artifacts.workspace_checkpoint verify \
+  "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" \
+  "$PHASE2B3A_A1_V2_MANIFEST_BASENAME"
 ```
 
-Then, in the **local reviewed checkout**, pull, verify, and commit only the exact allowlist; do not
-run these commands in the cloud shell.
+Before A2 can replace the live bundle manifest, use the existing pull script from the clean local
+reviewed checkout to fetch and offline-verify the A1-v2 bundle into a new destination. Do not stage
+evidence yet.
 
 ```bash
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
 : "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
 : "${PHASE2B3A_LOCAL_REVIEWED_COMMIT:?set exact reviewed 40-hex A0 commit}"
-: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
-: "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
-: "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
-: "${PHASE2B3A_A1_BUNDLE:?set new absolute local A1 bundle destination}"
-[[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote storage root only for this pull}"
+: "${PHASE2B3A_SSH_HOST:?set operator-provided endpoint only in this shell}"
+: "${PHASE2B3A_SSH_PORT:?set operator-provided numeric port only in this shell}"
+: "${PHASE2B3A_A1_V2_BUNDLE:?set new absolute local A1-v2 bundle destination}"
+: "${PHASE2B3A_A1_V2_ACCEPTANCE:?set new untracked A1-v2 acceptance JSON path}"
 [[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
-[[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
-git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
+test "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" = \
+  "$PHASE2B3A_LOCAL_BRANCH"
+test -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)"
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor \
+  "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
-"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A1_BUNDLE"
-uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json
-cp -- "$PHASE2B3A_A1_BUNDLE/phase2b3a-a1-result.json" artifacts/phase2b3a/sen2naipv2-development-smoke-v1.json
-cp -- "$PHASE2B3A_A1_BUNDLE/phase2b3a-a1-cache-audit.json" artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v1.json
-[[ -z "$(git diff --cached --name-only)" ]]
-git add -- artifacts/phase2b3a/sen2naipv2-development-smoke-v1.json artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v1.json
-expected_a1="$(printf '%s\n' artifacts/phase2b3a/sen2naipv2-development-smoke-v1.json artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v1.json | sort)"
-[[ "$(git diff --cached --name-only | sort)" == "$expected_a1" ]]
-git commit -m "docs: record phase2b3a A1 evidence"
-git push
-stage_local_sha="$(git rev-parse HEAD)"
-stage_remote_sha="$(git ls-remote --heads origin "$(git branch --show-current)" | awk '{print $1}')"
-test "$stage_local_sha" = "$stage_remote_sha"
+scripts/phase2b3a/pull_results.sh "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" \
+  "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A1_V2_BUNDLE"
+uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_V2_BUNDLE" \
+  --output "$PHASE2B3A_A1_V2_ACCEPTANCE"
 ```
 
-Back in the **cloud shell**, checkpoint and reverify the full `trustsr` tree. Successful reverify
-establishes `A1_CHECKPOINTED`, the first safe pause point.
+Return to the cloud shell for exact A2, replay, checkpoint, and independent checkpoint
+verification:
 
 ```bash
-"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/checkpoint_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" a1 "$PHASE2B3A_REVIEWED_COMMIT"
-: "${PHASE2B3A_A1_MANIFEST_BASENAME:?copy emitted a1 manifest basename exactly}"
-PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" -m trustsr.artifacts.workspace_checkpoint verify "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" "$PHASE2B3A_A1_MANIFEST_BASENAME"
-```
-
-For A2, every new disposable session first runs the bootstrap above, then restores the exact A1
-manifest; this successful restore establishes `RESTORED`. Rerun preflight to establish
-`PREFLIGHT_OK`, then run `development` and `development-replay`. Successful scientific
-verification establishes `A2_OK`. An A0/A1 restore automatically preserves the checkpointed fixed
-preflight outputs under stage-and-producer-commit names before the new preflight runs; it never
-overwrites the old log or runtime manifest.
-
-```bash
-: "${PHASE2B3A_A1_MANIFEST_BASENAME:?copy recorded a1 manifest basename exactly}"
-"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/restore_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" "$PHASE2B3A_A1_MANIFEST_BASENAME" "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE" "$PHASE2B3A_MODEL_RESTORE_MODE" "$PHASE2B3A_A1_CHECKPOINT_COMMIT"
-test -f "$PHASE2B3A_STORAGE_ROOT/trustsr/phase2b3a/logs/preflight-a1-$PHASE2B3A_A1_CHECKPOINT_COMMIT.jsonl"
-test "$(find "$PHASE2B3A_STORAGE_ROOT/trustsr/phase2b3a/results" -mindepth 2 -maxdepth 2 -type f -name "phase2b3a-a1-preflight-runtime-$PHASE2B3A_A1_CHECKPOINT_COMMIT.json" -print | wc -l)" -eq 1
-phase2b3a_compute preflight
 phase2b3a_compute development
 phase2b3a_replay development-replay
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/checkpoint_workspace.sh" \
+  "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" \
+  "$PHASE2B3A_REPOSITORY" a2 "$PHASE2B3A_REVIEWED_COMMIT"
+: "${PHASE2B3A_A2_MANIFEST_BASENAME:?copy emitted a2 manifest basename exactly}"
+PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" \
+  -m trustsr.artifacts.workspace_checkpoint verify \
+  "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" \
+  "$PHASE2B3A_A2_MANIFEST_BASENAME"
 ```
 
-Require the restore JSON to contain `"model_restore_mode":"copy"`, the exact old
-`"checkpoint_reviewed_commit":"4df5195e..."`, and the new pushed A2 code identity in
-`"restore_code_commit"`. The old checkpoint commit must be an ancestor of the restore code commit;
-the script fails before model publication otherwise. Do not retry with bind mode after a permission
-error, and do not replace either model directory with a symlink. The A1 runtime remains bound to its
-original producer commit. A2 verifies that producer is an ancestor, writes the current commit as its
-own `git_commit`, and records the old commit separately as `a1_producer_commit`. This required
-runtime field was added before the first A2 evidence bundle existed, so the v1 schema remains the
-pre-publication contract rather than a migration of published A2 evidence.
+New A1 checkpoint builds and all A2 checkpoint builds require
+`uint16_saturate_10000_divide_10000_v2` in their current runtime evidence. The sole legacy restore
+exception is the exact accepted historical A1 identity above, under its verified producer lineage.
+That legacy checkpoint can recover data and models, but cannot be re-checkpointed or presented as
+current A1 evidence. If a compute session pauses after `A1_V2_CHECKPOINTED`, resume from the exact
+new v2 A1 checkpoint, never from the historical exception.
 
-Repeat the labelled **local reviewed checkout** evidence sequence for the exact A2 filenames, then
-return to the cloud shell to checkpoint `a2` and reverify. A complete reverified A2 checkpoint
-establishes terminal `A2_CHECKPOINTED`.
+The expected scientific schemas are:
+
+- A1 result: `trustsr.phase2b3a-development-smoke.v2`
+- A1 cache audit: `trustsr.phase2b3a-development-smoke-cache-audit.v2`
+- A1 runtime: `trustsr.phase2b3a-a1-runtime.v2`
+- A1 replay: `trustsr.phase2b3a-a1-replay.v2`
+- A1 bundle manifest: `trustsr.phase2b3a-bundle-manifest.v2`
+- A2 result: `trustsr.phase2b3a-development-score-audit.v1`
+- A2 cache audit: `trustsr.phase2b3a-development-score-cache-audit.v1`
+- A2 runtime: `trustsr.phase2b3a-a2-runtime.v1`
+- A2 replay: `trustsr.phase2b3a-a2-replay.v1`
+- A2 bundle manifest: `trustsr.phase2b3a-bundle-manifest.v1`
+
+Both stages require top-level `normalization_policy`, per-sample `radiometric_saturation`, and the
+derived `radiometric_policy`; A2 retains v1 only because no A2 evidence was previously published.
+Existing tracked Phase 2B2-A evidence and the accepted A1 v1 publication remain byte-for-byte
+historical and must not be overwritten or relabelled.
+
+After the A2 checkpoint verifies, pull and offline-verify its v1 bundle into a second new local
+destination. The A1-v2 bundle was already captured before A2 replaced the live manifest. Verify
+both local bundle manifests again before staging any allowlisted JSON:
 
 ```bash
 set -euo pipefail
 : "${PHASE2B3A_LOCAL_REPOSITORY:?set clean local reviewed checkout}"
 : "${PHASE2B3A_LOCAL_BRANCH:?set intended attached local evidence branch}"
 : "${PHASE2B3A_LOCAL_REVIEWED_COMMIT:?set exact reviewed 40-hex A0 commit}"
-: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote cloud storage root only for this pull}"
-: "${PHASE2B3A_SSH_HOST:?set user-provided endpoint only for this pull}"
-: "${PHASE2B3A_SSH_PORT:?set user-provided numeric port only for this pull}"
-: "${PHASE2B3A_A2_BUNDLE:?set new absolute local A2 bundle destination}"
-[[ -d "$PHASE2B3A_LOCAL_REPOSITORY" && ! -L "$PHASE2B3A_LOCAL_REPOSITORY" ]]
+: "${PHASE2B3A_REMOTE_STORAGE_ROOT:?set remote storage root only for this pull}"
+: "${PHASE2B3A_SSH_HOST:?set operator-provided endpoint only in this shell}"
+: "${PHASE2B3A_SSH_PORT:?set operator-provided numeric port only in this shell}"
+: "${PHASE2B3A_A1_V2_BUNDLE:?set previously verified A1-v2 bundle destination}"
+: "${PHASE2B3A_A1_V2_ACCEPTANCE:?set existing untracked A1-v2 acceptance JSON path}"
+: "${PHASE2B3A_A2_V1_BUNDLE:?set new absolute local A2-v1 bundle destination}"
+: "${PHASE2B3A_A2_V1_ACCEPTANCE:?set new untracked A2-v1 acceptance JSON path}"
 [[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse --show-toplevel)" == "$PHASE2B3A_LOCAL_REPOSITORY" ]]
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" == "$PHASE2B3A_LOCAL_BRANCH" ]]
-[[ -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)" ]]
-[[ "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" rev-parse HEAD)" =~ ^[0-9a-f]{40}$ ]]
-git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
+test "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" = \
+  "$PHASE2B3A_LOCAL_BRANCH"
+test -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)"
+git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor \
+  "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
-"$PHASE2B3A_LOCAL_REPOSITORY/scripts/phase2b3a/pull_results.sh" "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A2_BUNDLE"
-uv run trustsr-phase2b3a-verify a2 --bundle "$PHASE2B3A_A2_BUNDLE" --output artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
-cp -- "$PHASE2B3A_A2_BUNDLE/phase2b3a-a2-result.json" artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json
-cp -- "$PHASE2B3A_A2_BUNDLE/phase2b3a-a2-cache-audit.json" artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
-[[ -z "$(git diff --cached --name-only)" ]]
-git add -- artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
-expected_a2="$(printf '%s\n' artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json | sort)"
-[[ "$(git diff --cached --name-only | sort)" == "$expected_a2" ]]
-git commit -m "docs: record phase2b3a A2 evidence"
-git push
-stage_local_sha="$(git rev-parse HEAD)"
-stage_remote_sha="$(git ls-remote --heads origin "$(git branch --show-current)" | awk '{print $1}')"
-test "$stage_local_sha" = "$stage_remote_sha"
+scripts/phase2b3a/pull_results.sh "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" \
+  "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A2_V1_BUNDLE"
+uv run trustsr-phase2b3a-verify a2 --bundle "$PHASE2B3A_A2_V1_BUNDLE" \
+  --output "$PHASE2B3A_A2_V1_ACCEPTANCE"
+uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_V2_BUNDLE" \
+  --output "$PHASE2B3A_A1_V2_ACCEPTANCE"
 ```
 
-```bash
-"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/checkpoint_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" a2 "$PHASE2B3A_REVIEWED_COMMIT"
-: "${PHASE2B3A_A2_MANIFEST_BASENAME:?copy emitted a2 manifest basename exactly}"
-PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" -m trustsr.artifacts.workspace_checkpoint verify "$PHASE2B3A_PERSISTENT_ROOT/trustsr-phase2b3a-checkpoints" "$PHASE2B3A_A2_MANIFEST_BASENAME"
-```
-
-Cloud pixels, tensors, caches, checkpoint tar files, models, logs, remote markers, endpoints, and
-credentials are never downloaded locally or committed. Only allowlisted host-free JSON evidence
-enters Git.
+Inspect each pulled `phase2b3a-bundle-manifest.json`, confirm the schemas above, and copy only the
+allowlisted host-free result, cache-audit, and acceptance JSON into new tracked paths. Require a
+clean index before `git add`, compare the staged filenames with an exact sorted allowlist, review
+the diff, commit, push, and prove local and remote branch SHAs match. Cloud pixels, tensors, caches,
+checkpoint archives, models, logs, remote markers, endpoints, credentials, and host runtime
+manifests are never downloaded or committed.
