@@ -543,6 +543,7 @@ def _checkpoint_radiometric_policy(
                 or clipped < 0
                 or any(value < 0 for value in by_band)
                 or sum(by_band) != clipped
+                or (maximum > _SATURATION_THRESHOLD) != (clipped > 0)
             ):
                 raise CheckpointError("stage radiometric saturation values are invalid")
             maxima.append(maximum)

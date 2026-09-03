@@ -1356,6 +1356,54 @@ def test_build_checkpoint_requires_current_radiometric_policy_boundary(
         )
 
 
+@pytest.mark.parametrize("stage", ["a1", "a2"])
+@pytest.mark.parametrize(
+    ("maximum", "clipped", "by_band"),
+    [
+        (9000, 1, [1, 0, 0, 0]),
+        (11968, 0, [0, 0, 0, 0]),
+    ],
+)
+def test_build_checkpoint_rejects_inconsistent_saturation_maximum_and_count(
+    tmp_path: Path,
+    frozen_fixture_digests: None,
+    stage: str,
+    maximum: int,
+    clipped: int,
+    by_band: list[int],
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    manifest_path = _write_stage_evidence(workspace, stage)
+    result_path = manifest_path.parent / f"phase2b3a-{stage}-result.json"
+    runtime_path = manifest_path.parent / f"phase2b3a-{stage}-runtime.json"
+    result = json.loads(result_path.read_bytes())
+    result["samples"][0]["radiometric_saturation"]["lr"].update(
+        raw_crop_maximum=maximum,
+        clipped_high_count=clipped,
+        clipped_high_by_band=by_band,
+    )
+    result["radiometric_policy"] = _checkpoint_policy(result["samples"])
+    runtime = json.loads(runtime_path.read_bytes())
+    runtime["radiometric_policy"] = result["radiometric_policy"]
+    result_path.write_bytes(canonical_json(result))
+    runtime_path.write_bytes(canonical_json(runtime))
+    manifest = json.loads(manifest_path.read_bytes())
+    for target in (result_path, runtime_path):
+        entry = next(item for item in manifest["files"] if item["basename"] == target.name)
+        payload = target.read_bytes()
+        entry["size_bytes"] = len(payload)
+        entry["sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_bytes(canonical_json(manifest))
+
+    with pytest.raises(CheckpointError, match="radiometric|saturation|maximum"):
+        build_checkpoint(
+            workspace,
+            tmp_path / "out",
+            completed_stage=stage,
+            reviewed_commit="a" * 40,
+        )
+
+
 def test_build_checkpoint_never_blesses_legacy_a1_live_evidence(
     tmp_path: Path, frozen_fixture_digests: None
 ) -> None:

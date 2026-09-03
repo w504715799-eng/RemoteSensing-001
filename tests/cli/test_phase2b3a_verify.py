@@ -1046,6 +1046,8 @@ def _rewrite_bundle(
         "wrong_band_order",
         "minimum_exceeds_maximum",
         "maximum_exceeds_domain",
+        "low_maximum_with_positive_count",
+        "high_maximum_with_zero_count",
         "aggregate_mismatch",
         "runtime_policy_mismatch",
         "audit_policy_mismatch",
@@ -1077,6 +1079,24 @@ def test_radiometric_policy_and_samples_fail_closed(
         asset["raw_crop_minimum"] = asset["raw_crop_maximum"] + 1
     elif mutation == "maximum_exceeds_domain":
         asset["raw_crop_maximum"] = 32768
+    elif mutation == "low_maximum_with_positive_count":
+        asset.update(
+            raw_crop_maximum=9000,
+            clipped_high_count=1,
+            clipped_high_by_band=[1, 0, 0, 0],
+        )
+        result["radiometric_policy"] = _radiometric_policy(result["samples"])
+        payloads["runtime"]["radiometric_policy"] = result["radiometric_policy"]
+        changed = "runtime"
+    elif mutation == "high_maximum_with_zero_count":
+        asset.update(
+            raw_crop_maximum=11968,
+            clipped_high_count=0,
+            clipped_high_by_band=[0, 0, 0, 0],
+        )
+        result["radiometric_policy"] = _radiometric_policy(result["samples"])
+        payloads["runtime"]["radiometric_policy"] = result["radiometric_policy"]
+        changed = "runtime"
     elif mutation == "aggregate_mismatch":
         result["radiometric_policy"]["affected_sample_count"] += 1
     elif mutation == "runtime_policy_mismatch":

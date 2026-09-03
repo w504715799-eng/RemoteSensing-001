@@ -442,6 +442,10 @@ def _recompute_radiometric_policy(
                 raise ValueError("radiometric saturation maximum exceeds raw domain")
             if sum(by_band) != clipped:
                 raise ValueError("radiometric saturation band counts do not match total")
+            if (maximum > _SATURATION_THRESHOLD) != (clipped > 0):
+                raise ValueError(
+                    "radiometric saturation maximum and clipped count are inconsistent"
+                )
             crop_maxima.append(maximum)
             if clipped > 0:
                 affected_assets += 1
