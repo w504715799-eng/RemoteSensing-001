@@ -405,6 +405,47 @@ def _real_pair_fixture(tmp_path: Path, damage: str | None = None) -> dict[str, o
     return record
 
 
+def _saturation_pair_fixture(
+    tmp_path: Path, *, raw_out_of_range: bool = False
+) -> dict[str, object]:
+    """Build a real aligned pair with crop-local B04/B08 saturation."""
+
+    sample_id = "sample-development-saturation"
+    prefix = f"subset-v1/development/{sample_id}"
+    pair_root = tmp_path / "trustsr" / "phase2b1b" / prefix
+    lr = np.full((4, 130, 130), 5000, dtype=np.uint16)
+    hr = np.full((4, 520, 520), 5000, dtype=np.uint16)
+
+    # (0, 0) is deliberately outside both aligned crops.
+    lr[0, 0, 0] = 11968
+    hr[0, 0, 0] = 11968
+    if raw_out_of_range:
+        lr[0, 0, 0] = 32768
+
+    # The aligned LR crop starts at (1, 1), HR at (4, 4).
+    lr[0, 1, 1] = 10001
+    lr[0, 2, 2] = 11288
+    lr[3, 3, 3] = 11968
+    hr[0, 4, 4] = 10001
+    hr[0, 5, 5] = 11288
+    hr[3, 6, 6] = 11968
+
+    lr_path = pair_root / "lr.tif"
+    hr_path = pair_root / "hr.tif"
+    _write_geotiff(lr_path, lr, _LR_TRANSFORM, nodata=_FROZEN_NODATA)
+    _write_geotiff(hr_path, hr, _HR_TRANSFORM, nodata=_FROZEN_NODATA)
+    return {
+        "sample_id": sample_id,
+        "split": "development",
+        "spatial_group_id": "b" * 64,
+        "days_between": -1,
+        "correlation_bin": 0,
+        "selection_round": 1,
+        "lr_asset": _asset(lr_path, f"{prefix}/lr.tif"),
+        "hr_asset": _asset(hr_path, f"{prefix}/hr.tif"),
+    }
+
+
 def test_load_pair_center_crops_aligns_and_normalizes_without_clipping(
     tmp_path: Path,
 ) -> None:
@@ -470,3 +511,111 @@ def test_load_pair_rejects_wrong_manifest_digest_before_reading(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="frozen post-manifest SHA-256"):
         load_crosssensor_pair(tmp_path, record, manifest_sha256="0" * 64)
+
+
+def test_v2_saturates_only_aligned_crops_and_records_ordered_band_statistics(
+    tmp_path: Path,
+) -> None:
+    """Fails if v2 is removed, clips the wrong window, or reorders B04/B03/B02/B08."""
+
+    record = _saturation_pair_fixture(tmp_path)
+
+    loaded = load_crosssensor_pair(
+        tmp_path,
+        record,
+        manifest_sha256=POST_MANIFEST_SHA256,
+        normalization_policy=crosssensor_pairs.PHASE2B3A_NORMALIZATION_POLICY,
+    )
+
+    assert loaded.metadata.normalization_policy == "uint16_saturate_10000_divide_10000_v2"
+    assert loaded.pair.lr[0, 0, 0].item() == pytest.approx(1.0)
+    assert loaded.pair.lr[0, 1, 1].item() == pytest.approx(1.0)
+    assert loaded.pair.lr[3, 2, 2].item() == pytest.approx(1.0)
+    assert loaded.pair.lr[1, 0, 0].item() == pytest.approx(0.5)
+    assert loaded.pair.hr[0, 0, 0].item() == pytest.approx(1.0)
+    assert loaded.pair.hr[0, 1, 1].item() == pytest.approx(1.0)
+    assert loaded.pair.hr[3, 2, 2].item() == pytest.approx(1.0)
+    assert loaded.pair.hr[1, 0, 0].item() == pytest.approx(0.5)
+    assert loaded.metadata.lr_saturation.raw_crop_minimum == 5000
+    assert loaded.metadata.lr_saturation.raw_crop_maximum == 11968
+    assert loaded.metadata.lr_saturation.clipped_high_count == 3
+    assert loaded.metadata.lr_saturation.clipped_high_by_band == (2, 0, 0, 1)
+    assert loaded.metadata.hr_saturation.raw_crop_minimum == 5000
+    assert loaded.metadata.hr_saturation.raw_crop_maximum == 11968
+    assert loaded.metadata.hr_saturation.clipped_high_count == 3
+    assert loaded.metadata.hr_saturation.clipped_high_by_band == (2, 0, 0, 1)
+
+
+def test_v2_preserves_raw_geotiff_pixels_while_saturating_tensor_copy(tmp_path: Path) -> None:
+    """Fails if v2 clips the source array before the crop tensor is copied."""
+
+    record = _saturation_pair_fixture(tmp_path)
+
+    load_crosssensor_pair(
+        tmp_path,
+        record,
+        manifest_sha256=POST_MANIFEST_SHA256,
+        normalization_policy=crosssensor_pairs.PHASE2B3A_NORMALIZATION_POLICY,
+    )
+
+    for asset_key, index, expected in (
+        ("lr_asset", (0, 1, 1), 10001),
+        ("hr_asset", (3, 6, 6), 11968),
+    ):
+        relative_path = record[asset_key]["relative_path"]  # type: ignore[index]
+        with rasterio.open(tmp_path / "trustsr" / "phase2b1b" / relative_path) as dataset:
+            assert int(dataset.read()[index]) == expected
+
+
+def test_legacy_v1_rejects_saturated_fixture_by_default(tmp_path: Path) -> None:
+    """Fails if the historical default stops rejecting raw values above 10000."""
+
+    record = _saturation_pair_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match=r"\[0, 10000\]"):
+        load_crosssensor_pair(tmp_path, record, manifest_sha256=POST_MANIFEST_SHA256)
+
+
+def test_v2_rejects_full_raw_raster_value_above_32767_even_outside_crop(
+    tmp_path: Path,
+) -> None:
+    """Fails if v2 accepts 32768 or validates only the aligned crop."""
+
+    record = _saturation_pair_fixture(tmp_path, raw_out_of_range=True)
+
+    with pytest.raises(ValueError, match="32767"):
+        load_crosssensor_pair(
+            tmp_path,
+            record,
+            manifest_sha256=POST_MANIFEST_SHA256,
+            normalization_policy=crosssensor_pairs.PHASE2B3A_NORMALIZATION_POLICY,
+        )
+
+
+def test_loader_rejects_unknown_normalization_policy(tmp_path: Path) -> None:
+    """Fails if a typo can silently select a normalization branch."""
+
+    record = _real_pair_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match="normalization policy"):
+        load_crosssensor_pair(
+            tmp_path,
+            record,
+            manifest_sha256=POST_MANIFEST_SHA256,
+            normalization_policy="unknown-policy",
+        )
+
+
+@pytest.mark.parametrize("invalid_count", [True, np.int64(3)])
+def test_radiometric_saturation_rejects_boolean_or_numpy_statistics(
+    invalid_count: object,
+) -> None:
+    """Fails if provenance can contain non-built-in integer statistics."""
+
+    with pytest.raises(TypeError, match="built-in integers"):
+        crosssensor_pairs.RadiometricSaturation(
+            raw_crop_minimum=5000,
+            raw_crop_maximum=11968,
+            clipped_high_count=invalid_count,
+            clipped_high_by_band=(2, 0, 0, 1),
+        )

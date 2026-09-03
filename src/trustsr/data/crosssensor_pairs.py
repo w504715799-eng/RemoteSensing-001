@@ -22,8 +22,11 @@ REFLECTANCE_SCALE = 10_000.0
 RAW_DTYPE = "uint16"
 RAW_NODATA = 65_535.0
 CROP_POLICY = "center_crop_lr_1_hr_4_v1"
-NORMALIZATION_POLICY = "uint16_divide_10000_no_clip_v1"
+LEGACY_NORMALIZATION_POLICY = "uint16_divide_10000_no_clip_v1"
+PHASE2B3A_NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
+NORMALIZATION_POLICY = LEGACY_NORMALIZATION_POLICY
 NODATA_POLICY = "uint16_sentinel_65535_reject_invalid_v1"
+RAW_RADIOMETRIC_MAX = 32_767
 SMOKE_SPLITS = ("calibration", "development", "internal_test")
 SMOKE_BINS = (0, 1, 2, 3)
 DEVELOPMENT_DAYS = (-1, 0, 1)
@@ -31,6 +34,34 @@ DEVELOPMENT_BINS = (0, 1, 2, 3)
 DEVELOPMENT_ROUNDS = tuple(range(1, 11))
 _BANDS = ("B04", "B03", "B02", "B08")
 _BOUNDS_TOLERANCE_M = 1e-3
+
+
+@dataclass(frozen=True)
+class RadiometricSaturation:
+    raw_crop_minimum: int
+    raw_crop_maximum: int
+    clipped_high_count: int
+    clipped_high_by_band: tuple[int, int, int, int]
+
+    def __post_init__(self) -> None:
+        values = (
+            self.raw_crop_minimum,
+            self.raw_crop_maximum,
+            self.clipped_high_count,
+            *self.clipped_high_by_band,
+        )
+        if any(type(value) is not int for value in values):
+            raise TypeError("radiometric saturation statistics must use built-in integers")
+        if len(self.clipped_high_by_band) != len(_BANDS):
+            raise ValueError("radiometric saturation requires one count per ordered band")
+        if any(value < 0 for value in values):
+            raise ValueError("radiometric saturation statistics must be non-negative")
+        if self.raw_crop_minimum > self.raw_crop_maximum:
+            raise ValueError("radiometric saturation crop minimum exceeds maximum")
+        if self.raw_crop_maximum > RAW_RADIOMETRIC_MAX:
+            raise ValueError("radiometric saturation crop maximum exceeds 32767")
+        if self.clipped_high_count != sum(self.clipped_high_by_band):
+            raise ValueError("radiometric saturation band counts do not match total")
 
 
 @dataclass(frozen=True)
@@ -49,6 +80,8 @@ class CrosssensorPairMetadata:
     crop_bounds: tuple[float, float, float, float]
     crop_policy: str
     normalization_policy: str
+    lr_saturation: RadiometricSaturation | None = None
+    hr_saturation: RadiometricSaturation | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +96,7 @@ class _LoadedRaster:
     crop_transform: tuple[float, float, float, float, float, float]
     crop_bounds: tuple[float, float, float, float]
     asset_sha256: str
+    saturation: RadiometricSaturation | None
 
 
 def _require_unique_strings(
@@ -270,6 +304,7 @@ def _load_asset(
     storage_root: Path,
     record: Mapping[str, object],
     kind: str,
+    normalization_policy: str,
 ) -> _LoadedRaster:
     sample_id = _require_string(record, "sample_id")
     split = _require_string(record, "split")
@@ -324,8 +359,18 @@ def _load_asset(
             minimum=minimum,
             maximum=maximum,
         )
-        if minimum < 0.0 or maximum > REFLECTANCE_SCALE:
+        if minimum < 0.0:
             raise ValueError("asset raw reflectance must be in [0, 10000]")
+        if (
+            normalization_policy == LEGACY_NORMALIZATION_POLICY
+            and maximum > REFLECTANCE_SCALE
+        ):
+            raise ValueError("asset raw reflectance must be in [0, 10000]")
+        if (
+            normalization_policy == PHASE2B3A_NORMALIZATION_POLICY
+            and maximum > RAW_RADIOMETRIC_MAX
+        ):
+            raise ValueError("asset raw reflectance must be no greater than 32767")
         window = Window(1, 1, 128, 128) if kind == "lr" else Window(4, 4, 512, 512)
         row_start = int(window.row_off)
         column_start = int(window.col_off)
@@ -334,6 +379,19 @@ def _load_asset(
             row_start : row_start + int(window.height),
             column_start : column_start + int(window.width),
         ]
+        saturation = None
+        if normalization_policy == PHASE2B3A_NORMALIZATION_POLICY:
+            clipped = crop > REFLECTANCE_SCALE
+            saturation = RadiometricSaturation(
+                raw_crop_minimum=int(crop.min()),
+                raw_crop_maximum=int(crop.max()),
+                clipped_high_count=int(np.count_nonzero(clipped)),
+                clipped_high_by_band=tuple(
+                    int(np.count_nonzero(clipped[index]))
+                    for index in range(len(_BANDS))
+                ),
+            )
+            crop = np.minimum(crop, int(REFLECTANCE_SCALE))
         crop_transform = _transform_tuple(transform(window, dataset.transform))
         crop_bounds = tuple(float(value) for value in bounds(window, dataset.transform))
     return _LoadedRaster(
@@ -341,6 +399,7 @@ def _load_asset(
         crop_transform=crop_transform,
         crop_bounds=crop_bounds,
         asset_sha256=digest,
+        saturation=saturation,
     )
 
 
@@ -354,11 +413,17 @@ def load_crosssensor_pair(
     record: Mapping[str, object],
     *,
     manifest_sha256: str,
+    normalization_policy: str = LEGACY_NORMALIZATION_POLICY,
 ) -> LoadedCrosssensorPair:
     """Load, align and normalize one frozen Phase 2B1B pair."""
 
     if manifest_sha256 != POST_MANIFEST_SHA256:
         raise ValueError("expected the frozen post-manifest SHA-256")
+    if type(normalization_policy) is not str or normalization_policy not in {
+        LEGACY_NORMALIZATION_POLICY,
+        PHASE2B3A_NORMALIZATION_POLICY,
+    }:
+        raise ValueError("unknown normalization policy")
     if not isinstance(storage_root, Path) or storage_root.is_symlink() or not storage_root.is_dir():
         raise ValueError("storage_root must be an existing non-symlink directory")
     resolved_root = storage_root.resolve(strict=True)
@@ -367,8 +432,8 @@ def load_crosssensor_pair(
     if not isinstance(record, Mapping):
         raise TypeError("record must be a mapping")
 
-    lr = _load_asset(resolved_root, record, "lr")
-    hr = _load_asset(resolved_root, record, "hr")
+    lr = _load_asset(resolved_root, record, "lr", normalization_policy)
+    hr = _load_asset(resolved_root, record, "hr", normalization_policy)
     if any(
         not math.isclose(left, right, rel_tol=0.0, abs_tol=_BOUNDS_TOLERANCE_M)
         for left, right in zip(lr.crop_bounds, hr.crop_bounds, strict=True)
@@ -398,6 +463,8 @@ def load_crosssensor_pair(
         hr_crop_transform=hr.crop_transform,
         crop_bounds=lr.crop_bounds,
         crop_policy=CROP_POLICY,
-        normalization_policy=NORMALIZATION_POLICY,
+        normalization_policy=normalization_policy,
+        lr_saturation=lr.saturation,
+        hr_saturation=hr.saturation,
     )
     return LoadedCrosssensorPair(pair=pair, metadata=metadata)
