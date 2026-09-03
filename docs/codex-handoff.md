@@ -161,13 +161,12 @@ Git or become a merge source.
 
 ## Next local work
 
-1. Run the final integrated CPU tests and static gates and record the exact final `main` SHA.
-2. Obtain explicit approval or replacement of `alpha` and minimum coverage before opening real
+1. Obtain explicit approval or replacement of `alpha` and minimum coverage before opening real
    calibration data or exposing any executable scientific path.
-3. Only after approval, finish and verify the fixed formal calibration, inference-free replay,
+2. Only after approval, finish and verify the fixed formal calibration, inference-free replay,
    acceptance, and publication command surfaces without scientific override flags.
-4. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
-5. Run calibration once, replay without inference, independently verify the copied bundle, review
+3. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
+4. Run calibration once, replay without inference, independently verify the copied bundle, review
    the Git-safe publication files, and publish either `freeze_calibration` or
    `stop_insufficient_coverage` without relaxing preregistered gates.
 
@@ -200,7 +199,15 @@ git status --short --branch
 git rev-parse HEAD
 ```
 
-Final integrated/full-suite status: **PENDING FINAL COORDINATOR RUN**.
+Final integrated/full-suite status on the code plus handoff tree:
+
+- `uv run pytest -q`: passed at 100%; 43 warnings, all from the third-party TorchScript
+  deprecation warning in `torch/jit/_script.py`;
+- `uv run ruff check .`: passed;
+- `uv run python -m compileall -q src`: passed;
+- all three CLI help checks above: passed;
+- `uv build`: produced both the `trustsr-0.1.0` sdist and wheel successfully;
+- `git diff --check`: passed and the integration worktree was clean before this result update.
 
 Do not claim Phase 2B3-B complete from targeted workstream tests, metadata-only receipts, or this
 handoff draft.
