@@ -16,7 +16,10 @@ import torch
 
 from trustsr.artifacts.predictions import PredictionCache, build_identity
 from trustsr.cli import phase2b3a
-from trustsr.data.crosssensor_pairs import POST_MANIFEST_SHA256
+from trustsr.data.crosssensor_pairs import (
+    PHASE2B3A_NORMALIZATION_POLICY,
+    POST_MANIFEST_SHA256,
+)
 from trustsr.evaluation.development_predictions import build_cache_provenance
 
 
@@ -174,10 +177,26 @@ def test_resource_gate_rejects_invalid_measurements(
         )
 
 
-def _write_valid_a1_acceptance(root: Path, producer_commit: str) -> str:
+def _write_valid_a1_acceptance(
+    root: Path, producer_commit: str, *, runtime_damage: str | None = None
+) -> str:
+    radiometric_policy = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 4,
+        "affected_sample_count": 0,
+        "affected_asset_count": 0,
+        "lr_clipped_high_count": 0,
+        "hr_clipped_high_count": 0,
+        "raw_crop_maximum": 5500,
+    }
     runtime = {
-        "schema": "trustsr.phase2b3a-a1-runtime.v1",
+        "schema": "trustsr.phase2b3a-a1-runtime.v2",
         "git_commit": producer_commit,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": radiometric_policy,
         "single_repeatability_pass": True,
         "single_peak_memory_bytes": 80,
         "gpu_total_memory_bytes": 100,
@@ -188,16 +207,35 @@ def _write_valid_a1_acceptance(root: Path, producer_commit: str) -> str:
         "projected_a2_uncached_seconds": 1.0,
         "resource_gate_pass": True,
     }
+    if runtime_damage == "normalization-policy":
+        runtime["normalization_policy"] = "uint16_divide_10000_no_clip_v1"
+    elif runtime_damage == "radiometric-policy":
+        runtime["radiometric_policy"] = {
+            **radiometric_policy,
+            "affected_asset_count": 1,
+        }
+    elif runtime_damage == "boolean-radiometric-policy":
+        runtime["radiometric_policy"] = {
+            **radiometric_policy,
+            "affected_sample_count": False,
+        }
     runtime_bytes, runtime_sha256 = phase2b3a._write_runtime(
         root, phase2b3a._A1_RUNTIME, runtime
     )
     result = {
+        "schema": "trustsr.phase2b3a-development-smoke.v2",
         "sample_count": 4,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": radiometric_policy,
         "include_ldsr_variance_k5": True,
         "k5_statistically_stable": True,
         "runtime_manifest_sha256": runtime_sha256,
     }
-    audit = {"sample_count": 4}
+    audit = {
+        "schema": "trustsr.phase2b3a-development-smoke-cache-audit.v2",
+        "sample_count": 4,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+    }
     result_bytes, audit_bytes = phase2b3a._commit_pair(
         root,
         (phase2b3a._A1_RESULT, result),
@@ -276,6 +314,32 @@ def test_a1_acceptance_rejects_nonancestor_producer_commit(
     )
 
     with pytest.raises(ValueError, match="not an ancestor"):
+        phase2b3a._verify_a1_cloud_acceptance(context)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["normalization-policy", "radiometric-policy", "boolean-radiometric-policy"],
+)
+def test_a1_acceptance_rejects_runtime_policy_that_differs_from_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    _write_valid_a1_acceptance(tmp_path, "a" * 40, runtime_damage=damage)
+    monkeypatch.setattr(
+        phase2b3a.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision="b" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+
+    with pytest.raises(ValueError, match="radiometric|normalization|policy"):
         phase2b3a._verify_a1_cloud_acceptance(context)
 
 
@@ -446,9 +510,10 @@ def test_frozen_pair_loaders_touch_only_the_exact_development_count(
         lambda records: selected,
     )
 
-    def load_pair(root, record, *, manifest_sha256):
+    def load_pair(root, record, *, manifest_sha256, normalization_policy):
         assert root == tmp_path
         assert manifest_sha256 == POST_MANIFEST_SHA256
+        assert normalization_policy == PHASE2B3A_NORMALIZATION_POLICY
         loaded.append(record["split"])
         return record
 
@@ -621,26 +686,54 @@ def test_real_replay_implementation_never_constructs_models(
         "_model_factory",
         lambda args: (_ for _ in ()).throw(AssertionError("model factory called")),
     )
+    radiometric_policy = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "sample_count": 4 if phase == "a1" else 120,
+    }
     runtime_name = phase2b3a._A1_RUNTIME if phase == "a1" else phase2b3a._A2_RUNTIME
     runtime = (
-        {"schema": "a1"}
+        {
+            "schema": "trustsr.phase2b3a-a1-runtime.v2",
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            "radiometric_policy": radiometric_policy,
+        }
         if phase == "a1"
         else {
-            "schema": "a2",
+            "schema": "trustsr.phase2b3a-a2-runtime.v1",
             "git_commit": "a" * 40,
             "a1_producer_commit": "9" * 40,
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            "radiometric_policy": radiometric_policy,
         }
     )
     _, runtime_sha = phase2b3a._write_runtime(tmp_path, runtime_name, runtime)
-    result = {"scientific": True, "runtime_manifest_sha256": runtime_sha}
-    audit = {"audit": True}
+    scientific = {
+        "schema": (
+            "trustsr.phase2b3a-development-smoke.v2"
+            if phase == "a1"
+            else "trustsr.phase2b3a-development-score-audit.v1"
+        ),
+        "scientific": True,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": radiometric_policy,
+    }
+    result = {**scientific, "runtime_manifest_sha256": runtime_sha}
+    audit = {
+        "schema": (
+            "trustsr.phase2b3a-development-smoke-cache-audit.v2"
+            if phase == "a1"
+            else "trustsr.phase2b3a-development-score-cache-audit.v1"
+        ),
+        "audit": True,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+    }
     if phase == "a1":
         phase2b3a._commit_pair(
             tmp_path, (phase2b3a._A1_RESULT, result), (phase2b3a._A1_AUDIT, audit)
         )
         monkeypatch.setattr(phase2b3a, "_load_a1_pairs", lambda context, args: ())
         monkeypatch.setattr(
-            phase2b3a, "replay_a1_smoke", lambda *args: ({"scientific": True}, audit)
+            phase2b3a, "replay_a1_smoke", lambda *args: (scientific, audit)
         )
         outcome = phase2b3a.run_replay(argparse.Namespace())
         assert outcome == {"stage": "replay", "byte_identical": True}
@@ -661,11 +754,59 @@ def test_real_replay_implementation_never_constructs_models(
         monkeypatch.setattr(
             phase2b3a,
             "replay_a2_development",
-            lambda *args, **kwargs: ({"scientific": True}, audit),
+            lambda *args, **kwargs: (scientific, audit),
         )
         outcome = phase2b3a.run_development_replay(argparse.Namespace())
         assert outcome == {"stage": "development-replay", "byte_identical": True}
         assert ancestry == [(tmp_path, "9" * 40, "a" * 40)]
+
+
+def test_a2_replay_rejects_runtime_normalization_policy_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+    policy = {"normalization_policy": PHASE2B3A_NORMALIZATION_POLICY, "sample_count": 120}
+    runtime = {
+        "schema": "trustsr.phase2b3a-a2-runtime.v1",
+        "git_commit": "a" * 40,
+        "a1_producer_commit": "9" * 40,
+        "normalization_policy": "uint16_divide_10000_no_clip_v1",
+        "radiometric_policy": policy,
+    }
+    _, runtime_sha = phase2b3a._write_runtime(tmp_path, phase2b3a._A2_RUNTIME, runtime)
+    phase2b3a._commit_pair(
+        tmp_path,
+        (
+            phase2b3a._A2_RESULT,
+            {
+                "schema": "trustsr.phase2b3a-development-score-audit.v1",
+                "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+                "radiometric_policy": policy,
+                "runtime_manifest_sha256": runtime_sha,
+            },
+        ),
+        (
+            phase2b3a._A2_AUDIT,
+            {
+                "schema": "trustsr.phase2b3a-development-score-cache-audit.v1",
+                "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            },
+        ),
+    )
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(phase2b3a, "_ordered_development_sample_ids", lambda records: ())
+    monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: ())
+    monkeypatch.setattr(phase2b3a, "_require_git_ancestor", lambda *args: "9" * 40)
+
+    with pytest.raises(ValueError, match="normalization|policy"):
+        phase2b3a.run_development_replay(argparse.Namespace())
 
 
 def test_preflight_validates_everything_before_constructing_models(
@@ -740,6 +881,18 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         outcome = phase2b3a.run_single(args)
         assert outcome == {"stage": "single", "repeatability_pass": True}
     elif stage == "smoke":
+        radiometric_policy = {
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            "raw_radiometric_max": 32767,
+            "saturation_threshold": 10000,
+            "bands": ["B04", "B03", "B02", "B08"],
+            "sample_count": 4,
+            "affected_sample_count": 0,
+            "affected_asset_count": 0,
+            "lr_clipped_high_count": 0,
+            "hr_clipped_high_count": 0,
+            "raw_crop_maximum": 5500,
+        }
         pairs = tuple(
             SimpleNamespace(
                 pair=SimpleNamespace(sample_id=f"sample-{index}", lr=torch.zeros((4, 1, 1)))
@@ -775,7 +928,11 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             assert built == [
                 (pair.pair.sample_id, phase2b3a.A1_SEEDS) for pair in pairs
             ]
-            return {"include_ldsr_variance_k5": False}, {}
+            return {
+                "include_ldsr_variance_k5": False,
+                "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+                "radiometric_policy": radiometric_policy,
+            }, {}
 
         monkeypatch.setattr(phase2b3a, "_bundle_for_pair", bundle_for_pair)
         monkeypatch.setattr(
@@ -799,10 +956,56 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             ),
         )
         monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
-        monkeypatch.setattr(phase2b3a, "_existing_a2_seed_count", lambda *args: 0)
+        projection_lr = torch.full((4, 1, 1), 0.25, dtype=torch.float32)
+        projection_provenance = build_cache_provenance(
+            {"name": "ldsr-s2-x4", "seed": 3407}
+        )
+        projection_identity = build_identity(
+            projection_provenance,
+            phase2b3a._SOURCE,
+            "sample-4",
+            projection_lr,
+        )
+        PredictionCache(phase2b3a._prediction_cache_directory(tmp_path)).put(
+            projection_identity, torch.ones((4, 4, 4), dtype=torch.float32)
+        )
+        projection_loads: list[str] = []
+
+        def load_projection_pair(root, record, *, manifest_sha256, normalization_policy):
+            assert root == tmp_path
+            assert manifest_sha256 == POST_MANIFEST_SHA256
+            assert normalization_policy == PHASE2B3A_NORMALIZATION_POLICY
+            projection_loads.append(record["sample_id"])
+            return SimpleNamespace(pair=SimpleNamespace(lr=projection_lr))
+
+        monkeypatch.setattr(phase2b3a, "load_crosssensor_pair", load_projection_pair)
+        runtime_payloads: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            phase2b3a,
+            "_write_runtime",
+            lambda root, name, payload: (
+                runtime_payloads.append(payload) or (b"{}", "b" * 64)
+            ),
+        )
         outcome = phase2b3a.run_smoke(args)
         assert outcome["stage"] == "smoke" and outcome["sample_count"] == 4
+        assert runtime_payloads[0]["schema"] == "trustsr.phase2b3a-a1-runtime.v2"
+        assert runtime_payloads[0]["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+        assert runtime_payloads[0]["radiometric_policy"] == radiometric_policy
+        assert projection_loads == ["sample-4"]
     else:
+        radiometric_policy = {
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            "raw_radiometric_max": 32767,
+            "saturation_threshold": 10000,
+            "bands": ["B04", "B03", "B02", "B08"],
+            "sample_count": 120,
+            "affected_sample_count": 1,
+            "affected_asset_count": 2,
+            "lr_clipped_high_count": 8,
+            "hr_clipped_high_count": 117,
+            "raw_crop_maximum": 11968,
+        }
         pairs = tuple(
             SimpleNamespace(pair=SimpleNamespace(sample_id=f"sample-{index}"))
             for index in range(120)
@@ -848,7 +1051,10 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             assert ordered_development_sample_ids == tuple(
                 f"sample-{index}" for index in range(120)
             )
-            return {}, {}
+            return {
+                "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+                "radiometric_policy": radiometric_policy,
+            }, {}
 
         monkeypatch.setattr(phase2b3a, "_bundle_for_pair", bundle_for_pair)
         monkeypatch.setattr(phase2b3a, "evaluate_a2_development", consume_a2)
@@ -864,6 +1070,9 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         assert outcome["stage"] == "development" and outcome["sample_count"] == 120
         assert runtime_payloads[0]["git_commit"] == "a" * 40
         assert runtime_payloads[0]["a1_producer_commit"] == "d" * 40
+        assert runtime_payloads[0]["schema"] == "trustsr.phase2b3a-a2-runtime.v1"
+        assert runtime_payloads[0]["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+        assert runtime_payloads[0]["radiometric_policy"] == radiometric_policy
 
 
 def test_main_keeps_noise_out_of_canonical_stdout(
@@ -907,13 +1116,26 @@ def test_a2_bundle_manifest_atomically_replaces_completed_a1_manifest(
     phase2b3a._commit_pair(tmp_path, (phase2b3a._A2_RESULT, {}), (phase2b3a._A2_AUDIT, {}))
 
     phase2b3a._write_bundle_manifest(tmp_path, "a1")
+    a1_manifest = json.loads(
+        (directory / "phase2b3a-bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert a1_manifest["schema"] == "trustsr.phase2b3a-bundle-manifest.v2"
     phase2b3a._write_bundle_manifest(tmp_path, "a2")
 
     manifest = json.loads(
         (directory / "phase2b3a-bundle-manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest["schema"] == "trustsr.phase2b3a-bundle-manifest.v1"
     assert manifest["phase"] == "a2"
     assert all("-a2-" in item["basename"] for item in manifest["files"])
+
+
+def test_a1_replay_receipt_is_v2_while_a2_remains_v1() -> None:
+    a1 = phase2b3a._receipt("a1", b"result", b"audit", "a" * 64)
+    a2 = phase2b3a._receipt("a2", b"result", b"audit", "a" * 64)
+
+    assert a1["schema"] == "trustsr.phase2b3a-a1-replay.v2"
+    assert a2["schema"] == "trustsr.phase2b3a-a2-replay.v1"
 
 
 def test_bundle_manifest_rejects_any_evidence_file_above_five_mib(

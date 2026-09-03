@@ -17,10 +17,11 @@ from trustsr.artifacts.scores import ScoreCache, ScoreIdentity, score_entry_evid
 from trustsr.contracts import SRPair
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
-    NORMALIZATION_POLICY,
+    PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
     CrosssensorPairMetadata,
     LoadedCrosssensorPair,
+    RadiometricSaturation,
 )
 from trustsr.evaluation import development_predictions, development_score_audit
 from trustsr.evaluation.development_predictions import (
@@ -82,7 +83,9 @@ def _small_loaded_pair(correlation_bin: int) -> LoadedCrosssensorPair:
             hr_crop_transform=(2.5, 0.0, 10.0, 0.0, -2.5, -10.0),
             crop_bounds=(10.0, -30.0, 40.0, -10.0),
             crop_policy=CROP_POLICY,
-            normalization_policy=NORMALIZATION_POLICY,
+            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
+            lr_saturation=RadiometricSaturation(4000, 4000, 0, (0, 0, 0, 0)),
+            hr_saturation=RadiometricSaturation(3500, 5500, 0, (0, 0, 0, 0)),
         ),
     )
 
@@ -291,6 +294,10 @@ def test_a1_result_has_hand_controlled_stability_and_distinct_r9_r1(
 
     assert result["schema"] == A1_RESULT_SCHEMA
     assert audit["schema"] == A1_CACHE_AUDIT_SCHEMA
+    assert A1_RESULT_SCHEMA == "trustsr.phase2b3a-development-smoke.v2"
+    assert A1_CACHE_AUDIT_SCHEMA == "trustsr.phase2b3a-development-smoke-cache-audit.v2"
+    assert result["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+    assert audit["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
     assert result["sample_count"] == audit["sample_count"] == 4
     assert result["prediction_count"] == audit["prediction_count"] == 108
     assert result["score_count"] == audit["score_count"] == 20
@@ -330,6 +337,52 @@ def test_a1_result_has_hand_controlled_stability_and_distinct_r9_r1(
     prohibited_keys = {"host", "hostname", "path", "runtime", "timestamp", "gpu", "cuda"}
     assert not prohibited_keys.intersection(str(key).lower() for key in _all_keys(result))
     assert not prohibited_keys.intersection(str(key).lower() for key in _all_keys(audit))
+
+
+def test_a1_serializes_known_saturation_and_builds_literal_aggregate(
+    tmp_path: Path,
+) -> None:
+    pairs, bundles = _a1_inputs()
+    object.__setattr__(
+        pairs[0].metadata,
+        "lr_saturation",
+        RadiometricSaturation(208, 11968, 8, (4, 0, 0, 4)),
+    )
+    object.__setattr__(
+        pairs[0].metadata,
+        "hr_saturation",
+        RadiometricSaturation(208, 11968, 117, (56, 0, 0, 61)),
+    )
+
+    result, audit = evaluate_a1_smoke(pairs, bundles, ScoreCache(tmp_path))
+
+    assert result["samples"][0]["radiometric_saturation"] == {
+        "lr": {
+            "raw_crop_minimum": 208,
+            "raw_crop_maximum": 11968,
+            "clipped_high_count": 8,
+            "clipped_high_by_band": [4, 0, 0, 4],
+        },
+        "hr": {
+            "raw_crop_minimum": 208,
+            "raw_crop_maximum": 11968,
+            "clipped_high_count": 117,
+            "clipped_high_by_band": [56, 0, 0, 61],
+        },
+    }
+    assert result["radiometric_policy"] == {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 4,
+        "affected_sample_count": 1,
+        "affected_asset_count": 2,
+        "lr_clipped_high_count": 8,
+        "hr_clipped_high_count": 117,
+        "raw_crop_maximum": 11968,
+    }
+    assert "radiometric_saturation" not in audit
 
 
 def _all_keys(value: object):
@@ -445,6 +498,7 @@ def test_a1_stability_threshold_boundaries_use_hand_controlled_maps() -> None:
         "wrong-round",
         "duplicate-sample",
         "duplicate-group",
+        "missing-saturation",
     ],
 )
 def test_a1_rejects_any_noncanonical_four_roi_input(tmp_path: Path, damage: str) -> None:
@@ -464,10 +518,11 @@ def test_a1_rejects_any_noncanonical_four_roi_input(tmp_path: Path, damage: str)
             "wrong-round": ("selection_round", 2),
             "duplicate-sample": ("sample_id", pairs[1].metadata.sample_id),
             "duplicate-group": ("spatial_group_id", pairs[1].metadata.spatial_group_id),
+            "missing-saturation": ("lr_saturation", None),
         }[damage]
         object.__setattr__(pairs[0].metadata, field, value)
 
-    with pytest.raises(ValueError, match="four|canonical|development|identit|spatial"):
+    with pytest.raises(ValueError, match="four|canonical|development|identit|spatial|saturation"):
         evaluate_a1_smoke(pairs, bundles, ScoreCache(tmp_path))
 
 
@@ -583,6 +638,52 @@ def test_a1_replay_rejects_mutated_schema_order_bin_seed_key_hash_or_count(
         audit["score_entries"].pop()
 
     with pytest.raises((ValueError, RuntimeError), match="A1|cache|committed|audit|result"):
+        replay_a1_smoke(pairs, result, audit, prediction_cache, score_cache)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "negative-count",
+        "wrong-band-length",
+        "wrong-band-total",
+        "boolean-integer",
+        "minimum-above-maximum",
+        "maximum-out-of-domain",
+        "inconsistent-aggregate",
+        "boolean-aggregate",
+        "wrong-result-policy",
+        "wrong-audit-policy",
+    ],
+)
+def test_a1_replay_rejects_malformed_or_inconsistent_radiometric_evidence(
+    tmp_path: Path, target: str
+) -> None:
+    pairs, result, audit, prediction_cache, score_cache = _committed_a1(tmp_path)
+    result, audit = deepcopy(result), deepcopy(audit)
+    lr = result["samples"][0]["radiometric_saturation"]["lr"]
+    if target == "negative-count":
+        lr["clipped_high_count"] = -1
+    elif target == "wrong-band-length":
+        lr["clipped_high_by_band"] = [0, 0, 0]
+    elif target == "wrong-band-total":
+        lr["clipped_high_count"] = 1
+    elif target == "boolean-integer":
+        lr["raw_crop_minimum"] = True
+    elif target == "minimum-above-maximum":
+        lr["raw_crop_minimum"] = 4001
+    elif target == "maximum-out-of-domain":
+        lr["raw_crop_maximum"] = 32768
+    elif target == "inconsistent-aggregate":
+        result["radiometric_policy"]["affected_sample_count"] = 1
+    elif target == "boolean-aggregate":
+        result["radiometric_policy"]["affected_sample_count"] = False
+    elif target == "wrong-result-policy":
+        result["normalization_policy"] = "uint16_divide_10000_no_clip_v1"
+    else:
+        audit["normalization_policy"] = "uint16_divide_10000_no_clip_v1"
+
+    with pytest.raises((TypeError, ValueError), match="radiometric|normalization|policy"):
         replay_a1_smoke(pairs, result, audit, prediction_cache, score_cache)
 
 
@@ -711,7 +812,9 @@ def _small_a2_pair(day: int, bin_index: int, round_index: int) -> LoadedCrosssen
             hr_crop_transform=pair.metadata.hr_crop_transform,
             crop_bounds=pair.metadata.crop_bounds,
             crop_policy=CROP_POLICY,
-            normalization_policy=NORMALIZATION_POLICY,
+            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
+            lr_saturation=RadiometricSaturation(4000, 4000, 0, (0, 0, 0, 0)),
+            hr_saturation=RadiometricSaturation(3500, 5500, 0, (0, 0, 0, 0)),
         ),
     )
 
@@ -781,6 +884,22 @@ def test_a2_freezes_only_from_exact_complete_development_set(committed_a2) -> No
     pairs, result, audit, _, _ = committed_a2
 
     assert result["schema"] == A2_RESULT_SCHEMA
+    assert A2_RESULT_SCHEMA == "trustsr.phase2b3a-development-score-audit.v1"
+    assert A2_CACHE_AUDIT_SCHEMA == "trustsr.phase2b3a-development-score-cache-audit.v1"
+    assert result["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+    assert audit["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+    assert result["radiometric_policy"] == {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 120,
+        "affected_sample_count": 0,
+        "affected_asset_count": 0,
+        "lr_clipped_high_count": 0,
+        "hr_clipped_high_count": 0,
+        "raw_crop_maximum": 5500,
+    }
     assert result["sample_count"] == 120
     assert result["statistical_unit"] == "roi"
     assert result["bootstrap"] == {
@@ -802,6 +921,8 @@ def test_a2_freezes_only_from_exact_complete_development_set(committed_a2) -> No
     assert audit["schema"] == A2_CACHE_AUDIT_SCHEMA
     assert audit["sample_count"] == len(pairs) == 120
     assert len(audit["groups"]) == 120
+    assert all("radiometric_saturation" in sample for sample in result["samples"])
+    assert all("radiometric_saturation" not in group for group in audit["groups"])
 
 
 def test_a2_rejects_synchronized_pair_bundle_reversal_against_authoritative_ids(
@@ -1133,6 +1254,7 @@ def test_a2_r1_only_perturbation_changes_sensitivity_but_not_frozen_selection(
         "reordered-bundle",
         "calibration",
         "broken-stratum",
+        "missing-saturation",
     ],
 )
 def test_a2_rejects_incomplete_leaky_or_mismatched_membership_before_cache_access(
@@ -1156,6 +1278,8 @@ def test_a2_rejects_incomplete_leaky_or_mismatched_membership_before_cache_acces
         bundles[0], bundles[1] = bundles[1], bundles[0]
     elif damage == "calibration":
         object.__setattr__(pairs[0].metadata, "split", "calibration")
+    elif damage == "missing-saturation":
+        object.__setattr__(pairs[0].metadata, "hr_saturation", None)
     else:
         object.__setattr__(pairs[-1].metadata, "selection_round", 9)
 
@@ -1164,7 +1288,9 @@ def test_a2_rejects_incomplete_leaky_or_mismatched_membership_before_cache_acces
 
     monkeypatch.setattr(PredictionCache, "get", prohibited)
     monkeypatch.setattr(ScoreCache, "get", prohibited)
-    with pytest.raises(ValueError, match="120|unique|bundle|development|strat|identit"):
+    with pytest.raises(
+        ValueError, match="120|unique|bundle|development|strat|identit|saturation"
+    ):
         evaluate_a2_development(
             pairs,
             bundles,
@@ -1323,6 +1449,8 @@ def test_a2_replay_recomputes_bootstrap_selection(
         "score-file-sha",
         "score-config",
         "code-revision",
+        "normalization-policy",
+        "radiometric-aggregate",
     ],
 )
 def test_a2_replay_rejects_mutated_commitment_or_cache_identity(
@@ -1352,10 +1480,16 @@ def test_a2_replay_rejects_mutated_commitment_or_cache_identity(
         audit["groups"][0]["score_entries"][0]["files"][0]["sha256"] = "0" * 64
     elif target == "score-config":
         result["score_configuration"]["lr_reprojection_l1"]["scale"] = 2
+    elif target == "normalization-policy":
+        audit["normalization_policy"] = "uint16_divide_10000_no_clip_v1"
+    elif target == "radiometric-aggregate":
+        result["radiometric_policy"]["affected_asset_count"] = 1
     else:
         result["code_revision"] = "e" * 40
 
-    with pytest.raises((ValueError, RuntimeError), match="A2|cache|committed|rebuilt"):
+    with pytest.raises(
+        (ValueError, RuntimeError), match="A2|cache|committed|rebuilt|radiometric"
+    ):
         replay_a2_development(
             pairs,
             result,

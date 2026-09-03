@@ -24,9 +24,11 @@ from trustsr.artifacts.scores import (
 )
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
-    NORMALIZATION_POLICY,
+    PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
+    RAW_RADIOMETRIC_MAX,
     LoadedCrosssensorPair,
+    RadiometricSaturation,
 )
 from trustsr.evaluation import score_selection
 from trustsr.evaluation.crosssensor_smoke import (
@@ -58,8 +60,8 @@ from trustsr.risk.proxies import (
     three_model_disagreement_score,
 )
 
-A1_RESULT_SCHEMA = "trustsr.phase2b3a-development-smoke.v1"
-A1_CACHE_AUDIT_SCHEMA = "trustsr.phase2b3a-development-smoke-cache-audit.v1"
+A1_RESULT_SCHEMA = "trustsr.phase2b3a-development-smoke.v2"
+A1_CACHE_AUDIT_SCHEMA = "trustsr.phase2b3a-development-smoke-cache-audit.v2"
 A2_RESULT_SCHEMA = "trustsr.phase2b3a-development-score-audit.v1"
 A2_CACHE_AUDIT_SCHEMA = "trustsr.phase2b3a-development-score-cache-audit.v1"
 A2_SCORE_NAMES = (
@@ -89,6 +91,125 @@ _STABILITY_THRESHOLDS = {
     "k5a_k25_worst_minimum": 0.60,
     "k5a_k25_top10_jaccard_median_minimum": 0.50,
 }
+_UNSET = object()
+
+
+def _serialize_radiometric_saturation(
+    pair: LoadedCrosssensorPair,
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for name, saturation in (
+        ("lr", pair.metadata.lr_saturation),
+        ("hr", pair.metadata.hr_saturation),
+    ):
+        if not isinstance(saturation, RadiometricSaturation):
+            raise ValueError("Phase 2B3-A pairs require radiometric saturation records")
+        result[name] = {
+            "raw_crop_minimum": saturation.raw_crop_minimum,
+            "raw_crop_maximum": saturation.raw_crop_maximum,
+            "clipped_high_count": saturation.clipped_high_count,
+            "clipped_high_by_band": list(saturation.clipped_high_by_band),
+        }
+    return result
+
+
+def _build_radiometric_policy(
+    sample_records: Sequence[Mapping[str, object]],
+    *,
+    expected_sample_count: int,
+    claimed_policy: object = _UNSET,
+) -> dict[str, object]:
+    if type(expected_sample_count) is not int or expected_sample_count < 1:
+        raise ValueError("radiometric policy sample count is invalid")
+    if len(sample_records) != expected_sample_count:
+        raise ValueError("radiometric policy sample count is inconsistent")
+    lr_total = 0
+    hr_total = 0
+    affected_samples = 0
+    affected_assets = 0
+    crop_maxima: list[int] = []
+    for sample in sample_records:
+        if not isinstance(sample, Mapping):
+            raise ValueError("radiometric sample record is invalid")
+        saturation = sample.get("radiometric_saturation")
+        if not isinstance(saturation, dict) or set(saturation) != {"lr", "hr"}:
+            raise ValueError("radiometric saturation record is invalid")
+        sample_affected = False
+        for asset_name in ("lr", "hr"):
+            asset = saturation[asset_name]
+            if not isinstance(asset, dict) or set(asset) != {
+                "raw_crop_minimum",
+                "raw_crop_maximum",
+                "clipped_high_count",
+                "clipped_high_by_band",
+            }:
+                raise ValueError("radiometric saturation asset record is invalid")
+            minimum = asset["raw_crop_minimum"]
+            maximum = asset["raw_crop_maximum"]
+            clipped = asset["clipped_high_count"]
+            by_band = asset["clipped_high_by_band"]
+            if any(type(value) is not int for value in (minimum, maximum, clipped)):
+                raise ValueError("radiometric saturation values must be built-in integers")
+            if (
+                not isinstance(by_band, list)
+                or len(by_band) != 4
+                or any(type(value) is not int for value in by_band)
+            ):
+                raise ValueError("radiometric saturation requires four built-in band counts")
+            if (
+                minimum < 0
+                or maximum < 0
+                or clipped < 0
+                or any(value < 0 for value in by_band)
+            ):
+                raise ValueError("radiometric saturation values must be non-negative")
+            if minimum > maximum:
+                raise ValueError("radiometric saturation minimum exceeds maximum")
+            if maximum > RAW_RADIOMETRIC_MAX:
+                raise ValueError("radiometric saturation maximum exceeds the raw domain")
+            if clipped != sum(by_band):
+                raise ValueError("radiometric saturation band counts do not match total")
+            crop_maxima.append(maximum)
+            if clipped > 0:
+                affected_assets += 1
+                sample_affected = True
+            if asset_name == "lr":
+                lr_total += clipped
+            else:
+                hr_total += clipped
+        affected_samples += int(sample_affected)
+    result = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": RAW_RADIOMETRIC_MAX,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": expected_sample_count,
+        "affected_sample_count": affected_samples,
+        "affected_asset_count": affected_assets,
+        "lr_clipped_high_count": lr_total,
+        "hr_clipped_high_count": hr_total,
+        "raw_crop_maximum": max(crop_maxima),
+    }
+    if claimed_policy is not _UNSET:
+        integer_keys = {
+            "raw_radiometric_max",
+            "saturation_threshold",
+            "sample_count",
+            "affected_sample_count",
+            "affected_asset_count",
+            "lr_clipped_high_count",
+            "hr_clipped_high_count",
+            "raw_crop_maximum",
+        }
+        if (
+            not isinstance(claimed_policy, dict)
+            or set(claimed_policy) != set(result)
+            or any(type(claimed_policy.get(key)) is not int for key in integer_keys)
+            or not isinstance(claimed_policy.get("bands"), list)
+            or claimed_policy != result
+        ):
+            raise ValueError("radiometric policy aggregate is invalid")
+    return result
 
 
 @dataclass(frozen=True)
@@ -120,8 +241,15 @@ def _validate_pair(pair: LoadedCrosssensorPair, *, expected_bin: int | None = No
         raise ValueError("A1 pair and metadata identities differ")
     if pair.pair.source != f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}":
         raise ValueError("A1 pair has the wrong source identity")
-    if metadata.crop_policy != CROP_POLICY or metadata.normalization_policy != NORMALIZATION_POLICY:
+    if (
+        metadata.crop_policy != CROP_POLICY
+        or metadata.normalization_policy != PHASE2B3A_NORMALIZATION_POLICY
+    ):
         raise ValueError("A1 pair has the wrong input policy")
+    if not isinstance(metadata.lr_saturation, RadiometricSaturation) or not isinstance(
+        metadata.hr_saturation, RadiometricSaturation
+    ):
+        raise ValueError("A1 pair requires radiometric saturation records")
 
 
 def _validate_prediction_tensor(
@@ -153,6 +281,8 @@ def _validate_prediction_tensor(
         or provenance.get("experiment_schema") != PREDICTION_EXPERIMENT_SCHEMA
         or provenance.get("post_manifest_sha256") != POST_MANIFEST_SHA256
         or provenance.get("input_audit_sha256") != INPUT_AUDIT_SHA256
+        or provenance.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
     ):
         raise ValueError("A1 prediction provenance is invalid")
     if expected_seed is None:
@@ -392,6 +522,7 @@ def _evaluate_a1_sample_from_scores(
         "lr_tensor_sha256": tensor_sha256(pair.pair.lr),
         "hr_tensor_sha256": tensor_sha256(pair.pair.hr),
         "central_prediction_sha256": central.prediction_sha256,
+        "radiometric_saturation": _serialize_radiometric_saturation(pair),
         "risks": {
             "primary": {
                 "name": "local_l1_risk",
@@ -439,6 +570,10 @@ def _a1_result_payload(
 ) -> dict[str, object]:
     return {
         "schema": A1_RESULT_SCHEMA,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": _build_radiometric_policy(
+            sample_records, expected_sample_count=4
+        ),
         "dataset_role": "development_engineering_smoke_only",
         "upstream": {
             "post_manifest_sha256": POST_MANIFEST_SHA256,
@@ -524,6 +659,7 @@ def _score_and_prediction_evidence_payload(
     return {
         "schema": A1_CACHE_AUDIT_SCHEMA,
         "experiment_schema": A1_RESULT_SCHEMA,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "sample_count": 4,
@@ -584,6 +720,13 @@ def _require_committed_structure(
         raise ValueError("committed A1 audit schema is invalid")
     if committed_audit.get("experiment_schema") != A1_RESULT_SCHEMA:
         raise ValueError("committed A1 audit experiment schema is invalid")
+    if (
+        committed_result.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+        or committed_audit.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+    ):
+        raise ValueError("committed A1 normalization policy is invalid")
     for payload, label in (
         (committed_result, "result"),
         (committed_audit, "audit"),
@@ -597,6 +740,11 @@ def _require_committed_structure(
     samples = committed_result.get("samples")
     if not isinstance(samples, list) or len(samples) != 4:
         raise ValueError("committed A1 result samples are invalid")
+    _build_radiometric_policy(
+        samples,
+        expected_sample_count=4,
+        claimed_policy=committed_result.get("radiometric_policy"),
+    )
     prediction_entries = committed_audit.get("prediction_entries")
     score_entries = committed_audit.get("score_entries")
     if not isinstance(prediction_entries, list) or len(prediction_entries) != 108:
@@ -692,6 +840,8 @@ def _committed_identities(
             not isinstance(sample, dict)
             or sample.get("sample_id") != pair.pair.sample_id
             or sample.get("correlation_bin") != bin_index
+            or sample.get("radiometric_saturation")
+            != _serialize_radiometric_saturation(pair)
         ):
             raise ValueError("committed A1 result sample order/bin is invalid")
     prediction_entries = committed_audit["prediction_entries"]
@@ -1035,9 +1185,13 @@ def _validate_a2_pair(pair: LoadedCrosssensorPair) -> None:
         raise ValueError("A2 pair has the wrong source identity")
     if (
         metadata.crop_policy != CROP_POLICY
-        or metadata.normalization_policy != NORMALIZATION_POLICY
+        or metadata.normalization_policy != PHASE2B3A_NORMALIZATION_POLICY
     ):
         raise ValueError("A2 pair has the wrong input policy")
+    if not isinstance(metadata.lr_saturation, RadiometricSaturation) or not isinstance(
+        metadata.hr_saturation, RadiometricSaturation
+    ):
+        raise ValueError("A2 pair requires radiometric saturation records")
 
 
 def _validate_a2_structure(
@@ -1330,6 +1484,10 @@ def _a2_result_and_audit(
     }
     result: dict[str, object] = {
         "schema": A2_RESULT_SCHEMA,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": _build_radiometric_policy(
+            sample_records, expected_sample_count=120
+        ),
         "dataset_role": "development_score_selection_only",
         "upstream": {
             "post_manifest_sha256": POST_MANIFEST_SHA256,
@@ -1365,6 +1523,7 @@ def _a2_result_and_audit(
     audit: dict[str, object] = {
         "schema": A2_CACHE_AUDIT_SCHEMA,
         "experiment_schema": A2_RESULT_SCHEMA,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "code_revision": code_revision,
@@ -1456,6 +1615,7 @@ def evaluate_a2_development(
                 "lr_tensor_sha256": tensor_sha256(pair.pair.lr),
                 "hr_tensor_sha256": tensor_sha256(pair.pair.hr),
                 "central_prediction_sha256": central.prediction_sha256,
+                "radiometric_saturation": _serialize_radiometric_saturation(pair),
                 "risks": {
                     "primary_window_9": tensor_sha256(primary_risk),
                     "sensitivity_window_1": tensor_sha256(sensitivity_risk),
@@ -1513,6 +1673,13 @@ def _validate_a2_committed_structure(
         raise ValueError("committed A2 audit schema is invalid")
     if committed_audit.get("experiment_schema") != A2_RESULT_SCHEMA:
         raise ValueError("committed A2 audit experiment schema is invalid")
+    if (
+        committed_result.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+        or committed_audit.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+    ):
+        raise ValueError("committed A2 normalization policy is invalid")
     include = committed_result.get("include_ldsr_variance_k5")
     names = _a2_candidate_names(include)  # type: ignore[arg-type]
     revision = _validate_code_revision(committed_result.get("code_revision"))
@@ -1581,6 +1748,11 @@ def _validate_a2_committed_structure(
     groups = committed_audit.get("groups")
     if not isinstance(samples, list) or len(samples) != 120:
         raise ValueError("committed A2 result must contain exactly 120 samples")
+    _build_radiometric_policy(
+        samples,
+        expected_sample_count=120,
+        claimed_policy=committed_result.get("radiometric_policy"),
+    )
     if not isinstance(groups, list) or len(groups) != 120:
         raise ValueError("committed A2 audit must contain exactly 120 groups")
     prediction_count = 120 * len(_a2_prediction_slots(include))
@@ -1608,6 +1780,10 @@ def _validate_a2_committed_structure(
             sample.get("selection_round"),
         ) != expected:
             raise ValueError("committed A2 result sample order/membership is invalid")
+        if sample.get("radiometric_saturation") != _serialize_radiometric_saturation(
+            pair
+        ):
+            raise ValueError("committed A2 sample radiometric saturation is invalid")
         if not isinstance(group, dict) or (
             group.get("sample_id"),
             group.get("spatial_group_id"),
@@ -1678,6 +1854,8 @@ def _a2_canonical_prediction_identities(
                 or provenance.get("experiment_schema") != PREDICTION_EXPERIMENT_SCHEMA
                 or provenance.get("post_manifest_sha256") != POST_MANIFEST_SHA256
                 or provenance.get("input_audit_sha256") != INPUT_AUDIT_SHA256
+                or provenance.get("normalization_policy")
+                != PHASE2B3A_NORMALIZATION_POLICY
                 or (seed is None and "seed" in provenance)
                 or (seed is not None and provenance.get("seed") != seed)
             ):
@@ -1946,6 +2124,7 @@ def replay_a2_development(
                 "lr_tensor_sha256": tensor_sha256(pair.pair.lr),
                 "hr_tensor_sha256": tensor_sha256(pair.pair.hr),
                 "central_prediction_sha256": central.prediction_sha256,
+                "radiometric_saturation": _serialize_radiometric_saturation(pair),
                 "risks": {
                     "primary_window_9": tensor_sha256(primary_risk),
                     "sensitivity_window_1": tensor_sha256(sensitivity_risk),

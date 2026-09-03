@@ -12,15 +12,17 @@ import torch
 from trustsr.artifacts.predictions import (
     CacheIntegrityError,
     PredictionCache,
+    build_identity,
     tensor_sha256,
 )
 from trustsr.contracts import SRPair
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
-    NORMALIZATION_POLICY,
+    PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
     CrosssensorPairMetadata,
     LoadedCrosssensorPair,
+    RadiometricSaturation,
 )
 from trustsr.evaluation.crosssensor_smoke import INPUT_AUDIT_SHA256
 from trustsr.evaluation.development_predictions import (
@@ -57,7 +59,9 @@ def _loaded_development_pair() -> LoadedCrosssensorPair:
             hr_crop_transform=(2.5, 0.0, 10.0, 0.0, -2.5, -10.0),
             crop_bounds=(10.0, -30.0, 40.0, -10.0),
             crop_policy=CROP_POLICY,
-            normalization_policy=NORMALIZATION_POLICY,
+            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
+            lr_saturation=RadiometricSaturation(2500, 2500, 0, (0, 0, 0, 0)),
+            hr_saturation=RadiometricSaturation(5000, 5000, 0, (0, 0, 0, 0)),
         ),
     )
 
@@ -214,12 +218,31 @@ def test_prediction_identities_bind_model_seed_and_frozen_input_context(tmp_path
         "experiment_schema": "trustsr.phase2b3a-predictions.v1",
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
     }
     assert seed_provenance["seed"] == 3408
     assert bundle.ldsr[0].identity.key != bundle.ldsr[1].identity.key
     assert bundle.bicubic.identity.source == pair.pair.source
     assert bundle.bicubic.identity.sample_id == pair.pair.sample_id
     assert bundle.bicubic.identity.lr_sha256 == tensor_sha256(pair.pair.lr)
+
+
+def test_prediction_cache_identity_invalidates_legacy_policy_provenance(
+    tmp_path: Path,
+) -> None:
+    bundle = _generate(tmp_path)
+    current = dict(bundle.bicubic.identity.model_provenance)
+    legacy = dict(current)
+    legacy["normalization_policy"] = "uint16_divide_10000_no_clip_v1"
+
+    legacy_identity = build_identity(
+        legacy,
+        bundle.bicubic.identity.source,
+        bundle.bicubic.identity.sample_id,
+        _loaded_development_pair().pair.lr,
+    )
+
+    assert legacy_identity.key != bundle.bicubic.identity.key
 
 
 def test_fixed_seed_constants_are_disjoint_where_required() -> None:
@@ -310,6 +333,8 @@ def test_prediction_grid_rejects_seed_view_with_wrong_seed_provenance(tmp_path: 
         ("sample_id", "other-sample"),
         ("crop_policy", "wrong"),
         ("normalization_policy", "wrong"),
+        ("lr_saturation", None),
+        ("hr_saturation", None),
     ],
 )
 def test_prediction_grid_rejects_non_development_or_unfrozen_metadata(
@@ -332,6 +357,7 @@ def test_cache_provenance_rejects_every_reserved_context_collision() -> None:
         ("experiment_schema", "trustsr.phase2b3a-predictions.v1"),
         ("post_manifest_sha256", POST_MANIFEST_SHA256),
         ("input_audit_sha256", INPUT_AUDIT_SHA256),
+        ("normalization_policy", PHASE2B3A_NORMALIZATION_POLICY),
     ):
         with pytest.raises(ValueError, match="reserved"):
             build_cache_provenance({"name": "bicubic-x4", "scale": 4, key: value})

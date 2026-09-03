@@ -41,6 +41,7 @@ from trustsr.cli.phase2b2b import (
     _validate_upstream,
 )
 from trustsr.data.crosssensor_pairs import (
+    PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
     LoadedCrosssensorPair,
     load_crosssensor_pair,
@@ -55,6 +56,10 @@ from trustsr.evaluation.development_predictions import (
     load_or_generate_prediction_bundle,
 )
 from trustsr.evaluation.development_score_audit import (
+    A1_CACHE_AUDIT_SCHEMA,
+    A1_RESULT_SCHEMA,
+    A2_CACHE_AUDIT_SCHEMA,
+    A2_RESULT_SCHEMA,
     evaluate_a1_smoke,
     evaluate_a2_development,
     replay_a1_smoke,
@@ -310,6 +315,7 @@ def _load_pairs(
             context.root,
             record,
             manifest_sha256=args.selection_manifest_sha256,
+            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
         )
         for record in records
     )
@@ -768,7 +774,10 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         if sample_id in loaded_lr:
             return loaded_lr[sample_id]
         return load_crosssensor_pair(
-            context.root, record, manifest_sha256=args.selection_manifest_sha256
+            context.root,
+            record,
+            manifest_sha256=args.selection_manifest_sha256,
+            normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
         ).pair.lr
 
     existing = _existing_a2_seed_count(
@@ -785,8 +794,10 @@ def run_smoke(args: argparse.Namespace) -> dict[str, object]:
         durations = [float(value) for value in single["uncached_ldsr_prediction_seconds"]]
     projection = _project_a2_uncached_seconds(durations, missing_seed_predictions=missing)
     runtime = {
-        "schema": "trustsr.phase2b3a-a1-runtime.v1",
+        "schema": "trustsr.phase2b3a-a1-runtime.v2",
         "git_commit": context.code_revision,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": result["radiometric_policy"],
         "single_repeatability_pass": True,
         "single_peak_memory_bytes": single["single_peak_memory_bytes"],
         "gpu_total_memory_bytes": single["gpu_total_memory_bytes"],
@@ -820,6 +831,35 @@ def _verify_runtime_reference(result: Mapping[str, object], runtime_bytes: bytes
     return runtime_sha256
 
 
+def _validate_runtime_policy(
+    result: Mapping[str, object],
+    audit: Mapping[str, object],
+    runtime: Mapping[str, object],
+    *,
+    phase: str,
+) -> None:
+    expected = (
+        (A1_RESULT_SCHEMA, A1_CACHE_AUDIT_SCHEMA, "trustsr.phase2b3a-a1-runtime.v2")
+        if phase == "a1"
+        else (A2_RESULT_SCHEMA, A2_CACHE_AUDIT_SCHEMA, "trustsr.phase2b3a-a2-runtime.v1")
+    )
+    if (
+        result.get("schema") != expected[0]
+        or audit.get("schema") != expected[1]
+        or runtime.get("schema") != expected[2]
+        or result.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+        or audit.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+        or runtime.get("normalization_policy")
+        != PHASE2B3A_NORMALIZATION_POLICY
+        or not isinstance(result.get("radiometric_policy"), dict)
+        or canonical_json(runtime.get("radiometric_policy"))
+        != canonical_json(result.get("radiometric_policy"))
+    ):
+        raise ValueError(f"{phase.upper()} runtime radiometric policy is invalid")
+
+
 def _receipt(
     phase: str,
     result_bytes: bytes,
@@ -827,7 +867,7 @@ def _receipt(
     runtime_sha256: str,
 ) -> dict[str, object]:
     return {
-        "schema": f"trustsr.phase2b3a-{phase}-replay.v1",
+        "schema": f"trustsr.phase2b3a-{phase}-replay.{'v2' if phase == 'a1' else 'v1'}",
         "byte_identical": True,
         "result_sha256": _sha256(result_bytes),
         "cache_audit_sha256": _sha256(audit_bytes),
@@ -856,7 +896,11 @@ def _write_bundle_manifest(root: Path, phase: str) -> None:
             raise ValueError("bundle evidence file exceeds the 5 MiB limit")
         files.append({"basename": name, "size_bytes": len(payload), "sha256": _sha256(payload)})
     manifest = {
-        "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+        "schema": (
+            "trustsr.phase2b3a-bundle-manifest.v2"
+            if phase == "a1"
+            else "trustsr.phase2b3a-bundle-manifest.v1"
+        ),
         "phase": phase,
         "files": files,
     }
@@ -882,7 +926,8 @@ def _run_a1_replay(args: argparse.Namespace) -> dict[str, object]:
     (result_bytes, result), (audit_bytes, audit) = _read_committed_pair(
         context.root, _A1_RESULT, _A1_AUDIT
     )
-    runtime_bytes, _ = _read_canonical(directory / _A1_RUNTIME)
+    runtime_bytes, runtime = _read_canonical(directory / _A1_RUNTIME)
+    _validate_runtime_policy(result, audit, runtime, phase="a1")
     runtime_sha256 = _verify_runtime_reference(result, runtime_bytes)
     scientific_result = dict(result)
     scientific_result.pop("runtime_manifest_sha256")
@@ -917,6 +962,7 @@ def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str, str]
     runtime_bytes, runtime = _read_canonical(directory / _A1_RUNTIME)
     _, replay = _read_canonical(directory / _A1_REPLAY)
     runtime_sha256 = _verify_runtime_reference(result, runtime_bytes)
+    _validate_runtime_policy(result, audit, runtime, phase="a1")
     peak = runtime.get("single_peak_memory_bytes")
     total = runtime.get("gpu_total_memory_bytes")
     free = runtime.get("persistent_free_bytes")
@@ -955,6 +1001,7 @@ def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str, str]
         result.get("sample_count") != 4
         or audit.get("sample_count") != 4
         or replay.get("byte_identical") is not True
+        or replay.get("schema") != "trustsr.phase2b3a-a1-replay.v2"
         or replay.get("result_sha256") != _sha256(result_bytes)
         or replay.get("cache_audit_sha256") != _sha256(audit_bytes)
         or replay.get("runtime_manifest_sha256") != runtime_sha256
@@ -993,6 +1040,8 @@ def run_development(args: argparse.Namespace) -> dict[str, object]:
     runtime = {
         "schema": "trustsr.phase2b3a-a2-runtime.v1",
         "git_commit": context.code_revision,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": result["radiometric_policy"],
         "a1_acceptance_pass": True,
         "a1_producer_commit": a1_producer_commit,
         "a1_replay_sha256": a1_replay_sha256,
@@ -1019,6 +1068,7 @@ def _run_a2_replay(args: argparse.Namespace) -> dict[str, object]:
     )
     runtime_bytes, runtime = _read_canonical(directory / _A2_RUNTIME)
     runtime_sha256 = _verify_runtime_reference(result, runtime_bytes)
+    _validate_runtime_policy(result, audit, runtime, phase="a2")
     if runtime.get("git_commit") != context.code_revision:
         raise ValueError("A2 runtime commit does not match the reviewed checkout")
     _require_git_ancestor(

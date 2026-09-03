@@ -20,9 +20,10 @@ from trustsr.data.crosssensor_pairs import (
     DEVELOPMENT_BINS,
     DEVELOPMENT_DAYS,
     DEVELOPMENT_ROUNDS,
-    NORMALIZATION_POLICY,
+    PHASE2B3A_NORMALIZATION_POLICY,
     POST_MANIFEST_SHA256,
     LoadedCrosssensorPair,
+    RadiometricSaturation,
 )
 from trustsr.evaluation.crosssensor_smoke import INPUT_AUDIT_SHA256
 from trustsr.models.protocols import JsonScalar, SRModel
@@ -36,6 +37,7 @@ _CONTEXT_KEYS = (
     "experiment_schema",
     "post_manifest_sha256",
     "input_audit_sha256",
+    "normalization_policy",
 )
 
 
@@ -77,6 +79,7 @@ def build_cache_provenance(
             "experiment_schema": EXPERIMENT_SCHEMA,
             "post_manifest_sha256": POST_MANIFEST_SHA256,
             "input_audit_sha256": INPUT_AUDIT_SHA256,
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
         }
     )
     return result
@@ -97,9 +100,13 @@ def _validate_pair(loaded: LoadedCrosssensorPair) -> LoadedCrosssensorPair:
         raise ValueError("development pair has the wrong source identity")
     if (
         metadata.crop_policy != CROP_POLICY
-        or metadata.normalization_policy != NORMALIZATION_POLICY
+        or metadata.normalization_policy != PHASE2B3A_NORMALIZATION_POLICY
     ):
         raise ValueError("development pair has the wrong input policy")
+    if not isinstance(metadata.lr_saturation, RadiometricSaturation) or not isinstance(
+        metadata.hr_saturation, RadiometricSaturation
+    ):
+        raise ValueError("development pair requires radiometric saturation records")
     if (
         metadata.days_between not in DEVELOPMENT_DAYS
         or metadata.correlation_bin not in DEVELOPMENT_BINS
