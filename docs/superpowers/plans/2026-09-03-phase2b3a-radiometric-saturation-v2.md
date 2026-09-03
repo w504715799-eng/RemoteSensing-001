@@ -257,8 +257,8 @@ git status --short --branch
 - [ ] **Step 2: Review provenance and sensitive strings**
 
 ```bash
-rg -n -i 'password|passwd|token|private.key|ghp_|fj01-ssh|30264|ssh root@' \
-  src tests scripts docs artifacts
+: "${PHASE2B3A_SENSITIVE_PATTERN:?set from untracked operator context}"
+rg -n -i "$PHASE2B3A_SENSITIVE_PATTERN" src tests scripts docs artifacts
 git diff --stat HEAD~4..HEAD
 ```
 

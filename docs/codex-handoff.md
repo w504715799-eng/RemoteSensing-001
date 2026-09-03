@@ -141,18 +141,22 @@ prerequisites for A2.
 
 ## Local integration status and gates
 
-The versioned loader, Phase 2B3-A policy selection, cache identity, sample evidence, and aggregate
-evidence have focused unit coverage on their implementation branches. Offline-verifier,
-checkpoint-boundary, guarded-reset, pull-script, and documentation changes are being integrated in
-separate worktrees. Treat none of them as deployable until the coordinator has inspected and
-cherry-picked their commits in dependency order.
+The versioned loader, online provenance, offline verifier, checkpoint boundary, guarded reset,
+phase-aware pull, artifact allowlist, tests, and documentation were inspected and cherry-picked into
+local `main` through `ab91134e9d3e2234b9d74337a491ed219f424107`. The implementation commits were
+reviewed independently; all Critical and Important findings were fixed and scoped re-reviews passed.
 
-To keep the delayed cycle moving, use focused tests for each isolated change and one integrated
-local acceptance pass before deployment. At minimum, the integrated gate must cover the changed
-loader, online stage, replay, offline verifier, checkpoint, reset, and pull boundaries; Ruff, shell
-syntax, CLI help, `git diff --check`, a clean status, and a sensitive-string scan must also pass.
-An independent final review must resolve every Critical or Important finding. Record the final
-reviewed commit only after these gates pass.
+One integrated full pytest run reached 100%. Its only failures were five script-wrapper fixtures
+that still emitted legacy/placeholder checkpoint evidence; production validation correctly rejected
+them. The test-only repair updated those fixtures to A1-v2 and A2-v1-with-v2-policy, after which the
+exact five failed nodes passed. The final static gate passed Ruff, every Phase 2B3-A shell syntax
+check, CLI help checks, `git diff --check`, and the clean integration status before this handoff-only
+update. The active connection-token scan had no repository matches after removing those literals
+from the tracked plan command.
+
+Do not deploy until the final whole-branch read-only review has passed and the resulting exact local
+commit has been pushed. That final documentation-only commit will descend from the implementation
+checkpoint above; use the actual pushed SHA, never this prose, as the deployment identity.
 
 ## Stop conditions and remaining risks
 
