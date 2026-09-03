@@ -7,8 +7,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-PHASE2B3A_CALCULATION_REVISION = "58694420c3c0e11d495953a1963c71b997261601"
-PHASE2B3A_EVIDENCE_PUBLICATION = "b386d4b38c9f3725107eed178829955d442f5601"
+from trustsr.evaluation.phase2b3b_evidence import (
+    PRODUCER_REVISION as PHASE2B3A_CALCULATION_REVISION,
+)
+from trustsr.evaluation.phase2b3b_evidence import (
+    PUBLICATION_COMMIT as PHASE2B3A_EVIDENCE_PUBLICATION,
+)
 
 _REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
 _GIT_TIMEOUT_SECONDS = 10.0
