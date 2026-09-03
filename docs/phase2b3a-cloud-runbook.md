@@ -451,6 +451,16 @@ phase2b3a_replay development-replay
 
 Benchmark `workers=1`, `2`, `3`, and `4`; record elapsed time and peak GPU memory for each isolated
 run. Promote a worker count only when every per-prediction SHA matches the one-worker baseline,
-the replay remains byte-identical, and measured GPU memory retains operational headroom. Prefer
-four workers when all gates pass; if four is unsafe, fall back to three. Keep one worker as the
-compatibility default and use it whenever no benchmarked parallel count passes every gate.
+the replay remains byte-identical, measured GPU memory retains operational headroom, and wall-clock
+time improves. Prefer four workers when all gates pass; if four is unsafe or slower, fall back to a
+smaller measured candidate. Keep one worker as the compatibility default and use it whenever no
+benchmarked parallel count passes every gate.
+
+The first RTX 4090 measurement at `b444c2d64bb4bc512a2b3bc06e04e16af07df612` used four workers.
+It completed `development` in `1831` seconds, peaked at `22687 MiB` and `100%` GPU utilization, and
+completed `development-replay` in `412` seconds with `byte_identical=true`. Its audit retained the
+exact baseline membership and counts (`120` samples, `840` predictions, and `360` scores); every
+cache-audit field except the expected `code_revision`, including all per-prediction SHA groups, was
+identical to the published one-worker baseline. Four workers therefore pass the memory and
+scientific-equivalence gates but are not promoted because they did not improve end-to-end elapsed
+time. The operational default remains one worker.
