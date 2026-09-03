@@ -25,6 +25,7 @@ SELECTION_BYTES = b'{"fixture":"selection"}\n'
 INPUT_AUDIT_BYTES = b'{"fixture":"input-audit"}\n'
 SELECTION_DIGEST = hashlib.sha256(SELECTION_BYTES).hexdigest()
 INPUT_AUDIT_DIGEST = hashlib.sha256(INPUT_AUDIT_BYTES).hexdigest()
+NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
 EVIDENCE = {
     stage: tuple(
         f"phase2b3a-{stage}-{suffix}.json"
@@ -32,6 +33,81 @@ EVIDENCE = {
     )
     for stage in ("a1", "a2")
 }
+
+
+def _saturation(
+    *, maximum: int = 9000, clipped: int = 0, by_band: list[int] | None = None
+) -> dict[str, object]:
+    return {
+        "raw_crop_minimum": 100,
+        "raw_crop_maximum": maximum,
+        "clipped_high_count": clipped,
+        "clipped_high_by_band": [0, 0, 0, 0] if by_band is None else by_band,
+    }
+
+
+def _stage_documents(stage: str) -> dict[str, dict[str, object]]:
+    sample_count = 4 if stage == "a1" else 120
+    samples = [
+        {
+            "radiometric_saturation": {
+                "lr": _saturation(),
+                "hr": _saturation(),
+            }
+        }
+        for _ in range(sample_count)
+    ]
+    if stage == "a2":
+        samples[0]["radiometric_saturation"] = {
+            "lr": _saturation(maximum=11968, clipped=8, by_band=[4, 0, 0, 4]),
+            "hr": _saturation(
+                maximum=11968, clipped=117, by_band=[56, 0, 0, 61]
+            ),
+        }
+    policy = {
+        "normalization_policy": NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": sample_count,
+        "affected_sample_count": 0 if stage == "a1" else 1,
+        "affected_asset_count": 0 if stage == "a1" else 2,
+        "lr_clipped_high_count": 0 if stage == "a1" else 8,
+        "hr_clipped_high_count": 0 if stage == "a1" else 117,
+        "raw_crop_maximum": 9000 if stage == "a1" else 11968,
+    }
+    schemas = {
+        "a1": (
+            "trustsr.phase2b3a-development-smoke.v2",
+            "trustsr.phase2b3a-development-smoke-cache-audit.v2",
+            "trustsr.phase2b3a-a1-runtime.v2",
+            "trustsr.phase2b3a-a1-replay.v2",
+        ),
+        "a2": (
+            "trustsr.phase2b3a-development-score-audit.v1",
+            "trustsr.phase2b3a-development-score-cache-audit.v1",
+            "trustsr.phase2b3a-a2-runtime.v1",
+            "trustsr.phase2b3a-a2-replay.v1",
+        ),
+    }
+    result_schema, audit_schema, runtime_schema, replay_schema = schemas[stage]
+    documents = (
+        {
+            "schema": result_schema,
+            "normalization_policy": NORMALIZATION_POLICY,
+            "radiometric_policy": policy,
+            "sample_count": sample_count,
+            "samples": samples,
+        },
+        {"schema": audit_schema, "normalization_policy": NORMALIZATION_POLICY},
+        {
+            "schema": runtime_schema,
+            "normalization_policy": NORMALIZATION_POLICY,
+            "radiometric_policy": policy,
+        },
+        {"schema": replay_schema, "byte_identical": True},
+    )
+    return dict(zip(EVIDENCE[stage], documents, strict=True))
 
 
 def _make_executable(path: Path, body: str) -> None:
@@ -65,11 +141,18 @@ def _write_workspace(workspace: Path, stage: str, *, corrupt: str | None = None)
     )
     if stage == "a0":
         return phase_root
-    payloads = {name: _canonical({"name": name, "phase": stage}) for name in EVIDENCE[stage]}
+    payloads = {
+        name: _canonical(document)
+        for name, document in _stage_documents(stage).items()
+    }
     for name, payload in payloads.items():
         (result / name).write_bytes(payload)
     manifest = {
-        "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+        "schema": (
+            "trustsr.phase2b3a-bundle-manifest.v2"
+            if stage == "a1"
+            else "trustsr.phase2b3a-bundle-manifest.v1"
+        ),
         "phase": stage,
         "files": [
             {
