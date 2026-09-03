@@ -23,6 +23,87 @@ from trustsr.data.crosssensor_pairs import (
 from trustsr.evaluation.development_predictions import build_cache_provenance
 
 
+def _spawn_write_marker(path: Path, marker: str) -> None:
+    path.write_text(marker, encoding="utf-8")
+
+
+def _spawn_fail(_path: Path, _marker: str) -> None:
+    raise RuntimeError("worker failed")
+
+
+def _stage_argv(stage: str) -> list[str]:
+    argv = [
+        stage,
+        "--storage-root",
+        ".",
+        "--selection-manifest",
+        "selection.json",
+        "--selection-manifest-sha256",
+        "a" * 64,
+        "--input-audit",
+        "audit.json",
+        "--input-audit-sha256",
+        "b" * 64,
+    ]
+    if stage not in {"replay", "development-replay"}:
+        argv.extend(
+            [
+                "--sen2srlite-model-dir",
+                "sen2",
+                "--ldsr-model-dir",
+                "ldsr",
+            ]
+        )
+    return [*argv, "--project-root", ".", "--reviewed-commit", "c" * 40]
+
+
+def test_development_parser_defaults_to_one_ldsr_worker_and_accepts_four() -> None:
+    parser = phase2b3a.build_parser()
+
+    assert parser.parse_args(_stage_argv("development")).ldsr_workers == 1
+    assert (
+        parser.parse_args([*_stage_argv("development"), "--ldsr-workers", "4"]).ldsr_workers
+        == 4
+    )
+
+
+@pytest.mark.parametrize("workers", ["0", "5", "1.5"])
+def test_development_parser_rejects_invalid_ldsr_worker_count(workers: str) -> None:
+    with pytest.raises(SystemExit):
+        phase2b3a.build_parser().parse_args(
+            [*_stage_argv("development"), "--ldsr-workers", workers]
+        )
+
+
+@pytest.mark.parametrize("stage", [stage for stage in phase2b3a.STAGES if stage != "development"])
+def test_non_development_stages_reject_ldsr_workers(stage: str) -> None:
+    with pytest.raises(SystemExit):
+        phase2b3a.build_parser().parse_args([*_stage_argv(stage), "--ldsr-workers", "2"])
+
+
+def test_development_worker_shards_are_disjoint_complete_and_deterministic() -> None:
+    assert phase2b3a._worker_shards(tuple(range(10)), 3) == (
+        (0, 3, 6, 9),
+        (1, 4, 7),
+        (2, 5, 8),
+    )
+
+
+def test_spawn_workers_run_every_shard_in_independent_processes(tmp_path: Path) -> None:
+    arguments = tuple((tmp_path / f"worker-{index}", str(index)) for index in range(3))
+
+    phase2b3a._run_spawn_workers(_spawn_write_marker, arguments)
+
+    assert tuple(path.read_text(encoding="utf-8") for path, _ in arguments) == ("0", "1", "2")
+
+
+def test_spawn_worker_failure_fails_closed(tmp_path: Path) -> None:
+    arguments = ((tmp_path / "never-written", "unused"),)
+
+    with pytest.raises(RuntimeError, match="prediction cache prewarm worker failed"):
+        phase2b3a._run_spawn_workers(_spawn_fail, arguments)
+
+
 def test_parser_exposes_only_frozen_stages_and_no_arbitrary_selection() -> None:
     parser = phase2b3a.build_parser()
     subparsers = [
@@ -969,7 +1050,10 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
     monkeypatch.setattr(phase2b3a, "_validate_models", lambda models: None)
     monkeypatch.setattr(phase2b3a, "_write_runtime", lambda *args: (b"{}", "b" * 64))
     monkeypatch.setattr(phase2b3a, "_commit_pair", lambda *args: (b"{}", b"{}"))
-    args = argparse.Namespace(selection_manifest_sha256=POST_MANIFEST_SHA256)
+    args = argparse.Namespace(
+        selection_manifest_sha256=POST_MANIFEST_SHA256,
+        ldsr_workers=3 if stage == "development" and include_k5 else 1,
+    )
 
     if stage == "single":
         lr = torch.zeros((4, 2, 2), dtype=torch.float32)
@@ -1110,13 +1194,39 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
             "raw_crop_maximum": 11968,
         }
         pairs = tuple(
-            SimpleNamespace(pair=SimpleNamespace(sample_id=f"sample-{index}"))
+            SimpleNamespace(
+                pair=SimpleNamespace(
+                    sample_id=f"sample-{index}",
+                    lr=torch.zeros((4, 1, 1), dtype=torch.float32),
+                )
+            )
             for index in range(120)
         )
         monkeypatch.setattr(
             phase2b3a,
             "_verify_a1_cloud_acceptance",
             lambda context: (include_k5, "c" * 64, "d" * 40),
+        )
+        prewarm_events: list[tuple[tuple[int, ...], int]] = []
+        warm_identity = build_identity(
+            build_cache_provenance({"name": "bicubic-x4", "scale": 4}),
+            phase2b3a._SOURCE,
+            "sample-0",
+            pairs[0].pair.lr,
+        )
+
+        def prewarm(context, args, seeds, workers):
+            del args
+            prewarm_events.append((seeds, workers))
+            PredictionCache(phase2b3a._prediction_cache_directory(context.root)).put(
+                warm_identity,
+                torch.ones((4, 4, 4), dtype=torch.float32),
+            )
+
+        monkeypatch.setattr(
+            phase2b3a,
+            "_prewarm_development_cache",
+            prewarm,
         )
         monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
         monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: pairs)
@@ -1126,7 +1236,11 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         built = []
 
         def bundle_for_pair(pair, models, seeds, cache):
-            del models, cache
+            del models
+            if args.ldsr_workers > 1:
+                assert prewarm_events == [(seeds, args.ldsr_workers)]
+                if pair.pair.sample_id == "sample-0":
+                    assert cache.get(warm_identity) is not None
             sample_id = pair.pair.sample_id
             built.append((sample_id, seeds))
             return sample_id, seeds
@@ -1176,6 +1290,9 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         assert runtime_payloads[0]["schema"] == "trustsr.phase2b3a-a2-runtime.v1"
         assert runtime_payloads[0]["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
         assert runtime_payloads[0]["radiometric_policy"] == radiometric_policy
+        assert prewarm_events == (
+            [(phase2b3a.K5A_SEEDS, 3)] if include_k5 else []
+        )
 
 
 def test_main_keeps_noise_out_of_canonical_stdout(

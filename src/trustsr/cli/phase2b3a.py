@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import shutil
 import stat
@@ -141,6 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler in zip(STAGES, handlers, strict=True):
         child = subparsers.add_parser(name)
         _add_arguments(child, include_models=name not in {"replay", "development-replay"})
+        if name == "development":
+            child.add_argument("--ldsr-workers", type=int, choices=range(1, 5), default=1)
         child.set_defaults(handler=handler)
     return parser
 
@@ -402,6 +405,95 @@ def _one_shot_bundles(
         bundle = _bundle_for_pair(pair, models, seeds, cache)
         yield bundle
         del bundle
+
+
+def _worker_shards(items: Sequence[Any], workers: int) -> tuple[tuple[Any, ...], ...]:
+    if type(workers) is not int or workers < 1 or workers > 4:
+        raise ValueError("LDSR worker count must be an integer from 1 through 4")
+    return tuple(tuple(items[index::workers]) for index in range(workers))
+
+
+def _run_spawn_workers(
+    target: Any,
+    arguments: Sequence[tuple[Any, ...]],
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    processes: list[Any] = []
+    try:
+        for index, worker_arguments in enumerate(arguments):
+            process = context.Process(
+                target=target,
+                args=worker_arguments,
+                name=f"phase2b3a-prediction-cache-{index}",
+            )
+            process.start()
+            processes.append(process)
+        for process in processes:
+            process.join()
+    except BaseException:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join()
+        raise
+    failed = tuple(process.name for process in processes if process.exitcode != 0)
+    if failed:
+        raise RuntimeError(
+            "prediction cache prewarm worker failed: " + ", ".join(failed)
+        )
+
+
+def _prewarm_development_shard(
+    root: Path,
+    records: tuple[dict[str, object], ...],
+    selection_manifest_sha256: str,
+    sen2srlite_model_dir: Path,
+    ldsr_model_dir: Path,
+    seeds: tuple[int, ...],
+) -> None:
+    with redirect_stdout(sys.stderr):
+        worker_args = argparse.Namespace(
+            selection_manifest_sha256=selection_manifest_sha256,
+            sen2srlite_model_dir=sen2srlite_model_dir,
+            ldsr_model_dir=ldsr_model_dir,
+        )
+        pairs = tuple(
+            load_crosssensor_pair(
+                root,
+                record,
+                manifest_sha256=selection_manifest_sha256,
+                normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
+            )
+            for record in records
+        )
+        models = _model_factory(worker_args)
+        _validate_models(models)
+        cache = PredictionCache(_prediction_cache_directory(root))
+        for _bundle in _one_shot_bundles(pairs, models, seeds, cache):
+            pass
+
+
+def _prewarm_development_cache(
+    context: _StageContext,
+    args: argparse.Namespace,
+    seeds: tuple[int, ...],
+    workers: int,
+) -> None:
+    selected = select_development_records(context.records)
+    shards = _worker_shards(selected, workers)
+    arguments = tuple(
+        (
+            context.root,
+            tuple(dict(record) for record in shard),
+            args.selection_manifest_sha256,
+            Path(args.sen2srlite_model_dir),
+            Path(args.ldsr_model_dir),
+            seeds,
+        )
+        for shard in shards
+    )
+    _run_spawn_workers(_prewarm_development_shard, arguments)
 
 
 def _sha256(payload: bytes) -> str:
@@ -1021,12 +1113,17 @@ def run_development(args: argparse.Namespace) -> dict[str, object]:
     context = _preflight_context(args, capture_hardware=True)
     include, a1_replay_sha256, a1_producer_commit = _verify_a1_cloud_acceptance(context)
     ordered_ids = _ordered_development_sample_ids(context.records)
+    workers = getattr(args, "ldsr_workers", 1)
+    if type(workers) is not int or workers < 1 or workers > 4:
+        raise ValueError("LDSR worker count must be an integer from 1 through 4")
+    seeds = K5A_SEEDS if include else (3407,)
+    if workers > 1:
+        _prewarm_development_cache(context, args, seeds, workers)
     pairs = _load_a2_pairs(context, args)
     models = _model_factory(args)
     _validate_models(models)
     prediction_cache = PredictionCache(_prediction_cache_directory(context.root))
     score_cache = ScoreCache(_score_cache_directory(context.root))
-    seeds = K5A_SEEDS if include else (3407,)
     bundles = _one_shot_bundles(pairs, models, seeds, prediction_cache)
     result, audit = evaluate_a2_development(
         pairs,
