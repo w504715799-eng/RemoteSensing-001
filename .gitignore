@@ -17,6 +17,9 @@ __pycache__/
 !/artifacts/phase2b3a/sen2naipv2-development-smoke-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v1.json
+!/artifacts/phase2b3a/sen2naipv2-development-smoke-v2.json
+!/artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v2.json
+!/artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v2.json
 !/artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
