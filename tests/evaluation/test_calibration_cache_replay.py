@@ -28,7 +28,11 @@ from trustsr.data.crosssensor_pairs import (
 )
 from trustsr.evaluation.calibration_cache_audit import build_calibration_cache_audit
 from trustsr.evaluation.calibration_cache_replay import ReplayInputs, replay_calibration_caches
-from trustsr.evaluation.calibration_maps import load_or_compute_calibration_maps
+from trustsr.evaluation.calibration_maps import (
+    CachedCalibrationScore,
+    CalibrationMaps,
+    load_or_compute_calibration_maps,
+)
 from trustsr.evaluation.calibration_predictions import (
     MODEL_NAME,
     SEEDS,
@@ -154,3 +158,31 @@ def test_replay_rejects_pair_order_and_risk_mismatches(tmp_path: Path) -> None:
         replay_calibration_caches(
             audit, (changed_pair, *pairs[1:]), prediction_cache, score_cache
         )
+
+
+def test_replay_inputs_rejects_same_sample_with_a_different_k5_identity(tmp_path: Path) -> None:
+    audit, pairs, prediction_cache, score_cache = _prepared(tmp_path)
+    replayed = replay_calibration_caches(audit, pairs, prediction_cache, score_cache)
+    expected_bundle = replayed.bundles[0]
+    foreign_maps = replayed.maps[1]
+    sample_id = expected_bundle.sample_id
+    foreign_identity = replace(foreign_maps.score.identity, sample_id=sample_id)
+    forged_score = CachedCalibrationScore(
+        name=foreign_maps.score.name,
+        identity=foreign_identity,
+        score_sha256=foreign_maps.score.score_sha256,
+        tensor=foreign_maps.score.tensor,
+    )
+    forged_maps = CalibrationMaps(
+        sample_id=sample_id,
+        score=forged_score,
+        score_prediction_sha256s=foreign_maps.score_prediction_sha256s,
+        risk_name=foreign_maps.risk_name,
+        risk_window=foreign_maps.risk_window,
+        risk_sha256=foreign_maps.risk_sha256,
+        risk=foreign_maps.risk,
+    )
+    maps = (forged_maps, *replayed.maps[1:])
+
+    with pytest.raises(ValueError, match="prediction|LR|source|bundle"):
+        ReplayInputs(bundles=replayed.bundles, maps=maps)

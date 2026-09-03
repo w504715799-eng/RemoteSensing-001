@@ -60,6 +60,16 @@ class ReplayInputs:
             maps.__post_init__()
             if bundle.sample_id != maps.sample_id:
                 raise ValueError("replay bundle and maps order differs")
+            prediction_sha256s = tuple(item.prediction_sha256 for item in bundle.items)
+            if maps.score_prediction_sha256s != prediction_sha256s:
+                raise ValueError("replay maps prediction digests differ from the K5 bundle")
+            first_identity = bundle.items[0].identity
+            parameters = maps.score.identity.operator_parameters
+            if (
+                parameters.get("lr_sha256") != first_identity.lr_sha256
+                or parameters.get("source") != first_identity.source
+            ):
+                raise ValueError("replay maps score LR identity differs from the K5 bundle")
         sample_ids = tuple(bundle.sample_id for bundle in self.bundles)
         if len(set(sample_ids)) != CALIBRATION_SIZE:
             raise ValueError("replay inputs require unique calibration sample identities")
