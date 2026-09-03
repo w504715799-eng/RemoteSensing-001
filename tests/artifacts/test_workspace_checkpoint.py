@@ -49,6 +49,11 @@ EXPECTED_MEMBER_NAMES = [
     "trustsr/phase2b3a",
     "trustsr/phase2b3a/cache-z.bin",
     "trustsr/phase2b3a/cache.bin",
+    "trustsr/phase2b3a/logs",
+    "trustsr/phase2b3a/logs/preflight.jsonl",
+    "trustsr/phase2b3a/results",
+    f"trustsr/phase2b3a/results/{POST_SHA256}",
+    f"trustsr/phase2b3a/results/{POST_SHA256}/phase2b3a-preflight-runtime.json",
 ]
 PHASE_EVIDENCE_FILES = {
     stage: tuple(
@@ -76,7 +81,27 @@ def _valid_workspace(workspace: Path) -> Path:
     cache.mkdir(parents=True)
     (cache / "cache.bin").write_bytes(b"cache")
     (cache / "cache-z.bin").write_bytes(b"cache-z")
+    _write_preflight_evidence(workspace)
     return workspace
+
+
+def _write_preflight_evidence(
+    workspace: Path,
+    *,
+    producer_commit: str = "a" * 40,
+    include_log: bool = True,
+    include_runtime: bool = True,
+) -> None:
+    if include_log:
+        log_directory = workspace / "trustsr/phase2b3a/logs"
+        log_directory.mkdir(parents=True, exist_ok=True)
+        (log_directory / "preflight.jsonl").write_bytes(b'{"stage":"preflight"}\n')
+    if include_runtime:
+        result_directory = workspace / "trustsr/phase2b3a/results" / POST_SHA256
+        result_directory.mkdir(parents=True, exist_ok=True)
+        (result_directory / "phase2b3a-preflight-runtime.json").write_bytes(
+            canonical_json({"git_commit": producer_commit})
+        )
 
 
 def _write_stage_evidence(workspace: Path, stage: str) -> Path:
@@ -137,8 +162,6 @@ def _stage_evidence_members(
         }
     )
     return [
-        _tar_directory("trustsr/phase2b3a/results"),
-        _tar_directory(result_root),
         *[
             _tar_file(f"{result_root}/{name}", payloads[name])
             for name in sorted(payloads)
@@ -206,6 +229,19 @@ def _minimal_checkpoint_members() -> list[tuple[tarfile.TarInfo, bytes]]:
             INPUT_AUDIT_BYTES,
         ),
         _tar_directory("trustsr/phase2b3a"),
+        _tar_directory("trustsr/phase2b3a/logs"),
+        _tar_file(
+            "trustsr/phase2b3a/logs/preflight.jsonl", b'{"stage":"preflight"}\n'
+        ),
+        _tar_directory("trustsr/phase2b3a/results"),
+        _tar_directory(f"trustsr/phase2b3a/results/{POST_SHA256}"),
+        _tar_file(
+            (
+                f"trustsr/phase2b3a/results/{POST_SHA256}/"
+                "phase2b3a-preflight-runtime.json"
+            ),
+            canonical_json({"git_commit": "a" * 40}),
+        ),
     ]
 
 
@@ -1153,6 +1189,52 @@ def test_build_checkpoint_requires_digest_bound_stage_evidence(
     assert verify_checkpoint(built.archive_path, built.manifest_path) == built.manifest
 
 
+@pytest.mark.parametrize("missing", ["both", "log", "runtime"])
+def test_build_resumable_checkpoint_requires_complete_preflight_evidence(
+    tmp_path: Path, frozen_fixture_digests: None, missing: str
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    if missing in {"both", "log"}:
+        (workspace / "trustsr/phase2b3a/logs/preflight.jsonl").unlink()
+    if missing in {"both", "runtime"}:
+        (
+            workspace
+            / "trustsr/phase2b3a/results"
+            / POST_SHA256
+            / "phase2b3a-preflight-runtime.json"
+        ).unlink()
+
+    with pytest.raises(CheckpointError, match="preflight"):
+        build_checkpoint(
+            workspace,
+            tmp_path / "out",
+            completed_stage="a0",
+            reviewed_commit="a" * 40,
+        )
+
+
+def test_build_resumable_checkpoint_binds_preflight_runtime_to_reviewed_commit(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    workspace = _valid_workspace(tmp_path / "workspace")
+    _write_stage_evidence(workspace, "a1")
+    runtime = (
+        workspace
+        / "trustsr/phase2b3a/results"
+        / POST_SHA256
+        / "phase2b3a-preflight-runtime.json"
+    )
+    runtime.write_bytes(canonical_json({"git_commit": "b" * 40}))
+
+    with pytest.raises(CheckpointError, match="producer commit"):
+        build_checkpoint(
+            workspace,
+            tmp_path / "out",
+            completed_stage="a1",
+            reviewed_commit="a" * 40,
+        )
+
+
 def test_build_checkpoint_rejects_missing_stage_evidence_before_archive_open(
     tmp_path: Path, frozen_fixture_digests: None
 ) -> None:
@@ -1244,6 +1326,31 @@ def test_restore_checkpoint_publishes_only_after_full_validation(
         (path.stat().st_mode & 0o777) == (0o700 if path.is_dir() else 0o600)
         for path in [restored, *restored.rglob("*")]
     )
+
+
+def test_restore_rejects_legacy_resumable_checkpoint_without_preflight_before_publish(
+    tmp_path: Path, frozen_fixture_digests: None
+) -> None:
+    members = [
+        item
+        for item in _minimal_checkpoint_members()
+        if not item[0].name.endswith(("preflight.jsonl", "phase2b3a-preflight-runtime.json"))
+    ]
+    persistent = tmp_path / "persistent"
+    _, manifest_path = _write_tar_checkpoint(persistent, members, completed_stage="a0")
+    live = tmp_path / "new-session"
+    live.mkdir()
+
+    with pytest.raises(CheckpointError, match="preflight"):
+        restore_checkpoint(
+            persistent,
+            manifest_path.name,
+            live,
+            expected_reviewed_commit="a" * 40,
+        )
+
+    assert not (live / "trustsr").exists()
+    assert not any(path.name.startswith(".phase2b3a-restore.") for path in live.iterdir())
 
 
 @pytest.mark.parametrize("kind", ["nonempty", "empty", "symlink"])

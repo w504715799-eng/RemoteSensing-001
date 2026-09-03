@@ -1359,6 +1359,7 @@ def _verify_a2_result_audit_runtime_replay(
             "schema",
             "git_commit",
             "a1_acceptance_pass",
+            "a1_producer_commit",
             "a1_replay_sha256",
             "sample_count",
         },
@@ -1572,6 +1573,8 @@ def _verify_a2_result_audit_runtime_replay(
     if (
         runtime.get("a1_acceptance_pass") is not True
         or runtime.get("sample_count") != 120
+        or type(runtime.get("a1_producer_commit")) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", runtime["a1_producer_commit"]) is None
         or not _is_sha(runtime.get("a1_replay_sha256"))
     ):
         raise ValueError("A2 runtime acceptance evidence is invalid")

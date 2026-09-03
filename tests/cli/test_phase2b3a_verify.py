@@ -545,6 +545,7 @@ def _write_bundle(root: Path, phase: str) -> dict[str, dict[str, object]]:
             "schema": "trustsr.phase2b3a-a2-runtime.v1",
             "git_commit": "a" * 40,
             "a1_acceptance_pass": True,
+            "a1_producer_commit": "9" * 40,
             "a1_replay_sha256": _digest(b"a1-replay"),
             "sample_count": 120,
         }
@@ -652,6 +653,26 @@ def test_valid_bundle_writes_exact_canonical_acceptance(
     acceptance = getattr(phase2b3a_verify, f"verify_{phase}_bundle")(bundle)
     assert phase2b3a_verify.main([phase, "--bundle", str(bundle), "--output", str(output)]) == 0
     assert output.read_bytes() == canonical_json(acceptance)
+
+
+def test_a2_verifier_rejects_noncanonical_a1_producer_commit(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    payloads = _write_bundle(bundle, "a2")
+    runtime_path = bundle / "phase2b3a-a2-runtime.json"
+    result_path = bundle / "phase2b3a-a2-result.json"
+    replay_path = bundle / "phase2b3a-a2-replay.json"
+    payloads["runtime"]["a1_producer_commit"] = "A" * 40
+    runtime_path.write_bytes(canonical_json(payloads["runtime"]))
+    payloads["result"]["runtime_manifest_sha256"] = _digest(runtime_path.read_bytes())
+    result_path.write_bytes(canonical_json(payloads["result"]))
+    payloads["replay"]["runtime_manifest_sha256"] = _digest(runtime_path.read_bytes())
+    payloads["replay"]["result_sha256"] = _digest(result_path.read_bytes())
+    replay_path.write_bytes(canonical_json(payloads["replay"]))
+    for path in (runtime_path, result_path, replay_path):
+        _refresh_manifest(bundle / "phase2b3a-bundle-manifest.json", path)
+
+    with pytest.raises(ValueError, match="acceptance evidence"):
+        phase2b3a_verify.verify_a2_bundle(bundle)
 
 
 def test_a2_accepts_producer_sha_string_risk_references(tmp_path: Path) -> None:

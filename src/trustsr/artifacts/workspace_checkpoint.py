@@ -446,7 +446,46 @@ def _read_relative_regular_file(
         os.close(root_descriptor)
 
 
-def _validate_workspace_evidence(trustsr_root: Path, completed_stage: str) -> None:
+def _validate_preflight_evidence(trustsr_root: Path, reviewed_commit: str) -> None:
+    log_relative = Path("trustsr/phase2b3a/logs/preflight.jsonl")
+    runtime_relative = (
+        Path("trustsr/phase2b3a/results")
+        / SELECTION_MANIFEST_SHA256
+        / "phase2b3a-preflight-runtime.json"
+    )
+    try:
+        _, _, log_size = _read_relative_regular_file(
+            trustsr_root,
+            log_relative,
+            "preflight log",
+            max_bytes=_MAX_EVIDENCE_BYTES,
+        )
+        runtime_bytes, _, _ = _read_relative_regular_file(
+            trustsr_root,
+            runtime_relative,
+            "preflight runtime",
+            max_bytes=_MAX_EVIDENCE_BYTES,
+            collect=True,
+        )
+    except CheckpointError as exc:
+        raise CheckpointError("preflight evidence is missing or unsafe") from exc
+    if log_size == 0:
+        raise CheckpointError("preflight log is empty")
+    assert runtime_bytes is not None
+    try:
+        runtime = json.loads(runtime_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CheckpointError("preflight runtime is not valid JSON") from exc
+    if canonical_json(runtime) != runtime_bytes:
+        raise CheckpointError("preflight runtime is not canonical JSON")
+    producer_commit = runtime.get("git_commit") if type(runtime) is dict else None
+    if not _is_lower_hex(producer_commit, 40) or producer_commit != reviewed_commit:
+        raise CheckpointError("preflight runtime producer commit does not match checkpoint")
+
+
+def _validate_workspace_evidence(
+    trustsr_root: Path, completed_stage: str, reviewed_commit: str
+) -> None:
     for relative, expected_digest, description in _active_frozen_relatives():
         try:
             _, observed_digest, _ = _read_relative_regular_file(
@@ -458,6 +497,8 @@ def _validate_workspace_evidence(trustsr_root: Path, completed_stage: str) -> No
             ) from exc
         if observed_digest != expected_digest:
             raise CheckpointError(f"{description} digest mismatch")
+    if completed_stage in {"a0", "a1"}:
+        _validate_preflight_evidence(trustsr_root, reviewed_commit)
     if completed_stage == "a0":
         return
 
@@ -602,7 +643,7 @@ def build_checkpoint(
     """Build a deterministic local archive and canonical manifest from allowed source roots."""
     completed_stage, reviewed_commit = _validate_stage_and_commit(completed_stage, reviewed_commit)
     workspace_root = Path(workspace_root)
-    _validate_workspace_evidence(workspace_root, completed_stage)
+    _validate_workspace_evidence(workspace_root, completed_stage, reviewed_commit)
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     _require_directory(output_directory, "output directory")
@@ -1346,7 +1387,9 @@ def restore_checkpoint(
         staged_trustsr = _extract_archive_exclusively(
             staged_archive, inventory, staging_directory
         )
-        _validate_workspace_evidence(staging_directory, manifest.completed_stage)
+        _validate_workspace_evidence(
+            staging_directory, manifest.completed_stage, manifest.reviewed_commit
+        )
         _normalize_staged_permissions(staged_trustsr)
         _require_absent_destination(destination)
         _rename_noreplace(staged_trustsr, destination)

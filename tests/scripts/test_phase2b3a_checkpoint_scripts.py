@@ -51,10 +51,16 @@ def _write_workspace(workspace: Path, stage: str, *, corrupt: str | None = None)
     phase_root = workspace / "trustsr" / "phase2b3a"
     phase_root.mkdir(parents=True, exist_ok=True)
     (phase_root / "cache.bin").write_bytes(b"cache")
-    if stage == "a0":
-        return phase_root
     result = phase_root / "results" / SELECTION_DIGEST
     result.mkdir(parents=True, exist_ok=True)
+    logs = phase_root / "logs"
+    logs.mkdir(exist_ok=True)
+    (logs / "preflight.jsonl").write_bytes(b'{"stage":"preflight"}\n')
+    (result / "phase2b3a-preflight-runtime.json").write_bytes(
+        _canonical({"git_commit": REVISION, "stage": "preflight"})
+    )
+    if stage == "a0":
+        return phase_root
     payloads = {name: _canonical({"name": name, "phase": stage}) for name in EVIDENCE[stage]}
     for name, payload in payloads.items():
         (result / name).write_bytes(payload)
@@ -354,7 +360,22 @@ def _invoke_restore(
     workspace = tmp_path / "work-mount"
     persistent = tmp_path / "persistent-mount"
     repository = workspace / "reviewed-repository"
-    _write_workspace(workspace, "a0")
+    checkpoint_stage = str(boundary_state.pop("checkpoint_stage", "a0"))
+    _write_workspace(workspace, checkpoint_stage)
+    checkpoint_preflight_state = boundary_state.pop("checkpoint_preflight_state", None)
+    phase_root = workspace / "trustsr" / "phase2b3a"
+    if checkpoint_preflight_state == "extra-runtime":
+        extra_result = phase_root / "results" / ("f" * 64)
+        extra_result.mkdir(parents=True)
+        (extra_result / "phase2b3a-preflight-runtime.json").write_bytes(
+            _canonical({"git_commit": REVISION, "stage": "preflight"})
+        )
+    elif checkpoint_preflight_state == "archive-collision":
+        (
+            phase_root / "logs" / f"preflight-{checkpoint_stage}-{REVISION}.jsonl"
+        ).write_bytes(b"preserved")
+    elif checkpoint_preflight_state is not None:
+        raise AssertionError(f"unknown checkpoint preflight state: {checkpoint_preflight_state}")
     persistent.mkdir()
     (repository / "src" / "trustsr").mkdir(parents=True)
     (repository / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
@@ -387,7 +408,7 @@ def _invoke_restore(
             str(workspace),
             str(persistent),
             str(repository),
-            "a0",
+            checkpoint_stage,
             REVISION,
         ],
         check=False,
@@ -701,6 +722,53 @@ def test_restore_script_explicitly_binds_checkpoint_and_restore_code_commits(
     assert record["completed_stage"] == "a0"
     assert record["status"] == "restore"
     assert (paths["workspace"] / "trustsr/phase2b3a").is_dir()
+    assert not prohibited.exists()
+
+
+def test_restore_script_archives_fixed_preflight_outputs_before_resumed_stage(
+    tmp_path: Path,
+) -> None:
+    restore_code_commit = "b" * 40
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path,
+        checkpoint_stage="a1",
+        git_head=restore_code_commit,
+        restore_mode="copy",
+        checkpoint_reviewed_commit=REVISION,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    phase_root = paths["workspace"] / "trustsr" / "phase2b3a"
+    result = phase_root / "results" / SELECTION_DIGEST
+    assert not (phase_root / "logs" / "preflight.jsonl").exists()
+    assert (
+        phase_root / "logs" / f"preflight-a1-{REVISION}.jsonl"
+    ).read_bytes() == b'{"stage":"preflight"}\n'
+    assert not (result / "phase2b3a-preflight-runtime.json").exists()
+    assert (
+        result / f"phase2b3a-a1-preflight-runtime-{REVISION}.json"
+    ).read_bytes() == _canonical({"git_commit": REVISION, "stage": "preflight"})
+    assert json.loads(completed.stdout)["completed_stage"] == "a1"
+    assert not prohibited.exists()
+
+
+@pytest.mark.parametrize("preflight_state", ["extra-runtime", "archive-collision"])
+def test_restore_script_rolls_back_ambiguous_preflight_archive(
+    tmp_path: Path, preflight_state: str
+) -> None:
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path,
+        checkpoint_stage="a1",
+        git_head="b" * 40,
+        restore_mode="copy",
+        checkpoint_reviewed_commit=REVISION,
+        checkpoint_preflight_state=preflight_state,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert not (paths["workspace"] / "trustsr").exists()
+    assert not (paths["workspace"] / "model-mounts").exists()
     assert not prohibited.exists()
 
 

@@ -47,7 +47,13 @@ PHASE2B3A_SEN2SRLITE_DIR="$PHASE2B3A_WORK_ROOT/model-mounts/sen2srlite"
 PHASE2B3A_LDSR_DIR="$PHASE2B3A_WORK_ROOT/model-mounts/ldsr-s2"
 [[ "$PHASE2B3A_MODEL_RESTORE_MODE" == copy ]]
 [[ "$PHASE2B3A_A1_CHECKPOINT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ -f "$PHASE2B3A_BASE_PYTHON" && -x "$PHASE2B3A_BASE_PYTHON" && ! -L "$PHASE2B3A_BASE_PYTHON" ]]
+[[ "$(realpath -e -- "$PHASE2B3A_BASE_PYTHON")" == "$PHASE2B3A_BASE_PYTHON" ]]
 ```
+
+Use the canonical, non-symlink base interpreter path. On the current cloud image this is
+`/opt/conda/bin/python3.12`; `/opt/conda/bin/python` is a symlink and is intentionally rejected by
+the restore boundary.
 
 The allowed compute-session transitions are exactly:
 
@@ -263,11 +269,15 @@ PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" -m trustsr.artif
 For A2, every new disposable session first runs the bootstrap above, then restores the exact A1
 manifest; this successful restore establishes `RESTORED`. Rerun preflight to establish
 `PREFLIGHT_OK`, then run `development` and `development-replay`. Successful scientific
-verification establishes `A2_OK`.
+verification establishes `A2_OK`. An A0/A1 restore automatically preserves the checkpointed fixed
+preflight outputs under stage-and-producer-commit names before the new preflight runs; it never
+overwrites the old log or runtime manifest.
 
 ```bash
 : "${PHASE2B3A_A1_MANIFEST_BASENAME:?copy recorded a1 manifest basename exactly}"
 "$PHASE2B3A_REPOSITORY/scripts/phase2b3a/restore_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" "$PHASE2B3A_A1_MANIFEST_BASENAME" "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE" "$PHASE2B3A_MODEL_RESTORE_MODE" "$PHASE2B3A_A1_CHECKPOINT_COMMIT"
+test -f "$PHASE2B3A_STORAGE_ROOT/trustsr/phase2b3a/logs/preflight-a1-$PHASE2B3A_A1_CHECKPOINT_COMMIT.jsonl"
+test "$(find "$PHASE2B3A_STORAGE_ROOT/trustsr/phase2b3a/results" -mindepth 2 -maxdepth 2 -type f -name "phase2b3a-a1-preflight-runtime-$PHASE2B3A_A1_CHECKPOINT_COMMIT.json" -print | wc -l)" -eq 1
 phase2b3a_compute preflight
 phase2b3a_compute development
 phase2b3a_replay development-replay
@@ -277,7 +287,11 @@ Require the restore JSON to contain `"model_restore_mode":"copy"`, the exact old
 `"checkpoint_reviewed_commit":"4df5195e..."`, and the new pushed A2 code identity in
 `"restore_code_commit"`. The old checkpoint commit must be an ancestor of the restore code commit;
 the script fails before model publication otherwise. Do not retry with bind mode after a permission
-error, and do not replace either model directory with a symlink.
+error, and do not replace either model directory with a symlink. The A1 runtime remains bound to its
+original producer commit. A2 verifies that producer is an ancestor, writes the current commit as its
+own `git_commit`, and records the old commit separately as `a1_producer_commit`. This required
+runtime field was added before the first A2 evidence bundle existed, so the v1 schema remains the
+pre-publication contract rather than a migration of published A2 evidence.
 
 Repeat the labelled **local reviewed checkout** evidence sequence for the exact A2 filenames, then
 return to the cloud shell to checkpoint `a2` and reverify. A complete reverified A2 checkpoint

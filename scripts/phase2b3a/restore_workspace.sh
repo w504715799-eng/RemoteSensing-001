@@ -120,6 +120,47 @@ read_mount_identity() {
   [[ "$mount_identity_fsroot" == /* && "$mount_identity_target" == /* ]] || return 1
 }
 
+archive_resumed_preflight_outputs() {
+  local workspace_root="$1"
+  local completed_stage="$2"
+  local checkpoint_commit="$3"
+  [[ "$completed_stage" == a0 || "$completed_stage" == a1 ]] || return 0
+
+  local phase_root="$workspace_root/trustsr/phase2b3a"
+  local log_source="$phase_root/logs/preflight.jsonl"
+  local log_target="$phase_root/logs/preflight-$completed_stage-$checkpoint_commit.jsonl"
+  local -a runtime_candidates=()
+  local runtime_source runtime_target
+  shopt -s nullglob
+  runtime_candidates=(
+    "$phase_root"/results/*/phase2b3a-preflight-runtime.json
+  )
+  shopt -u nullglob
+
+  local log_present=0
+  [[ -e "$log_source" || -L "$log_source" ]] && log_present=1
+  (( log_present && ${#runtime_candidates[@]} == 1 )) ||
+    die 'restored preflight evidence is incomplete or ambiguous'
+  runtime_source="${runtime_candidates[0]}"
+  runtime_target="${runtime_source%/*}/phase2b3a-$completed_stage-preflight-runtime-$checkpoint_commit.json"
+
+  reject_symlink_components "$log_source" || die 'restored preflight log contains a symlink'
+  reject_symlink_components "$runtime_source" || die 'restored preflight runtime contains a symlink'
+  [[ -f "$log_source" && ! -L "$log_source" ]] || die 'restored preflight log is invalid'
+  [[ -f "$runtime_source" && ! -L "$runtime_source" ]] ||
+    die 'restored preflight runtime is invalid'
+  [[ ! -e "$log_target" && ! -L "$log_target" ]] ||
+    die 'resumed preflight log archive collision'
+  [[ ! -e "$runtime_target" && ! -L "$runtime_target" ]] ||
+    die 'resumed preflight runtime archive collision'
+
+  mv -- "$log_source" "$log_target" || die 'restored preflight log cannot be archived'
+  if ! mv -- "$runtime_source" "$runtime_target"; then
+    mv -- "$log_target" "$log_source" 2>/dev/null || true
+    die 'restored preflight runtime cannot be archived'
+  fi
+}
+
 run_main() {
   (( $# >= 7 && $# <= 9 )) || die 'argument count; usage: restore_workspace.sh BASE_PYTHON WORKSPACE_ROOT PERSISTENT_ROOT REPOSITORY MANIFEST_BASENAME SEN2SRLITE_SOURCE LDSR_SOURCE [bind|copy] [CHECKPOINT_REVIEWED_COMMIT]'
 
@@ -173,6 +214,7 @@ run_main() {
   local model_mount_directory="$workspace_root/model-mounts"
   local created_model_mount_directory=0
   local copied_models_published=0
+  local restored_workspace_published=0
   local rollback_models=1
   local -a created_targets=()
   local -a mounted_targets=()
@@ -193,6 +235,11 @@ run_main() {
       if (( copied_models_published )) && [[ -d "$model_mount_directory" && ! -L "$model_mount_directory" ]]; then
         chmod -R u+rwX -- "$model_mount_directory" 2>/dev/null || true
         rm -rf --one-file-system -- "$model_mount_directory" 2>/dev/null || true
+      fi
+      if (( restored_workspace_published )) &&
+        [[ -d "$workspace_root/trustsr" && ! -L "$workspace_root/trustsr" ]]; then
+        chmod -R u+rwX -- "$workspace_root/trustsr" 2>/dev/null || true
+        rm -rf --one-file-system -- "$workspace_root/trustsr" 2>/dev/null || true
       fi
     fi
     [[ -z "$verify_file" ]] || rm -f -- "$verify_file" 2>/dev/null || true
@@ -319,8 +366,11 @@ run_main() {
   if ! PYTHONPATH="$repository/src" "$base_python" -m trustsr.artifacts.workspace_checkpoint \
     restore "$checkpoint_directory" "$manifest_basename" "$workspace_root" \
     "$checkpoint_reviewed_commit" > "$restore_file"; then
+    [[ ! -d "$workspace_root/trustsr" || -L "$workspace_root/trustsr" ]] ||
+      restored_workspace_published=1
     die 'checkpoint restore failed'
   fi
+  restored_workspace_published=1
   rollback_models=0
   require_one_record "$restore_file" restore || die 'checkpoint restore emitted an invalid record'
   [[ "$record_archive_basename" == "$verify_archive" &&
@@ -330,8 +380,12 @@ run_main() {
     "$record_manifest_basename" == "$verify_manifest" &&
     "$record_reviewed_commit" == "$verify_commit" ]] ||
     die 'checkpoint verify and restore records disagree'
+  rollback_models=1
+  archive_resumed_preflight_outputs \
+    "$workspace_root" "$record_completed_stage" "$checkpoint_reviewed_commit"
   rm -f -- "$restore_file" || die 'checkpoint restore output cannot be removed'
   restore_file=
+  rollback_models=0
   trap - EXIT
   printf '{"archive_basename":"%s","archive_sha256":"%s","archive_size_bytes":%s,"checkpoint_reviewed_commit":"%s","completed_stage":"%s","manifest_basename":"%s","model_restore_mode":"%s","restore_code_commit":"%s","status":"restore"}\n' \
     "$record_archive_basename" "$record_archive_sha256" "$record_archive_size_bytes" \

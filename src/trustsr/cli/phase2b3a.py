@@ -172,6 +172,40 @@ def _run_git(root: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
+def _require_git_ancestor(project_root: Path, ancestor: object, descendant: str) -> str:
+    if (
+        not isinstance(ancestor, str)
+        or len(ancestor) != 40
+        or any(character not in _HEX for character in ancestor)
+    ):
+        raise ValueError("A1 runtime commit is not a canonical producer commit")
+    if len(descendant) != 40 or any(character not in _HEX for character in descendant):
+        raise ValueError("reviewed Git checkout has an invalid commit")
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "merge-base",
+                "--is-ancestor",
+                ancestor,
+                descendant,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("reviewed Git checkout cannot be inspected") from exc
+    if completed.returncode == 1:
+        raise ValueError("A1 runtime commit is not an ancestor of the reviewed checkout")
+    if completed.returncode != 0:
+        raise ValueError("reviewed Git checkout cannot be inspected")
+    return ancestor
+
+
 def _validate_reviewed_checkout(
     project_root: Path, *, expected_revision: str | None = None
 ) -> tuple[Path, str]:
@@ -875,7 +909,7 @@ def run_replay(args: argparse.Namespace) -> dict[str, object]:
     return _run_a1_replay(args)
 
 
-def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str]:
+def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str, str]:
     directory = _result_directory(context.root)
     (result_bytes, result), (audit_bytes, audit) = _read_committed_pair(
         context.root, _A1_RESULT, _A1_AUDIT
@@ -914,6 +948,9 @@ def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str]:
         persistent_free_bytes=free,
         projected_a2_uncached_seconds=float(projection),
     )
+    producer_commit = _require_git_ancestor(
+        context.project_root, runtime.get("git_commit"), context.code_revision
+    )
     if (
         result.get("sample_count") != 4
         or audit.get("sample_count") != 4
@@ -921,7 +958,6 @@ def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str]:
         or replay.get("result_sha256") != _sha256(result_bytes)
         or replay.get("cache_audit_sha256") != _sha256(audit_bytes)
         or replay.get("runtime_manifest_sha256") != runtime_sha256
-        or runtime.get("git_commit") != context.code_revision
         or runtime.get("single_repeatability_pass") is not True
         or runtime.get("resource_gate_pass") is not calculated_resource_gate
         or calculated_resource_gate is not True
@@ -931,12 +967,12 @@ def _verify_a1_cloud_acceptance(context: _StageContext) -> tuple[bool, str]:
     stable = result.get("k5_statistically_stable")
     if type(include) is not bool or type(stable) is not bool or include is not stable:
         raise ValueError("A1 acceptance contains an invalid K=5 decision")
-    return include, _sha256(canonical_json(replay))
+    return include, _sha256(canonical_json(replay)), producer_commit
 
 
 def run_development(args: argparse.Namespace) -> dict[str, object]:
     context = _preflight_context(args, capture_hardware=True)
-    include, a1_replay_sha256 = _verify_a1_cloud_acceptance(context)
+    include, a1_replay_sha256, a1_producer_commit = _verify_a1_cloud_acceptance(context)
     ordered_ids = _ordered_development_sample_ids(context.records)
     pairs = _load_a2_pairs(context, args)
     models = _model_factory(args)
@@ -958,6 +994,7 @@ def run_development(args: argparse.Namespace) -> dict[str, object]:
         "schema": "trustsr.phase2b3a-a2-runtime.v1",
         "git_commit": context.code_revision,
         "a1_acceptance_pass": True,
+        "a1_producer_commit": a1_producer_commit,
         "a1_replay_sha256": a1_replay_sha256,
         "sample_count": 120,
     }
@@ -984,6 +1021,9 @@ def _run_a2_replay(args: argparse.Namespace) -> dict[str, object]:
     runtime_sha256 = _verify_runtime_reference(result, runtime_bytes)
     if runtime.get("git_commit") != context.code_revision:
         raise ValueError("A2 runtime commit does not match the reviewed checkout")
+    _require_git_ancestor(
+        context.project_root, runtime.get("a1_producer_commit"), context.code_revision
+    )
     scientific_result = dict(result)
     scientific_result.pop("runtime_manifest_sha256")
     rebuilt_result, rebuilt_audit = replay_a2_development(

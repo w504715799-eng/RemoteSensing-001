@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -171,6 +172,137 @@ def test_resource_gate_rejects_invalid_measurements(
             persistent_free_bytes=free,
             projected_a2_uncached_seconds=projected,
         )
+
+
+def _write_valid_a1_acceptance(root: Path, producer_commit: str) -> str:
+    runtime = {
+        "schema": "trustsr.phase2b3a-a1-runtime.v1",
+        "git_commit": producer_commit,
+        "single_repeatability_pass": True,
+        "single_peak_memory_bytes": 80,
+        "gpu_total_memory_bytes": 100,
+        "persistent_free_bytes": 10 * 1024**3,
+        "a1_uncached_ldsr_prediction_seconds": [1.0],
+        "a1_median_uncached_ldsr_prediction_seconds": 1.0,
+        "missing_a2_seed_predictions": 1,
+        "projected_a2_uncached_seconds": 1.0,
+        "resource_gate_pass": True,
+    }
+    runtime_bytes, runtime_sha256 = phase2b3a._write_runtime(
+        root, phase2b3a._A1_RUNTIME, runtime
+    )
+    result = {
+        "sample_count": 4,
+        "include_ldsr_variance_k5": True,
+        "k5_statistically_stable": True,
+        "runtime_manifest_sha256": runtime_sha256,
+    }
+    audit = {"sample_count": 4}
+    result_bytes, audit_bytes = phase2b3a._commit_pair(
+        root,
+        (phase2b3a._A1_RESULT, result),
+        (phase2b3a._A1_AUDIT, audit),
+    )
+    replay = phase2b3a._receipt(
+        "a1", result_bytes, audit_bytes, hashlib.sha256(runtime_bytes).hexdigest()
+    )
+    directory = phase2b3a._result_directory(root)
+    phase2b3a._commit_identical_or_new(
+        directory / phase2b3a._A1_REPLAY,
+        phase2b3a.canonical_json(replay),
+        root,
+    )
+    return hashlib.sha256(phase2b3a.canonical_json(replay)).hexdigest()
+
+
+def test_a1_acceptance_allows_verified_ancestor_producer_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    producer_commit = "a" * 40
+    current_commit = "b" * 40
+    replay_sha256 = _write_valid_a1_acceptance(tmp_path, producer_commit)
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(phase2b3a.subprocess, "run", run)
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision=current_commit,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+
+    assert phase2b3a._verify_a1_cloud_acceptance(context) == (
+        True,
+        replay_sha256,
+        producer_commit,
+    )
+    assert calls == [
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge-base",
+            "--is-ancestor",
+            producer_commit,
+            current_commit,
+        ]
+    ]
+
+
+def test_a1_acceptance_rejects_nonancestor_producer_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    producer_commit = "a" * 40
+    current_commit = "b" * 40
+    _write_valid_a1_acceptance(tmp_path, producer_commit)
+    monkeypatch.setattr(
+        phase2b3a.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 1, "", ""),
+    )
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision=current_commit,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+
+    with pytest.raises(ValueError, match="not an ancestor"):
+        phase2b3a._verify_a1_cloud_acceptance(context)
+
+
+def test_git_ancestor_rejects_noncanonical_producer_without_running_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        phase2b3a.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("git was run")),
+    )
+
+    with pytest.raises(ValueError, match="canonical producer"):
+        phase2b3a._require_git_ancestor(tmp_path, "A" * 40, "b" * 40)
+
+
+def test_git_ancestor_inspection_error_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        phase2b3a.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 128, "", "bad git"),
+    )
+
+    with pytest.raises(ValueError, match="Git"):
+        phase2b3a._require_git_ancestor(tmp_path, "a" * 40, "b" * 40)
 
 
 def test_projection_uses_median_duration_and_exact_missing_seed_count() -> None:
@@ -490,7 +622,15 @@ def test_real_replay_implementation_never_constructs_models(
         lambda args: (_ for _ in ()).throw(AssertionError("model factory called")),
     )
     runtime_name = phase2b3a._A1_RUNTIME if phase == "a1" else phase2b3a._A2_RUNTIME
-    runtime = {"schema": "a1"} if phase == "a1" else {"schema": "a2", "git_commit": "a" * 40}
+    runtime = (
+        {"schema": "a1"}
+        if phase == "a1"
+        else {
+            "schema": "a2",
+            "git_commit": "a" * 40,
+            "a1_producer_commit": "9" * 40,
+        }
+    )
     _, runtime_sha = phase2b3a._write_runtime(tmp_path, runtime_name, runtime)
     result = {"scientific": True, "runtime_manifest_sha256": runtime_sha}
     audit = {"audit": True}
@@ -505,6 +645,14 @@ def test_real_replay_implementation_never_constructs_models(
         outcome = phase2b3a.run_replay(argparse.Namespace())
         assert outcome == {"stage": "replay", "byte_identical": True}
     else:
+        ancestry: list[tuple[Path, object, str]] = []
+        monkeypatch.setattr(
+            phase2b3a,
+            "_require_git_ancestor",
+            lambda root, ancestor, descendant: (
+                ancestry.append((root, ancestor, descendant)) or ancestor
+            ),
+        )
         phase2b3a._commit_pair(
             tmp_path, (phase2b3a._A2_RESULT, result), (phase2b3a._A2_AUDIT, audit)
         )
@@ -517,6 +665,7 @@ def test_real_replay_implementation_never_constructs_models(
         )
         outcome = phase2b3a.run_development_replay(argparse.Namespace())
         assert outcome == {"stage": "development-replay", "byte_identical": True}
+        assert ancestry == [(tmp_path, "9" * 40, "a" * 40)]
 
 
 def test_preflight_validates_everything_before_constructing_models(
@@ -661,7 +810,7 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
         monkeypatch.setattr(
             phase2b3a,
             "_verify_a1_cloud_acceptance",
-            lambda context: (include_k5, "c" * 64),
+            lambda context: (include_k5, "c" * 64, "d" * 40),
         )
         monkeypatch.setattr(phase2b3a, "select_development_records", lambda records: records)
         monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: pairs)
@@ -703,8 +852,18 @@ def test_compute_stage_actual_handlers_preserve_frozen_membership_and_counts(
 
         monkeypatch.setattr(phase2b3a, "_bundle_for_pair", bundle_for_pair)
         monkeypatch.setattr(phase2b3a, "evaluate_a2_development", consume_a2)
+        runtime_payloads: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            phase2b3a,
+            "_write_runtime",
+            lambda root, name, payload: (
+                runtime_payloads.append(payload) or (b"{}", "b" * 64)
+            ),
+        )
         outcome = phase2b3a.run_development(args)
         assert outcome["stage"] == "development" and outcome["sample_count"] == 120
+        assert runtime_payloads[0]["git_commit"] == "a" * 40
+        assert runtime_payloads[0]["a1_producer_commit"] == "d" * 40
 
 
 def test_main_keeps_noise_out_of_canonical_stdout(
