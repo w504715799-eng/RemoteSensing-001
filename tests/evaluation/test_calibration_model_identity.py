@@ -8,6 +8,7 @@ import pytest
 
 from trustsr.evaluation.calibration_model_identity import (
     CalibrationModelIdentity,
+    validate_cached_calibration_model_identity,
     validate_calibration_model_identity,
 )
 from trustsr.jsonio import canonical_json
@@ -92,6 +93,24 @@ def test_as_dict_returns_fresh_json_native_values() -> None:
     assert canonical_json(second)
 
 
+def test_cached_identity_accepts_only_the_normalized_host_free_schema() -> None:
+    cached = validate_calibration_model_identity(_provenance()).as_dict()
+
+    assert validate_cached_calibration_model_identity(
+        cached
+    ) == validate_calibration_model_identity(_provenance())
+
+    for key, value in (
+        ("checkpoint_url", CHECKPOINT_URL),
+        ("device", "cuda"),
+        ("backend", "forged"),
+    ):
+        forged = dict(cached)
+        forged[key] = value
+        with pytest.raises(ValueError, match="keys"):
+            validate_cached_calibration_model_identity(forged)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
@@ -125,9 +144,7 @@ def test_as_dict_returns_fresh_json_native_values() -> None:
         ("output_policy", "unbounded"),
     ),
 )
-def test_rejects_wrong_or_weakly_typed_scientific_identity(
-    field: str, value: object
-) -> None:
+def test_rejects_wrong_or_weakly_typed_scientific_identity(field: str, value: object) -> None:
     provenance = _provenance()
     provenance[field] = value
 

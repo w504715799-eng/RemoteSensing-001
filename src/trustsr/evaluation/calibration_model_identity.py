@@ -36,11 +36,14 @@ _INPUT_KEYS = {
     "histogram_matching",
     "output_policy",
 }
+_CACHED_KEYS = _INPUT_KEYS - {"checkpoint_url", "device"}
 _FIXED_IDENTITY_FIELDS = {
     "name": "ldsr-s2-x4",
     "scale": 4,
     "implementation_schema_version": 1,
     "opensr_model_version": OPENSR_MODEL_VERSION,
+    "torch_version": "2.7.1+cu128",
+    "cuda_runtime": "12.8",
     "checkpoint_name": CHECKPOINT_NAME,
     "checkpoint_size": CHECKPOINT_SIZE,
     "checkpoint_sha256": CHECKPOINT_SHA256,
@@ -170,5 +173,22 @@ def validate_calibration_model_identity(
         histogram_matching=True,
         output_policy="clip_to_[0,1]",
     )
+    canonical_json(identity.as_dict())
+    return identity
+
+
+def validate_cached_calibration_model_identity(
+    provenance: Mapping[str, object],
+) -> CalibrationModelIdentity:
+    """Revalidate the exact host-free identity permitted in calibration caches."""
+
+    if not isinstance(provenance, Mapping):
+        raise TypeError("cached LDSR identity must be a mapping")
+    if set(provenance) != _CACHED_KEYS:
+        raise ValueError("cached LDSR identity keys do not match the frozen schema")
+    try:
+        identity = CalibrationModelIdentity(**dict(provenance))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("cached LDSR identity differs from the frozen contract") from exc
     canonical_json(identity.as_dict())
     return identity

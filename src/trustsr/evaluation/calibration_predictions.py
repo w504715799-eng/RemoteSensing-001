@@ -20,6 +20,11 @@ from trustsr.data.crosssensor_pairs import (
     RadiometricSaturation,
 )
 from trustsr.evaluation import phase2b3b_evidence
+from trustsr.evaluation.calibration_model_identity import (
+    CalibrationModelIdentity,
+    validate_cached_calibration_model_identity,
+    validate_calibration_model_identity,
+)
 from trustsr.models.protocols import JsonScalar, SRModel
 
 EXPERIMENT_SCHEMA = "trustsr.phase2b3b-predictions.v1"
@@ -45,7 +50,7 @@ _CONTEXT_KEYS = (
 
 
 def build_cache_provenance(
-    model_provenance: Mapping[str, JsonScalar],
+    model_provenance: Mapping[str, object],
 ) -> dict[str, JsonScalar]:
     """Bind one LDSR seed provenance to immutable B3-B input evidence."""
 
@@ -53,7 +58,13 @@ def build_cache_provenance(
         raise TypeError("model provenance must be a mapping")
     if any(key in model_provenance for key in _CONTEXT_KEYS):
         raise ValueError("model provenance contains a reserved experiment context key")
-    result = dict(model_provenance)
+    return _cache_provenance(validate_calibration_model_identity(model_provenance))
+
+
+def _cache_provenance(identity: CalibrationModelIdentity) -> dict[str, JsonScalar]:
+    """Combine a normalized model identity with the immutable calibration context."""
+
+    result = identity.as_dict()
     result.update(
         {
             "experiment_schema": EXPERIMENT_SCHEMA,
@@ -68,6 +79,27 @@ def build_cache_provenance(
     return result
 
 
+def validate_cached_calibration_prediction_provenance(
+    provenance: Mapping[str, object], *, seed: int
+) -> dict[str, JsonScalar]:
+    """Fail closed on the exact host-free prediction provenance written to cache."""
+
+    if not isinstance(provenance, Mapping):
+        raise TypeError("cached prediction provenance must be a mapping")
+    identity_keys = set(CalibrationModelIdentity.__dataclass_fields__)
+    if set(provenance) != identity_keys | set(_CONTEXT_KEYS):
+        raise ValueError("cached prediction provenance keys are invalid")
+    identity = validate_cached_calibration_model_identity(
+        {key: provenance[key] for key in identity_keys}
+    )
+    if identity.seed != seed:
+        raise ValueError("cached prediction provenance seed does not match the fixed K5 slot")
+    expected = _cache_provenance(identity)
+    if dict(provenance) != expected:
+        raise ValueError("cached prediction provenance has the wrong calibration context")
+    return expected
+
+
 def _validate_pair(loaded: LoadedCrosssensorPair) -> LoadedCrosssensorPair:
     if not isinstance(loaded, LoadedCrosssensorPair):
         raise TypeError("prediction input must be a LoadedCrosssensorPair")
@@ -79,9 +111,7 @@ def _validate_pair(loaded: LoadedCrosssensorPair) -> LoadedCrosssensorPair:
         raise ValueError("calibration pair has the wrong manifest")
     if metadata.sample_id != loaded.pair.sample_id:
         raise ValueError("calibration pair and metadata identities differ")
-    if loaded.pair.source != (
-        f"sen2naipv2-crosssensor/{phase2b3b_evidence.POST_MANIFEST_SHA256}"
-    ):
+    if loaded.pair.source != (f"sen2naipv2-crosssensor/{phase2b3b_evidence.POST_MANIFEST_SHA256}"):
         raise ValueError("calibration pair has the wrong source identity")
     if (
         metadata.crop_policy != phase2b3b_evidence.CROP_POLICY
@@ -117,25 +147,18 @@ def _validate_ldsr_factory(model: Any) -> None:
         provenance = model.provenance()
     except AttributeError as exc:
         raise TypeError("calibration LDSR model must provide provenance") from exc
-    if not isinstance(provenance, Mapping):
-        raise TypeError("model provenance must be a mapping")
-    if provenance.get("name") != MODEL_NAME or provenance.get("scale") != SCALE:
-        raise ValueError("model provenance does not identify ldsr-s2-x4 scale 4")
-    if provenance.get("seed") != SEEDS[0]:
+    identity = validate_calibration_model_identity(provenance)
+    if identity.seed != SEEDS[0]:
         raise ValueError("calibration LDSR factory seed provenance must be seed 3407")
 
 
-def _model_provenance(model: SRModel, *, seed: int) -> Mapping[str, JsonScalar]:
+def _model_provenance(model: SRModel, *, seed: int) -> dict[str, JsonScalar]:
     _validate_model_slot(model)
     provenance = model.provenance()
-    if not isinstance(provenance, Mapping):
-        raise TypeError("model provenance must be a mapping")
-    if provenance.get("name") != MODEL_NAME or provenance.get("scale") != SCALE:
-        raise ValueError("model provenance does not identify ldsr-s2-x4 scale 4")
-    if provenance.get("seed") != seed:
+    identity = validate_calibration_model_identity(provenance)
+    if identity.seed != seed:
         raise ValueError("LDSR seed provenance does not match the requested seed")
-    build_cache_provenance(provenance)
-    return provenance
+    return _cache_provenance(identity)
 
 
 @dataclass(frozen=True)
@@ -157,17 +180,14 @@ class CachedCalibrationPrediction:
             f"sen2naipv2-crosssensor/{phase2b3b_evidence.POST_MANIFEST_SHA256}"
         ):
             raise ValueError("cached calibration prediction identity source is invalid")
-        provenance = self.identity.model_provenance
-        if (
-            provenance.get("name") != MODEL_NAME
-            or provenance.get("scale") != SCALE
-            or provenance.get("seed") != self.seed
-        ):
-            raise ValueError("cached calibration prediction identity provenance is invalid")
-        if dict(provenance) != build_cache_provenance(
-            {key: value for key, value in provenance.items() if key not in _CONTEXT_KEYS}
-        ):
-            raise ValueError("cached calibration prediction identity provenance is invalid")
+        try:
+            validate_cached_calibration_prediction_provenance(
+                self.identity.model_provenance, seed=self.seed
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "cached calibration prediction identity provenance is invalid"
+            ) from exc
         if not isinstance(self.tensor, torch.Tensor) or self.prediction_sha256 != tensor_sha256(
             self.tensor
         ):
@@ -247,9 +267,7 @@ def _load_or_generate(
 ) -> CachedCalibrationPrediction:
     provenance = _model_provenance(model, seed=seed)
     pair = loaded.pair
-    identity = build_identity(
-        build_cache_provenance(provenance), pair.source, pair.sample_id, pair.lr
-    )
+    identity = build_identity(provenance, pair.source, pair.sample_id, pair.lr)
     prediction = cache.get(identity)
     if prediction is None:
         produced = model.predict(pair.lr)
@@ -281,8 +299,7 @@ def load_or_generate_calibration_bundle(
     _validate_ldsr_factory(ldsr)
     try:
         items = tuple(
-            _load_or_generate(loaded, ldsr.for_seed(seed), seed=seed, cache=cache)
-            for seed in SEEDS
+            _load_or_generate(loaded, ldsr.for_seed(seed), seed=seed, cache=cache) for seed in SEEDS
         )
     except AttributeError as exc:
         raise TypeError("calibration LDSR model must provide for_seed") from exc

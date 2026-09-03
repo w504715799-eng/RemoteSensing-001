@@ -18,16 +18,24 @@ from trustsr.data.crosssensor_pairs import (
 from trustsr.evaluation import calibration_cache_verify
 from trustsr.evaluation.calibration_predictions import (
     A2_RESULT_SHA256,
-    EXPERIMENT_SCHEMA,
     MODEL_NAME,
     PUBLICATION_COMMIT,
     SEEDS,
+    build_cache_provenance,
 )
 from trustsr.evaluation.phase2b3b_evidence import (
     INPUT_AUDIT_SHA256,
     PRODUCER_REVISION,
 )
 from trustsr.jsonio import canonical_json
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
 
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
 
@@ -37,19 +45,28 @@ def _sha(label: str) -> str:
 
 
 def _model_provenance(seed: int) -> dict[str, str | int]:
-    return {
-        "name": MODEL_NAME,
-        "scale": 4,
-        "seed": seed,
-        "backend": "tiny-cpu-fixture",
-        "experiment_schema": EXPERIMENT_SCHEMA,
-        "split": "calibration",
-        "post_manifest_sha256": POST_MANIFEST_SHA256,
-        "input_audit_sha256": INPUT_AUDIT_SHA256,
-        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
-        "phase2b3a_publication_commit": PUBLICATION_COMMIT,
-        "phase2b3a_a2_result_sha256": A2_RESULT_SHA256,
-    }
+    return build_cache_provenance(
+        {
+            "name": MODEL_NAME,
+            "scale": 4,
+            "implementation_schema_version": 1,
+            "opensr_model_version": OPENSR_MODEL_VERSION,
+            "torch_version": "2.7.1+cu128",
+            "cuda_runtime": "12.8",
+            "checkpoint_name": CHECKPOINT_NAME,
+            "checkpoint_url": CHECKPOINT_URL,
+            "checkpoint_size": CHECKPOINT_SIZE,
+            "checkpoint_sha256": CHECKPOINT_SHA256,
+            "config_sha256": CONFIG_SHA256,
+            "device": "cuda",
+            "seed": seed,
+            "sampling_steps": 100,
+            "sampling_eta": 0.95,
+            "sampling_temperature": 1.0,
+            "histogram_matching": True,
+            "output_policy": "clip_to_[0,1]",
+        }
+    )
 
 
 def _score_parameters(lr_sha256: str) -> dict[str, str | int]:
@@ -148,9 +165,7 @@ def test_independently_verifies_audit_and_returns_immutable_host_free_receipt(
 
     assert first["schema"] == "trustsr.phase2b3b-calibration-cache-verification.v1"
     assert first["split"] == "calibration"
-    assert first["ordered_sample_ids_sha256"] == parsed_audit[
-        "ordered_sample_ids_sha256"
-    ]
+    assert first["ordered_sample_ids_sha256"] == parsed_audit["ordered_sample_ids_sha256"]
     assert first["counts"] == {
         "samples": 120,
         "predictions": 600,
@@ -162,9 +177,9 @@ def test_independently_verifies_audit_and_returns_immutable_host_free_receipt(
         "score_identities_sha256",
         "risk_receipts_sha256",
     }
-    assert first["digests"]["audit_sha256"] == hashlib.sha256(
-        canonical_json(parsed_audit)
-    ).hexdigest()
+    assert (
+        first["digests"]["audit_sha256"] == hashlib.sha256(canonical_json(parsed_audit)).hexdigest()
+    )
     assert first == second
     assert all(len(value) == 64 for value in first["digests"].values())
     encoded = repr(first)
@@ -211,6 +226,10 @@ def _assert_list(value: object) -> list[object]:
         "seed",
         "seed_order",
         "model",
+        "checkpoint",
+        "config",
+        "implementation",
+        "runtime",
         "context",
         "source",
         "sample",
@@ -279,10 +298,18 @@ def test_rejects_hostile_schema_identity_and_digest_mutations(
         predictions[0], predictions[1] = predictions[1], predictions[0]
     elif fault == "model":
         prediction["model_name"] = "other-model"
-    elif fault == "context":
+    elif fault == "checkpoint":
+        _assert_mapping(prediction_identity["model_provenance"])["checkpoint_sha256"] = "0" * 64
+    elif fault == "config":
+        _assert_mapping(prediction_identity["model_provenance"])["config_sha256"] = "0" * 64
+    elif fault == "implementation":
         _assert_mapping(prediction_identity["model_provenance"])[
-            "post_manifest_sha256"
-        ] = "0" * 64
+            "implementation_schema_version"
+        ] = 2
+    elif fault == "runtime":
+        _assert_mapping(prediction_identity["model_provenance"])["cuda_runtime"] = "forged"
+    elif fault == "context":
+        _assert_mapping(prediction_identity["model_provenance"])["post_manifest_sha256"] = "0" * 64
     elif fault == "source":
         prediction_identity["source"] = "wrong-source"
     elif fault == "sample":

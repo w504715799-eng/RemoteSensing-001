@@ -39,8 +39,39 @@ from trustsr.evaluation.phase2b3b_evidence import (
     PRODUCER_REVISION,
 )
 from trustsr.jsonio import canonical_json
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
 
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
+
+
+def _raw_model_provenance(seed: int) -> dict[str, object]:
+    return {
+        "name": MODEL_NAME,
+        "scale": 4,
+        "implementation_schema_version": 1,
+        "opensr_model_version": OPENSR_MODEL_VERSION,
+        "torch_version": "2.7.1+cu128",
+        "cuda_runtime": "12.8",
+        "checkpoint_name": CHECKPOINT_NAME,
+        "checkpoint_url": CHECKPOINT_URL,
+        "checkpoint_size": CHECKPOINT_SIZE,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "config_sha256": CONFIG_SHA256,
+        "device": "cuda",
+        "seed": seed,
+        "sampling_steps": 100,
+        "sampling_eta": 0.95,
+        "sampling_temperature": 1.0,
+        "histogram_matching": True,
+        "output_policy": "clip_to_[0,1]",
+    }
 
 
 def _score_parameters(lr_sha256: str) -> dict[str, str | int]:
@@ -68,13 +99,9 @@ def _bundle_and_maps(index: int) -> tuple[CalibrationPredictionBundle, Calibrati
     lr_sha256 = hashlib.sha256(f"lr:{sample_id}".encode()).hexdigest()
     predictions: list[CachedCalibrationPrediction] = []
     for seed in SEEDS:
-        tensor = torch.full(
-            (4, 4, 4), seed / 10_000 + index / 1_000_000, dtype=torch.float32
-        )
+        tensor = torch.full((4, 4, 4), seed / 10_000 + index / 1_000_000, dtype=torch.float32)
         identity = PredictionIdentity(
-            model_provenance=build_cache_provenance(
-                {"name": MODEL_NAME, "scale": 4, "seed": seed, "backend": "tiny-cpu-fake"}
-            ),
+            model_provenance=build_cache_provenance(_raw_model_provenance(seed)),
             source=_SOURCE,
             sample_id=sample_id,
             lr_shape=(4, 1, 1),
@@ -119,17 +146,13 @@ def _bundle_and_maps(index: int) -> tuple[CalibrationPredictionBundle, Calibrati
 
 
 @pytest.fixture
-def audit_inputs() -> tuple[
-    tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-]:
+def audit_inputs() -> tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]]:
     values = tuple(_bundle_and_maps(index) for index in range(120))
     return tuple(value[0] for value in values), tuple(value[1] for value in values)
 
 
 def test_builds_canonical_host_free_exact_calibration_cache_audit(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
 ) -> None:
     """Omitting a fixed identity/digest or serializing a tensor/path must break the receipt."""
 
@@ -139,9 +162,10 @@ def test_builds_canonical_host_free_exact_calibration_cache_audit(
 
     assert first["schema"] == "trustsr.phase2b3b-calibration-cache-audit.v1"
     assert first["split"] == "calibration"
-    assert first["ordered_sample_ids_sha256"] == hashlib.sha256(
-        canonical_json([bundle.sample_id for bundle in bundles])
-    ).hexdigest()
+    assert (
+        first["ordered_sample_ids_sha256"]
+        == hashlib.sha256(canonical_json([bundle.sample_id for bundle in bundles])).hexdigest()
+    )
     assert first["sample_count"] == 120
     assert first["prediction_count"] == 600
     assert first["score_count"] == 120
@@ -174,8 +198,9 @@ def test_builds_canonical_host_free_exact_calibration_cache_audit(
     }
     assert sample["predictions"][0]["identity"]["sample_id"] == "calibration-000"
     assert sample["score"]["identity"]["sample_id"] == "calibration-000"
-    assert sample["predictions"][0]["identity"] is not (
-        second["samples"][0]["predictions"][0]["identity"]
+    assert (
+        sample["predictions"][0]["identity"]
+        is not (second["samples"][0]["predictions"][0]["identity"])
     )
 
     encoded = canonical_json(first).decode()
@@ -203,9 +228,7 @@ def _replace_sequence_item(
 
 @pytest.mark.parametrize("size", (119, 121))
 def test_rejects_any_input_count_other_than_exactly_120(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
     size: int,
 ) -> None:
     """Accepting a partial or appended calibration set would invalidate fixed counts."""
@@ -221,9 +244,7 @@ def test_rejects_any_input_count_other_than_exactly_120(
 
 
 def test_rejects_duplicate_sample_membership(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
 ) -> None:
     """Repeating a valid bundle/maps pair cannot stand in for a missing ROI."""
 
@@ -232,15 +253,11 @@ def test_rejects_duplicate_sample_membership(
     duplicate_maps = (*maps[:-1], maps[0])
 
     with pytest.raises(ValueError, match="unique"):
-        calibration_cache_audit.build_calibration_cache_audit(
-            duplicate_bundles, duplicate_maps
-        )
+        calibration_cache_audit.build_calibration_cache_audit(duplicate_bundles, duplicate_maps)
 
 
 def test_rejects_reordered_or_mismatched_bundle_and_map_sequences(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
 ) -> None:
     """Pairing maps by set membership instead of input position must fail closed."""
 
@@ -255,9 +272,7 @@ def test_rejects_reordered_or_mismatched_bundle_and_map_sequences(
     "fault", ("identity", "prediction_digest", "seed", "score_digest", "risk_digest")
 )
 def test_reruns_public_value_contracts_against_forged_frozen_state(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
     fault: str,
 ) -> None:
     """Skipping any nested public contract would expose forged cache evidence."""
@@ -280,9 +295,7 @@ def test_reruns_public_value_contracts_against_forged_frozen_state(
 
 
 def test_rejects_score_lr_identity_not_bound_to_prediction_bundle(
-    audit_inputs: tuple[
-        tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]
-    ],
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
 ) -> None:
     """A valid standalone score identity must still bind to this bundle's LR digest."""
 

@@ -23,10 +23,10 @@ from trustsr.evaluation.calibration_fit import (
 )
 from trustsr.evaluation.calibration_predictions import (
     A2_RESULT_SHA256,
-    EXPERIMENT_SCHEMA,
     MODEL_NAME,
     PUBLICATION_COMMIT,
     SEEDS,
+    build_cache_provenance,
 )
 from trustsr.evaluation.phase2b3b_evidence import (
     INPUT_AUDIT_SHA256,
@@ -35,6 +35,14 @@ from trustsr.evaluation.phase2b3b_evidence import (
 )
 from trustsr.evaluation.phase2b3b_revision import Phase2B3BRevision
 from trustsr.jsonio import canonical_json
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
 
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
 
@@ -83,12 +91,9 @@ def _preflight(sample_ids: Sequence[str] | None = None) -> dict[str, object]:
             "split": "calibration",
             "sample_count": 120,
             "ordered_sample_ids_sha256": _ordered_sample_ids_sha256(ordered_ids),
-            "ordered_membership_sha256": hashlib.sha256(
-                canonical_json(membership)
-            ).hexdigest(),
+            "ordered_membership_sha256": hashlib.sha256(canonical_json(membership)).hexdigest(),
             "input_receipt_sha256s": [
-                hashlib.sha256(canonical_json(record)).hexdigest()
-                for record in membership
+                hashlib.sha256(canonical_json(record)).hexdigest() for record in membership
             ],
             "strata": [
                 {
@@ -123,19 +128,28 @@ def _preflight(sample_ids: Sequence[str] | None = None) -> dict[str, object]:
 
 
 def _model_provenance(seed: int) -> dict[str, str | int]:
-    return {
-        "name": MODEL_NAME,
-        "scale": 4,
-        "seed": seed,
-        "backend": "tiny-cpu-fixture",
-        "experiment_schema": EXPERIMENT_SCHEMA,
-        "split": "calibration",
-        "post_manifest_sha256": POST_MANIFEST_SHA256,
-        "input_audit_sha256": INPUT_AUDIT_SHA256,
-        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
-        "phase2b3a_publication_commit": PUBLICATION_COMMIT,
-        "phase2b3a_a2_result_sha256": A2_RESULT_SHA256,
-    }
+    return build_cache_provenance(
+        {
+            "name": MODEL_NAME,
+            "scale": 4,
+            "implementation_schema_version": 1,
+            "opensr_model_version": OPENSR_MODEL_VERSION,
+            "torch_version": "2.7.1+cu128",
+            "cuda_runtime": "12.8",
+            "checkpoint_name": CHECKPOINT_NAME,
+            "checkpoint_url": CHECKPOINT_URL,
+            "checkpoint_size": CHECKPOINT_SIZE,
+            "checkpoint_sha256": CHECKPOINT_SHA256,
+            "config_sha256": CONFIG_SHA256,
+            "device": "cuda",
+            "seed": seed,
+            "sampling_steps": 100,
+            "sampling_eta": 0.95,
+            "sampling_temperature": 1.0,
+            "histogram_matching": True,
+            "output_policy": "clip_to_[0,1]",
+        }
+    )
 
 
 def _score_parameters(lr_sha256: str) -> dict[str, str | int]:
@@ -285,9 +299,7 @@ def _fit(sample_ids: tuple[str, ...], *, all_abstain: bool = False) -> Calibrati
         trusted_pixels=0 if all_abstain else 120,
         total_pixels=120,
         coverage=0.0 if all_abstain else 1.0,
-        phase_decision=(
-            STOP_INSUFFICIENT_COVERAGE if all_abstain else FREEZE_CALIBRATION
-        ),
+        phase_decision=(STOP_INSUFFICIENT_COVERAGE if all_abstain else FREEZE_CALIBRATION),
         sample_ids=sample_ids,
         map_evidence_sha256=map_evidence_sha256,
     )
@@ -330,17 +342,16 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert first["schema"] == "trustsr.phase2b3b-calibration.v1"
     assert first["split"] == "calibration"
     assert first["producer_revision"] == "c" * 40
-    assert first["cache_audit_sha256"] == hashlib.sha256(
-        canonical_json(inputs[2])
-    ).hexdigest()
+    assert first["cache_audit_sha256"] == hashlib.sha256(canonical_json(inputs[2])).hexdigest()
     assert first["map_evidence_sha256"] == inputs[1].map_evidence_sha256
     assert first["upstream"]["phase2b3a_publication_commit"] == PUBLICATION_COMMIT
     assert first["upstream"]["ordered_sample_ids_sha256"] == (
         _ordered_sample_ids_sha256(sample_ids)
     )
-    assert first["upstream"]["ordered_membership_sha256"] == _preflight()[
-        "calibration"
-    ]["ordered_membership_sha256"]
+    assert (
+        first["upstream"]["ordered_membership_sha256"]
+        == _preflight()["calibration"]["ordered_membership_sha256"]
+    )
     assert first["frozen"]["risk"] == {
         "name": "local_l1_risk",
         "window": 9,
@@ -376,9 +387,7 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert canonical_json(first) == canonical_json(second)
     assert first is not second
     first["samples"][0]["radiometric_saturation"]["lr"]["clipped_high_by_band"][0] = 99
-    assert second["samples"][0]["radiometric_saturation"]["lr"][
-        "clipped_high_by_band"
-    ][0] == 0
+    assert second["samples"][0]["radiometric_saturation"]["lr"]["clipped_high_by_band"][0] == 0
 
 
 def test_all_abstain_result_keeps_null_threshold_and_single_stop_decision() -> None:
@@ -536,9 +545,7 @@ def test_rejects_any_ordered_sample_mismatch_across_layers(layer: str) -> None:
     radiometry = _radiometry(alternate if layer == "radiometry" else sample_ids)
 
     with pytest.raises(ValueError, match="ordered samples"):
-        phase2b3b_result.build_phase2b3b_result(
-            _preflight(), fit, audit, radiometry, _revision()
-        )
+        phase2b3b_result.build_phase2b3b_result(_preflight(), fit, audit, radiometry, _revision())
 
 
 def test_rejects_fully_self_consistent_arbitrary_membership() -> None:

@@ -15,10 +15,10 @@ from trustsr.data.crosssensor_pairs import (
 )
 from trustsr.evaluation.calibration_predictions import (
     A2_RESULT_SHA256,
-    EXPERIMENT_SCHEMA,
     MODEL_NAME,
     PUBLICATION_COMMIT,
     SEEDS,
+    validate_cached_calibration_prediction_provenance,
 )
 from trustsr.evaluation.phase2b3b_evidence import (
     INPUT_AUDIT_SHA256,
@@ -86,30 +86,17 @@ def _exact(actual: object, expected: object) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def _rebuild_prediction_identity(
-    raw: object, *, sample_id: str, seed: int
-) -> PredictionIdentity:
+def _rebuild_prediction_identity(raw: object, *, sample_id: str, seed: int) -> PredictionIdentity:
     value = _mapping(raw, _PREDICTION_IDENTITY_KEYS, "prediction identity")
     provenance = value["model_provenance"]
     if type(provenance) is not dict:
         raise ValueError("prediction model provenance must be a JSON object")
-    required_provenance = {
-        "name": MODEL_NAME,
-        "scale": 4,
-        "seed": seed,
-        "experiment_schema": EXPERIMENT_SCHEMA,
-        "split": "calibration",
-        "post_manifest_sha256": POST_MANIFEST_SHA256,
-        "input_audit_sha256": INPUT_AUDIT_SHA256,
-        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
-        "phase2b3a_publication_commit": PUBLICATION_COMMIT,
-        "phase2b3a_a2_result_sha256": A2_RESULT_SHA256,
-    }
-    if any(
-        key not in provenance or not _exact(provenance[key], expected)
-        for key, expected in required_provenance.items()
-    ):
-        raise ValueError("prediction provenance has the wrong fixed upstream identity")
+    try:
+        canonical_provenance = validate_cached_calibration_prediction_provenance(
+            provenance, seed=seed
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("prediction provenance has the wrong fixed upstream identity") from exc
     lr = _mapping(value["lr"], _LR_KEYS, "prediction LR identity")
     shape = _list(lr["shape"], length=3, label="prediction LR shape")
     if (
@@ -120,7 +107,7 @@ def _rebuild_prediction_identity(
         raise ValueError("prediction source, sample, or dtype identity is invalid")
     try:
         identity = PredictionIdentity(
-            model_provenance=provenance,
+            model_provenance=canonical_provenance,
             source=value["source"],
             sample_id=value["sample_id"],
             lr_shape=tuple(shape),
@@ -195,8 +182,7 @@ def _verify_score(
         type(parameters) is not dict
         or set(parameters) != set(expected_parameters)
         or any(
-            not _exact(parameters[key], expected)
-            for key, expected in expected_parameters.items()
+            not _exact(parameters[key], expected) for key, expected in expected_parameters.items()
         )
     ):
         raise ValueError("score identity has the wrong fixed operator or upstream identity")
@@ -315,9 +301,7 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
         risk_receipts.append(_verify_risk(sample["risk"], sample_id=sample_id))
     if len(set(sample_ids)) != len(sample_ids):
         raise ValueError("calibration cache audit requires unique sample identities")
-    ordered_ids_digest = _digest(
-        value["ordered_sample_ids_sha256"], "ordered sample IDs digest"
-    )
+    ordered_ids_digest = _digest(value["ordered_sample_ids_sha256"], "ordered sample IDs digest")
     if ordered_ids_digest != ordered_sample_ids_sha256(sample_ids):
         raise ValueError("calibration cache audit ordered sample IDs digest is inconsistent")
     counts = MappingProxyType({"samples": 120, "predictions": 600, "scores": 120})

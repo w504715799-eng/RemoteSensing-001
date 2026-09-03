@@ -41,6 +41,37 @@ from trustsr.evaluation.calibration_predictions import (
     build_cache_provenance,
 )
 from trustsr.jsonio import canonical_json
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
+
+
+def _raw_model_provenance(seed: int) -> dict[str, object]:
+    return {
+        "name": MODEL_NAME,
+        "scale": 4,
+        "implementation_schema_version": 1,
+        "opensr_model_version": OPENSR_MODEL_VERSION,
+        "torch_version": "2.7.1+cu128",
+        "cuda_runtime": "12.8",
+        "checkpoint_name": CHECKPOINT_NAME,
+        "checkpoint_url": CHECKPOINT_URL,
+        "checkpoint_size": CHECKPOINT_SIZE,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "config_sha256": CONFIG_SHA256,
+        "device": "cuda",
+        "seed": seed,
+        "sampling_steps": 100,
+        "sampling_eta": 0.95,
+        "sampling_temperature": 1.0,
+        "histogram_matching": True,
+        "output_policy": "clip_to_[0,1]",
+    }
 
 
 def _pair(index: int) -> LoadedCrosssensorPair:
@@ -89,9 +120,7 @@ def _prepared(
         items = []
         for seed_index, seed in enumerate(SEEDS):
             identity = build_identity(
-                build_cache_provenance(
-                    {"name": MODEL_NAME, "scale": 4, "seed": seed, "backend": "test-cpu"}
-                ),
+                build_cache_provenance(_raw_model_provenance(seed)),
                 pair.pair.source,
                 pair.pair.sample_id,
                 pair.pair.lr,
@@ -160,9 +189,7 @@ def test_replay_rejects_pair_order_and_risk_mismatches(tmp_path: Path) -> None:
         pairs[0], pair=replace(pairs[0].pair, hr=torch.zeros_like(pairs[0].pair.hr))
     )
     with pytest.raises(ValueError, match="risk"):
-        replay_calibration_caches(
-            audit, (changed_pair, *pairs[1:]), prediction_cache, score_cache
-        )
+        replay_calibration_caches(audit, (changed_pair, *pairs[1:]), prediction_cache, score_cache)
 
 
 def test_replay_inputs_rejects_same_sample_with_a_different_k5_identity(tmp_path: Path) -> None:

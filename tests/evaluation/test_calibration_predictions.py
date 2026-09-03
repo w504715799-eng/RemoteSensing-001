@@ -30,6 +30,37 @@ from trustsr.evaluation.calibration_predictions import (
     load_or_generate_calibration_bundle,
 )
 from trustsr.evaluation.phase2b3b_evidence import INPUT_AUDIT_SHA256
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
+
+
+def _raw_model_provenance(seed: int = 3407) -> dict[str, object]:
+    return {
+        "name": MODEL_NAME,
+        "scale": 4,
+        "implementation_schema_version": 1,
+        "opensr_model_version": OPENSR_MODEL_VERSION,
+        "torch_version": "2.7.1+cu128",
+        "cuda_runtime": "12.8",
+        "checkpoint_name": CHECKPOINT_NAME,
+        "checkpoint_url": CHECKPOINT_URL,
+        "checkpoint_size": CHECKPOINT_SIZE,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "config_sha256": CONFIG_SHA256,
+        "device": "cuda",
+        "seed": seed,
+        "sampling_steps": 100,
+        "sampling_eta": 0.95,
+        "sampling_temperature": 1.0,
+        "histogram_matching": True,
+        "output_policy": "clip_to_[0,1]",
+    }
 
 
 def _pair() -> LoadedCrosssensorPair:
@@ -72,12 +103,7 @@ class _SeedModel:
         self.seed = seed
 
     def provenance(self) -> dict[str, object]:
-        return {
-            "name": self.name,
-            "scale": self.scale,
-            "seed": self.seed,
-            "backend": "tiny-cpu-fake",
-        }
+        return _raw_model_provenance(self.seed)
 
     def predict(self, lr: torch.Tensor) -> torch.Tensor:
         if self.owner.fail_on_predict:
@@ -100,7 +126,7 @@ class _FakeLDSR:
         self.requested_seeds: list[int] = []
 
     def provenance(self) -> dict[str, object]:
-        return {"name": self.name, "scale": self.scale, "seed": 3407}
+        return _raw_model_provenance()
 
     def for_seed(self, seed: int) -> _SeedModel:
         self.requested_seeds.append(seed)
@@ -149,8 +175,20 @@ def test_k5_identity_binds_calibration_context_and_upstream_evidence(tmp_path: P
     assert dict(bundle.for_seed(3407).identity.model_provenance) == {
         "name": "ldsr-s2-x4",
         "scale": 4,
+        "implementation_schema_version": 1,
+        "opensr_model_version": OPENSR_MODEL_VERSION,
+        "torch_version": "2.7.1+cu128",
+        "cuda_runtime": "12.8",
+        "checkpoint_name": CHECKPOINT_NAME,
+        "checkpoint_size": CHECKPOINT_SIZE,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "config_sha256": CONFIG_SHA256,
         "seed": 3407,
-        "backend": "tiny-cpu-fake",
+        "sampling_steps": 100,
+        "sampling_eta": 0.95,
+        "sampling_temperature": 1.0,
+        "histogram_matching": True,
+        "output_policy": "clip_to_[0,1]",
         "experiment_schema": "trustsr.phase2b3b-predictions.v1",
         "split": "calibration",
         "post_manifest_sha256": "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a",
@@ -237,7 +275,7 @@ def test_rejects_model_or_seed_provenance_conflicts(tmp_path: Path, field: str) 
 
 def test_rejects_ldsr_factory_provenance_conflict_before_seed_views(tmp_path: Path) -> None:
     model = _FakeLDSR()
-    model.provenance = lambda: {"name": MODEL_NAME, "scale": 4, "seed": 9999}  # type: ignore[method-assign]
+    model.provenance = lambda: _raw_model_provenance(9999)  # type: ignore[method-assign]
 
     with pytest.raises(ValueError, match="seed"):
         _generate(tmp_path, ldsr=model)
@@ -258,6 +296,24 @@ def test_rejects_reserved_context_provenance_keys() -> None:
     for key, value in reserved.items():
         with pytest.raises(ValueError, match="reserved"):
             build_cache_provenance({"name": MODEL_NAME, "scale": 4, key: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("checkpoint_sha256", "0" * 64),
+        ("config_sha256", "0" * 64),
+        ("implementation_schema_version", 2),
+        ("seed", 3412),
+        ("cuda_runtime", "forged-runtime"),
+    ),
+)
+def test_cache_provenance_rejects_forged_raw_model_identity(field: str, value: object) -> None:
+    provenance = _raw_model_provenance()
+    provenance[field] = value
+
+    with pytest.raises(ValueError):
+        build_cache_provenance(provenance)
 
 
 def test_wrong_prediction_tensor_is_rejected_by_real_cache_boundary(tmp_path: Path) -> None:
