@@ -16,6 +16,7 @@ from trustsr.jsonio import canonical_json
 POST_MANIFEST_SHA256 = "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a"
 INPUT_AUDIT_SHA256 = "fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b"
 PRODUCER_REVISION = "58694420c3c0e11d495953a1963c71b997261601"
+PUBLICATION_COMMIT = "b386d4b38c9f3725107eed178829955d442f5601"
 NORMALIZATION_POLICY = "uint16_saturate_10000_divide_10000_v2"
 CROP_POLICY = "center_crop_lr_1_hr_4_v1"
 _MAX_FILE_BYTES = 5 * 1024**2
@@ -137,6 +138,7 @@ class FrozenPhase2B3AEvidence:
     post_manifest_sha256: str
     input_audit_sha256: str
     producer_revision: str
+    publication_commit: str
     candidate_eligibility_evidence: tuple[Mapping[str, object], ...]
 
 
@@ -536,5 +538,6 @@ def load_frozen_phase2b3a_evidence(evidence_dir: Path) -> FrozenPhase2B3AEvidenc
         post_manifest_sha256=POST_MANIFEST_SHA256,
         input_audit_sha256=INPUT_AUDIT_SHA256,
         producer_revision=PRODUCER_REVISION,
+        publication_commit=PUBLICATION_COMMIT,
         candidate_eligibility_evidence=candidates,
     )

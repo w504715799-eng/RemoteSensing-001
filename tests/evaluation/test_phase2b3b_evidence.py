@@ -70,6 +70,8 @@ def test_loads_published_evidence_as_small_immutable_frozen_contract(
         "fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b"
     )
     assert frozen.producer_revision == "58694420c3c0e11d495953a1963c71b997261601"
+    assert frozen.publication_commit == "b386d4b38c9f3725107eed178829955d442f5601"
+    assert phase2b3b_evidence.PUBLICATION_COMMIT == frozen.publication_commit
     assert dict(frozen.source_digests) == phase2b3b_evidence.PUBLISHED_EVIDENCE_SHA256S
     assert len(frozen.candidate_eligibility_evidence) == 3
     assert frozen.candidate_eligibility_evidence[-1]["name"] == "ldsr_variance_k5"
