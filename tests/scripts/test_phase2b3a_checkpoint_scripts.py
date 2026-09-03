@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -9,6 +10,8 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,7 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[2]
 CHECKPOINT = REPOSITORY / "scripts" / "phase2b3a" / "checkpoint_workspace.sh"
 RESTORE = REPOSITORY / "scripts" / "phase2b3a" / "restore_workspace.sh"
+RESET_LIVE = REPOSITORY / "scripts" / "phase2b3a" / "reset_live_phase2b3a.sh"
 REVISION = "a" * 40
 SELECTION_BYTES = b'{"fixture":"selection"}\n'
 INPUT_AUDIT_BYTES = b'{"fixture":"input-audit"}\n'
@@ -352,6 +356,61 @@ def _recorded_calls(path: Path) -> list[list[str]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _write_reset_workspace(workspace: Path) -> dict[str, Path]:
+    phase1 = workspace / "trustsr" / "phase2b1b"
+    phase2 = workspace / "trustsr" / "phase2b2a"
+    phase3 = workspace / "trustsr" / "phase2b3a"
+    models = workspace / "model-mounts"
+    repository = workspace / "reviewed-repository"
+    durable = workspace.parent / "trustsr-phase2b3a-checkpoints"
+    for path in (
+        phase1,
+        phase2,
+        phase3 / "results",
+        phase3 / "logs",
+        models,
+        repository,
+        durable,
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+    (phase1 / "selection.json").write_bytes(b"phase2b1b-preserved")
+    (phase2 / "audit.json").write_bytes(b"phase2b2a-preserved")
+    (phase3 / "results" / "stale.json").write_bytes(b"disposable-result")
+    (phase3 / "logs" / "development.jsonl").write_bytes(b"disposable-log")
+    (phase3 / "results" / ".phase2b3a-a1-result.json.lock").write_bytes(b"")
+    (models / "weights.bin").write_bytes(b"models-preserved")
+    (repository / "tracked.txt").write_bytes(b"repository-preserved")
+    (durable / "checkpoint.json").write_bytes(b"checkpoint-preserved")
+    return {
+        "workspace": workspace,
+        "phase1": phase1,
+        "phase2": phase2,
+        "phase3": phase3,
+        "models": models,
+        "repository": repository,
+        "durable": durable,
+    }
+
+
+def _invoke_reset(workspace_argument: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(RESET_LIVE), workspace_argument],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+@contextmanager
+def _exclusive_lock(path: Path) -> Iterator[None]:
+    with path.open("a+b") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
 
 
 def _invoke_restore(
@@ -930,3 +989,153 @@ def test_restore_script_keeps_mounts_after_publication_when_output_is_malformed(
     assert sen2_target.is_dir()
     assert ldsr_target.is_dir()
     assert not prohibited.exists()
+
+
+def test_reset_live_phase2b3a_recreates_only_disposable_stage(tmp_path: Path) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+
+    completed = _invoke_reset(str(paths["workspace"]))
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == '{"status":"reset","target":"trustsr/phase2b3a"}\n'
+    assert completed.stderr == ""
+    assert paths["phase3"].is_dir()
+    assert not paths["phase3"].is_symlink()
+    assert list(paths["phase3"].iterdir()) == []
+    assert (paths["phase1"] / "selection.json").read_bytes() == b"phase2b1b-preserved"
+    assert (paths["phase2"] / "audit.json").read_bytes() == b"phase2b2a-preserved"
+    assert (paths["models"] / "weights.bin").read_bytes() == b"models-preserved"
+    assert (paths["repository"] / "tracked.txt").read_bytes() == b"repository-preserved"
+    assert (paths["durable"] / "checkpoint.json").read_bytes() == b"checkpoint-preserved"
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "missing-workspace",
+        "missing-trustsr",
+        "missing-target",
+        "workspace-symlink",
+        "trustsr-symlink",
+        "target-symlink",
+        "nested-symlink",
+        "named-pipe",
+        "stage-log-lock",
+        "stage-log-lock-file",
+        "output-lock-directory",
+        "durable-root-lookalike",
+    ],
+)
+def test_reset_live_phase2b3a_rejects_unsafe_layout_before_mutation(
+    tmp_path: Path, state: str
+) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+    workspace_argument = paths["workspace"]
+    protected = paths["phase3"] / "results" / "stale.json"
+    external = tmp_path / "external-stage"
+
+    if state == "missing-workspace":
+        workspace_argument = tmp_path / "missing-workspace"
+    elif state == "missing-trustsr":
+        shutil.rmtree(paths["workspace"] / "trustsr")
+    elif state == "missing-target":
+        shutil.rmtree(paths["phase3"])
+    elif state == "workspace-symlink":
+        workspace_link = tmp_path / "workspace-link"
+        workspace_link.symlink_to(paths["workspace"], target_is_directory=True)
+        workspace_argument = workspace_link
+    elif state == "trustsr-symlink":
+        real_trustsr = tmp_path / "real-trustsr"
+        (paths["workspace"] / "trustsr").rename(real_trustsr)
+        (paths["workspace"] / "trustsr").symlink_to(real_trustsr, target_is_directory=True)
+        protected = real_trustsr / "phase2b3a" / "results" / "stale.json"
+    elif state == "target-symlink":
+        paths["phase3"].rename(external)
+        paths["phase3"].symlink_to(external, target_is_directory=True)
+        protected = external / "results" / "stale.json"
+    elif state == "nested-symlink":
+        external.mkdir()
+        (external / "protected.txt").write_bytes(b"external-preserved")
+        (paths["phase3"] / "results" / "unsafe-link").symlink_to(external)
+    elif state == "named-pipe":
+        os.mkfifo(paths["phase3"] / "unsafe.pipe")
+    elif state == "stage-log-lock":
+        (paths["phase3"] / "logs" / "development.jsonl.lock").mkdir()
+    elif state == "stage-log-lock-file":
+        (paths["phase3"] / "logs" / "development.jsonl.lock").write_bytes(b"")
+    elif state == "output-lock-directory":
+        (paths["phase3"] / "results" / ".phase2b3a-a2-result.json.lock").mkdir()
+    elif state == "durable-root-lookalike":
+        workspace_argument = tmp_path / "trustsr-phase2b3a-checkpoints"
+        paths = _write_reset_workspace(workspace_argument)
+        protected = paths["phase3"] / "results" / "stale.json"
+    else:
+        raise AssertionError(f"unknown reset fixture state: {state}")
+
+    completed = _invoke_reset(str(workspace_argument))
+
+    assert completed.returncode == 2, (state, completed.stderr)
+    assert completed.stdout == ""
+    if protected.exists():
+        assert protected.read_bytes() == b"disposable-result"
+    if state == "nested-symlink":
+        assert (external / "protected.txt").read_bytes() == b"external-preserved"
+
+
+@pytest.mark.parametrize(
+    "argument_builder",
+    [
+        lambda workspace: "relative/workspace",
+        lambda workspace: "/",
+        lambda workspace: "/root",
+        lambda workspace: f"{workspace}/",
+        lambda workspace: str(workspace).replace("/work-mount", "//work-mount"),
+        lambda workspace: f"{workspace.parent}/./{workspace.name}",
+        lambda workspace: f"{workspace.parent}/other/../{workspace.name}",
+        lambda workspace: f"{workspace} ",
+        lambda workspace: f"{workspace}*",
+    ],
+)
+def test_reset_live_phase2b3a_rejects_unsafe_root_spelling_before_mutation(
+    tmp_path: Path, argument_builder: Callable[[Path], str]
+) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+    protected = paths["phase3"] / "results" / "stale.json"
+    workspace_argument = argument_builder(paths["workspace"])
+
+    completed = _invoke_reset(workspace_argument)
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert protected.read_bytes() == b"disposable-result"
+
+
+def test_reset_live_phase2b3a_rejects_argument_count_before_mutation(tmp_path: Path) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+    protected = paths["phase3"] / "results" / "stale.json"
+
+    for arguments in ([], [str(paths["workspace"]), str(paths["workspace"])]):
+        completed = subprocess.run(
+            ["bash", str(RESET_LIVE), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 2, completed.stderr
+        assert completed.stdout == ""
+        assert protected.read_bytes() == b"disposable-result"
+
+
+def test_reset_live_phase2b3a_rejects_active_output_lock_before_mutation(
+    tmp_path: Path,
+) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+    protected = paths["phase3"] / "results" / "stale.json"
+    lock = paths["phase3"] / "results" / ".phase2b3a-a1-result.json.lock"
+
+    with _exclusive_lock(lock):
+        completed = _invoke_reset(str(paths["workspace"]))
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert protected.read_bytes() == b"disposable-result"
