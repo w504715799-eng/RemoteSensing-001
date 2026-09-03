@@ -41,7 +41,7 @@ from trustsr.evaluation.phase2b3b_revision import (
 )
 from trustsr.jsonio import canonical_json
 
-SCHEMA = "trustsr.phase2b3b-calibration-result-verification.v1"
+SCHEMA = "trustsr.phase2b3b-calibration-result-metadata-verification.v1"
 _RESULT_SCHEMA = "trustsr.phase2b3b-calibration.v1"
 _RADIOMETRY_SCHEMA = "trustsr.phase2b3b-calibration-radiometry.v1"
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
@@ -91,9 +91,14 @@ _MEMBERSHIP_FIELDS = (
 
 @dataclass(frozen=True)
 class VerifiedPhase2B3BResult:
-    """Host-free verification receipt containing only canonical identities."""
+    """Metadata-consistency receipt; cannot prove cache pixels or score/risk calculations.
+
+    This receipt cannot authorize acceptance on its own.
+    """
 
     schema: str
+    verification_scope: str
+    cache_computation_verified: bool
     result_sha256: str
     cache_audit_sha256: str
     producer_revision: str
@@ -366,7 +371,11 @@ def verify_phase2b3b_result(
     storage_root: Path,
     manifest_path: Path,
 ) -> VerifiedPhase2B3BResult:
-    """Verify a final result from cache evidence and frozen manifest metadata only."""
+    """Verify metadata consistency only; does not prove cache pixels or calculations.
+
+    This function does not replay cache entries or recompute score/risk maps, so its
+    receipt cannot authorize acceptance on its own.
+    """
 
     value = _dict(result, _RESULT_KEYS, "Phase 2B3-B result")
     _reject_non_json_or_leaks(value)
@@ -535,6 +544,8 @@ def verify_phase2b3b_result(
     _validate_summary(value)
     return VerifiedPhase2B3BResult(
         schema=SCHEMA,
+        verification_scope="metadata_consistency_only",
+        cache_computation_verified=False,
         result_sha256=hashlib.sha256(canonical_result).hexdigest(),
         cache_audit_sha256=audit_sha256,
         producer_revision=producer,

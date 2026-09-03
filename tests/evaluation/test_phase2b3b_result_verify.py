@@ -111,7 +111,12 @@ def test_returns_frozen_host_free_receipt_and_calls_all_trusted_gates(
 
     receipt = _verify(monkeypatch, tmp_path, valid_case, events=events)
 
-    assert receipt.schema == "trustsr.phase2b3b-calibration-result-verification.v1"
+    assert (
+        receipt.schema
+        == "trustsr.phase2b3b-calibration-result-metadata-verification.v1"
+    )
+    assert receipt.verification_scope == "metadata_consistency_only"
+    assert receipt.cache_computation_verified is False
     assert receipt.cache_audit_sha256 == valid_case.result["cache_audit_sha256"]
     assert receipt.input_receipt_sha256 == valid_case.result["input_receipt_sha256"]
     assert receipt.ordered_inputs_sha256 == valid_case.result["ordered_inputs_sha256"]
@@ -125,6 +130,18 @@ def test_returns_frozen_host_free_receipt_and_calls_all_trusted_gates(
     assert str(tmp_path) not in repr(receipt)
     with pytest.raises(FrozenInstanceError):
         receipt.phase_decision = "changed"  # type: ignore[misc]
+
+
+def test_receipt_and_entrypoint_express_metadata_only_boundary() -> None:
+    receipt_docstring = phase2b3b_result_verify.VerifiedPhase2B3BResult.__doc__
+    verify_docstring = phase2b3b_result_verify.verify_phase2b3b_result.__doc__
+
+    assert receipt_docstring is not None
+    assert "cache pixels" in receipt_docstring
+    assert "score/risk" in receipt_docstring
+    assert "cannot authorize acceptance" in receipt_docstring
+    assert verify_docstring is not None
+    assert "does not prove cache pixels" in verify_docstring
 
 
 @pytest.mark.parametrize(
