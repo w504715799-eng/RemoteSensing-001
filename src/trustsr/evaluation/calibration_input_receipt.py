@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
 from trustsr.artifacts.predictions import tensor_sha256
 from trustsr.contracts import SRPair
 from trustsr.data.calibration_pairs import validate_calibration_records
+from trustsr.data.calibration_subset import load_calibration_records
 from trustsr.data.crosssensor_pairs import (
     CROP_POLICY,
     PHASE2B3A_NORMALIZATION_POLICY,
@@ -18,7 +20,10 @@ from trustsr.data.crosssensor_pairs import (
     CrosssensorPairMetadata,
     LoadedCrosssensorPair,
 )
-from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
+from trustsr.evaluation.phase2b3b_preflight import (
+    load_phase2b3b_preflight,
+    ordered_sample_ids_sha256,
+)
 from trustsr.jsonio import canonical_json
 
 SCHEMA = "trustsr.phase2b3b-calibration-input-receipt.v1"
@@ -72,7 +77,7 @@ _ASSET_KEYS = {"asset_sha256", "tensor_sha256", "shape", "dtype"}
 
 @dataclass(frozen=True)
 class VerifiedCalibrationInputReceipt:
-    """Host-free proof that one parsed input receipt is internally consistent."""
+    """Host-free proof of structural consistency, not manifest authority by itself."""
 
     source_sha256: str
     ordered_inputs_sha256: str
@@ -457,3 +462,54 @@ def verify_calibration_input_receipt(
         ordered_membership_sha256=ordered_membership_digest,
         sample_count=CALIBRATION_SIZE,
     )
+
+
+def _verify_receipt_against_authority(
+    receipt: object,
+    calibration_records: Sequence[Mapping[str, object]],
+    preflight: Mapping[str, object],
+) -> VerifiedCalibrationInputReceipt:
+    structural = verify_calibration_input_receipt(receipt)
+    records = validate_calibration_records(calibration_records)
+    authoritative_membership = [_membership(record) for record in records]
+    ordered_ids_digest, ordered_membership_digest, receipt_digests = _validate_preflight(
+        preflight, authoritative_membership
+    )
+    value = _json_mapping(receipt, _RECEIPT_KEYS, "calibration input receipt")
+    raw_samples = _json_list(
+        value["samples"], length=CALIBRATION_SIZE, label="receipt samples"
+    )
+    observed_membership = [
+        _verified_membership(
+            _json_mapping(sample, _SAMPLE_KEYS, "calibration input sample")["membership"]
+        )
+        for sample in raw_samples
+    ]
+    if observed_membership != authoritative_membership:
+        raise ValueError("input receipt membership differs from authoritative calibration records")
+    if (
+        value["ordered_sample_ids_sha256"] != ordered_ids_digest
+        or value["ordered_membership_sha256"] != ordered_membership_digest
+        or value["input_receipt_sha256s"] != receipt_digests
+    ):
+        raise ValueError("input receipt digests differ from authoritative calibration membership")
+    return structural
+
+
+def verify_authoritative_calibration_input_receipt(
+    receipt: object,
+    *,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
+) -> VerifiedCalibrationInputReceipt:
+    """Reload frozen metadata and bind a structural receipt to manifest authority.
+
+    This gate performs metadata/evidence loading only. It does not open sample pixels.
+    Callers must invoke this function in the trusted verifier checkout rather than
+    treating a directly constructed ``VerifiedCalibrationInputReceipt`` as proof.
+    """
+
+    records = load_calibration_records(storage_root, manifest_path)
+    preflight = load_phase2b3b_preflight(evidence_dir, storage_root, manifest_path)
+    return _verify_receipt_against_authority(receipt, records, preflight)

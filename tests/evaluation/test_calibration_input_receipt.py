@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 
 import pytest
 import torch
@@ -202,6 +204,95 @@ def test_builds_and_independently_verifies_canonical_host_free_receipt(
     encoded = canonical_json(first).decode()
     for forbidden in ("secret/", "relative_path", "hostname", "timestamp", "cuda"):
         assert forbidden not in encoded
+
+
+def test_authority_gate_reloads_frozen_metadata_without_calling_receipt_builder(
+    inputs: tuple[
+        tuple[dict[str, object], ...],
+        tuple[LoadedCrosssensorPair, ...],
+        dict[str, object],
+    ],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records, pairs, preflight = inputs
+    receipt = calibration_input_receipt.build_calibration_input_receipt(
+        records, pairs, preflight
+    )
+    calls: list[str] = []
+
+    def load_records(storage_root: Path, manifest_path: Path) -> object:
+        calls.append("records")
+        return records
+
+    def load_preflight(
+        evidence_dir: Path, storage_root: Path, manifest_path: Path
+    ) -> object:
+        calls.append("preflight")
+        return preflight
+
+    monkeypatch.setattr(calibration_input_receipt, "load_calibration_records", load_records)
+    monkeypatch.setattr(calibration_input_receipt, "load_phase2b3b_preflight", load_preflight)
+    monkeypatch.setattr(
+        calibration_input_receipt,
+        "build_calibration_input_receipt",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("builder called")),
+    )
+
+    verified = calibration_input_receipt.verify_authoritative_calibration_input_receipt(
+        receipt,
+        evidence_dir=tmp_path / "evidence",
+        storage_root=tmp_path / "storage",
+        manifest_path=tmp_path / "manifest.jsonl",
+    )
+
+    assert calls == ["records", "preflight"]
+    assert verified.source_sha256 == _sha(receipt)
+
+
+def test_authority_gate_rejects_fully_self_consistent_forged_membership(
+    inputs: tuple[
+        tuple[dict[str, object], ...],
+        tuple[LoadedCrosssensorPair, ...],
+        dict[str, object],
+    ],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authoritative_records, _, authoritative_preflight = inputs
+    forged_values = deepcopy(authoritative_records)
+    for index, record in enumerate(forged_values):
+        record["sample_id"] = f"internal_test-{index:03d}"
+        record["selection_sha256"] = _sha(f"forged-selection:{index}")
+        record["spatial_group_id"] = f"forged-group-{index:03d}"
+        record["lr_asset"]["sha256"] = _sha(f"forged-lr:{index}")
+        record["hr_asset"]["sha256"] = _sha(f"forged-hr:{index}")
+    forged_records = tuple(forged_values)
+    forged_preflight = _preflight(forged_records)
+    forged_pairs = tuple(_pair(record) for record in forged_records)
+    forged_receipt = calibration_input_receipt.build_calibration_input_receipt(
+        forged_records, forged_pairs, forged_preflight
+    )
+    calibration_input_receipt.verify_calibration_input_receipt(forged_receipt)
+
+    monkeypatch.setattr(
+        calibration_input_receipt,
+        "load_calibration_records",
+        lambda storage_root, manifest_path: authoritative_records,
+    )
+    monkeypatch.setattr(
+        calibration_input_receipt,
+        "load_phase2b3b_preflight",
+        lambda evidence_dir, storage_root, manifest_path: authoritative_preflight,
+    )
+
+    with pytest.raises(ValueError, match="authoritative|membership"):
+        calibration_input_receipt.verify_authoritative_calibration_input_receipt(
+            forged_receipt,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.jsonl",
+        )
 
 
 @pytest.mark.parametrize(
