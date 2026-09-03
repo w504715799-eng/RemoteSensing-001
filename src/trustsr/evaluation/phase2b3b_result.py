@@ -18,12 +18,14 @@ from trustsr.data.crosssensor_pairs import (
 from trustsr.evaluation.calibration_cache_verify import verify_calibration_cache_audit
 from trustsr.evaluation.calibration_fit import CalibrationFit
 from trustsr.evaluation.calibration_predictions import SEEDS
+from trustsr.evaluation.calibration_radiometry_verify import verify_calibration_radiometry
 from trustsr.evaluation.phase2b3b_evidence import (
     INPUT_AUDIT_SHA256,
     PRODUCER_REVISION,
     PUBLICATION_COMMIT,
     PUBLISHED_EVIDENCE_SHA256S,
 )
+from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 from trustsr.evaluation.phase2b3b_revision import Phase2B3BRevision
 from trustsr.jsonio import canonical_json
 
@@ -52,6 +54,16 @@ def _sequence(value: object, *, length: int, label: str) -> Sequence[object]:
 
 def _exact(actual: object, expected: object) -> bool:
     return type(actual) is type(expected) and actual == expected
+
+
+def _digest(value: object, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+    return value
 
 
 def _json_object(value: object, label: str) -> dict[str, object]:
@@ -94,10 +106,40 @@ def _validate_preflight(preflight: Mapping[str, object]) -> dict[str, object]:
     ):
         raise ValueError("preflight upstream identity is invalid")
     calibration = _mapping(
-        value["calibration"], {"sample_count", "strata"}, "preflight calibration"
+        value["calibration"],
+        {
+            "split",
+            "sample_count",
+            "ordered_sample_ids_sha256",
+            "ordered_membership_sha256",
+            "input_receipt_sha256s",
+            "strata",
+        },
+        "preflight calibration",
     )
-    if not _exact(calibration["sample_count"], 120):
+    if (
+        not _exact(calibration["split"], "calibration")
+        or not _exact(calibration["sample_count"], 120)
+    ):
         raise ValueError("preflight calibration count is invalid")
+    ordered_ids_digest = _digest(
+        calibration["ordered_sample_ids_sha256"],
+        "preflight ordered sample IDs digest",
+    )
+    ordered_membership_digest = _digest(
+        calibration["ordered_membership_sha256"],
+        "preflight ordered membership digest",
+    )
+    input_receipts = _sequence(
+        calibration["input_receipt_sha256s"],
+        length=120,
+        label="preflight input receipts",
+    )
+    normalized_input_receipts = tuple(
+        _digest(digest, "preflight input receipt digest") for digest in input_receipts
+    )
+    if len(set(normalized_input_receipts)) != 120:
+        raise ValueError("preflight input receipt digests must be unique and ordered")
     strata = _sequence(calibration["strata"], length=12, label="preflight strata")
     expected_cells = tuple((day, bin_index) for day in _DAYS for bin_index in _BINS)
     for raw, (day, bin_index) in zip(strata, expected_cells, strict=True):
@@ -157,6 +199,8 @@ def _validate_preflight(preflight: Mapping[str, object]) -> dict[str, object]:
             "phase2b3a_publication_commit": PUBLICATION_COMMIT,
             "phase2b3a_calculation_revision": PRODUCER_REVISION,
             "evidence_sha256s": dict(PUBLISHED_EVIDENCE_SHA256S),
+            "ordered_sample_ids_sha256": ordered_ids_digest,
+            "ordered_membership_sha256": ordered_membership_digest,
         },
         "score": {
             "name": "ldsr_variance_k5",
@@ -215,10 +259,22 @@ def _aggregate(samples: Sequence[dict[str, object]], asset: str) -> dict[str, ob
     }
 
 
-def _validate_radiometry(radiometry: object) -> tuple[dict[str, object], list[dict[str, object]]]:
+def _validate_radiometry(
+    radiometry: object,
+) -> tuple[dict[str, object], list[dict[str, object]], str]:
     value = _mapping(
         radiometry,
-        {"schema", "policy", "sample_count", "affected_sample_count", "lr", "hr", "samples"},
+        {
+            "schema",
+            "split",
+            "ordered_sample_ids_sha256",
+            "policy",
+            "sample_count",
+            "affected_sample_count",
+            "lr",
+            "hr",
+            "samples",
+        },
         "radiometry",
     )
     policy = _mapping(
@@ -247,6 +303,7 @@ def _validate_radiometry(radiometry: object) -> tuple[dict[str, object], list[di
     }
     if (
         value["schema"] != "trustsr.phase2b3b-calibration-radiometry.v1"
+        or not _exact(value["split"], "calibration")
         or not _exact(value["sample_count"], 120)
         or tuple(bands) != _BANDS
         or any(not _exact(policy[key], expected) for key, expected in expected_policy.items())
@@ -298,9 +355,12 @@ def _validate_radiometry(radiometry: object) -> tuple[dict[str, object], list[di
         samples.append(normalized)
         cells[(day, bin_index)].append(selection_round)
     sample_ids = [sample["sample_id"] for sample in samples]
+    radiometry_ordered_ids_digest = _digest(
+        value["ordered_sample_ids_sha256"], "radiometry ordered sample IDs digest"
+    )
     if len(set(sample_ids)) != 120 or any(
         tuple(sorted(rounds)) != _ROUNDS for rounds in cells.values()
-    ):
+    ) or radiometry_ordered_ids_digest != ordered_sample_ids_sha256(sample_ids):
         raise ValueError("radiometry samples must be unique with complete fixed strata")
     lr = _aggregate(samples, "lr")
     hr = _aggregate(samples, "hr")
@@ -327,6 +387,7 @@ def _validate_radiometry(radiometry: object) -> tuple[dict[str, object], list[di
             "hr": hr,
         },
         samples,
+        radiometry_ordered_ids_digest,
     )
 
 
@@ -381,7 +442,10 @@ def build_phase2b3b_result(
     validated_fit = _validate_fit(fit)
     frozen = _validate_preflight(preflight)
     normalized_radiometry = _json_object(radiometry, "radiometry")
-    radiometry_summary, radiometry_samples = _validate_radiometry(normalized_radiometry)
+    radiometry_verification = verify_calibration_radiometry(normalized_radiometry)
+    radiometry_summary, radiometry_samples, radiometry_ordered_ids_digest = (
+        _validate_radiometry(normalized_radiometry)
+    )
     producer_revision = _validate_revision(revision)
 
     audit_samples = normalized_audit["samples"]
@@ -392,6 +456,17 @@ def build_phase2b3b_result(
         and validated_fit.calibration_size == normalized_audit["sample_count"] == 120
     ):
         raise ValueError("fit, cache audit, and radiometry ordered samples differ")
+    authoritative_ordered_ids_digest = frozen["upstream"][
+        "ordered_sample_ids_sha256"
+    ]
+    if not (
+        cache_verification["ordered_sample_ids_sha256"]
+        == radiometry_verification.ordered_sample_ids_sha256
+        == radiometry_ordered_ids_digest
+        == ordered_sample_ids_sha256(validated_fit.sample_ids)
+        == authoritative_ordered_ids_digest
+    ):
+        raise ValueError("derived artifacts differ from authoritative calibration membership")
     audit_map_evidence_sha256 = _audit_map_evidence_sha256(audit_samples)
     if validated_fit.map_evidence_sha256 != audit_map_evidence_sha256:
         raise ValueError("calibration fit map evidence differs from verified cache audit")
@@ -403,6 +478,7 @@ def build_phase2b3b_result(
         samples.append(
             {
                 "sample_id": audit_sample["sample_id"],
+                "split": "calibration",
                 "predictions": [
                     {
                         "seed": prediction["seed"],
@@ -422,6 +498,7 @@ def build_phase2b3b_result(
     cache_audit_sha256 = cache_verification["digests"]["audit_sha256"]
     result = {
         "schema": "trustsr.phase2b3b-calibration.v1",
+        "split": "calibration",
         "upstream": frozen["upstream"],
         "producer_revision": producer_revision,
         "frozen": {

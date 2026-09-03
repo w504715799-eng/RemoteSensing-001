@@ -143,6 +143,11 @@ def test_replay_fails_closed_for_missing_cache_or_mutated_audit(tmp_path: Path) 
     with pytest.raises(ValueError, match="risk|digest"):
         replay_calibration_caches(changed, pairs, prediction_cache, score_cache)
 
+    wrong_split = deepcopy(audit)
+    wrong_split["split"] = "internal_test"
+    with pytest.raises(ValueError, match="split|schema"):
+        replay_calibration_caches(wrong_split, pairs, prediction_cache, score_cache)
+
 
 def test_replay_rejects_pair_order_and_risk_mismatches(tmp_path: Path) -> None:
     audit, pairs, prediction_cache, score_cache = _prepared(tmp_path)

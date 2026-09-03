@@ -24,12 +24,21 @@ from trustsr.evaluation.phase2b3b_evidence import (
     INPUT_AUDIT_SHA256,
     PRODUCER_REVISION,
 )
+from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 from trustsr.jsonio import canonical_json
 
 _AUDIT_SCHEMA = "trustsr.phase2b3b-calibration-cache-audit.v1"
 _VERIFICATION_SCHEMA = "trustsr.phase2b3b-calibration-cache-verification.v1"
 _SOURCE = f"sen2naipv2-crosssensor/{POST_MANIFEST_SHA256}"
-_TOP_KEYS = {"schema", "sample_count", "prediction_count", "score_count", "samples"}
+_TOP_KEYS = {
+    "schema",
+    "split",
+    "ordered_sample_ids_sha256",
+    "sample_count",
+    "prediction_count",
+    "score_count",
+    "samples",
+}
 _SAMPLE_KEYS = {"sample_id", "predictions", "score", "risk"}
 _PREDICTION_KEYS = {
     "model_name",
@@ -89,6 +98,7 @@ def _rebuild_prediction_identity(
         "scale": 4,
         "seed": seed,
         "experiment_schema": EXPERIMENT_SCHEMA,
+        "split": "calibration",
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
@@ -245,6 +255,7 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
         raise ValueError("calibration cache audit is not canonical JSON data") from exc
     if (
         value["schema"] != _AUDIT_SCHEMA
+        or not _exact(value["split"], "calibration")
         or not _exact(value["sample_count"], 120)
         or not _exact(value["prediction_count"], 600)
         or not _exact(value["score_count"], 120)
@@ -304,6 +315,11 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
         risk_receipts.append(_verify_risk(sample["risk"], sample_id=sample_id))
     if len(set(sample_ids)) != len(sample_ids):
         raise ValueError("calibration cache audit requires unique sample identities")
+    ordered_ids_digest = _digest(
+        value["ordered_sample_ids_sha256"], "ordered sample IDs digest"
+    )
+    if ordered_ids_digest != ordered_sample_ids_sha256(sample_ids):
+        raise ValueError("calibration cache audit ordered sample IDs digest is inconsistent")
     counts = MappingProxyType({"samples": 120, "predictions": 600, "scores": 120})
     digests = MappingProxyType(
         {
@@ -314,5 +330,11 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
         }
     )
     return MappingProxyType(
-        {"schema": _VERIFICATION_SCHEMA, "counts": counts, "digests": digests}
+        {
+            "schema": _VERIFICATION_SCHEMA,
+            "split": "calibration",
+            "ordered_sample_ids_sha256": ordered_ids_digest,
+            "counts": counts,
+            "digests": digests,
+        }
     )

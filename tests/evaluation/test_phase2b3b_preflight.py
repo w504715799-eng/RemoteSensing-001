@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import replace
@@ -11,27 +12,54 @@ import pytest
 
 from trustsr.evaluation import phase2b3b_preflight
 from trustsr.evaluation.phase2b3b_evidence import load_frozen_phase2b3a_evidence
+from trustsr.jsonio import canonical_json
 
 _ARTIFACTS = Path(__file__).parents[2] / "artifacts" / "phase2b3a"
+
+
+def _sha(label: str) -> str:
+    return hashlib.sha256(label.encode()).hexdigest()
 
 
 def _calibration_records() -> tuple[dict[str, object], ...]:
     return tuple(
         {
             "sample_id": f"calibration-{day}-{bin_index}-{round_index}",
-            "selection_sha256": f"selection-{day}-{bin_index}-{round_index}",
+            "selection_sha256": _sha(f"selection:{day}:{bin_index}:{round_index}"),
             "spatial_group_id": f"group-{day}-{bin_index}-{round_index}",
             "split": "calibration",
             "days_between": day,
             "correlation_bin": bin_index,
             "selection_round": round_index,
-            "lr_asset": {"path": f"secret/lr-{day}-{bin_index}-{round_index}.tif"},
-            "hr_asset": {"path": f"secret/hr-{day}-{bin_index}-{round_index}.tif"},
+            "lr_asset": {
+                "path": f"secret/lr-{day}-{bin_index}-{round_index}.tif",
+                "sha256": _sha(f"lr:{day}:{bin_index}:{round_index}"),
+            },
+            "hr_asset": {
+                "path": f"secret/hr-{day}-{bin_index}-{round_index}.tif",
+                "sha256": _sha(f"hr:{day}:{bin_index}:{round_index}"),
+            },
         }
         for day in (-1, 0, 1)
         for bin_index in range(4)
         for round_index in range(1, 11)
     )
+
+
+def _membership(records: tuple[dict[str, object], ...]) -> list[dict[str, object]]:
+    return [
+        {
+            "sample_id": record["sample_id"],
+            "selection_sha256": record["selection_sha256"],
+            "spatial_group_id": record["spatial_group_id"],
+            "lr_asset_sha256": record["lr_asset"]["sha256"],
+            "hr_asset_sha256": record["hr_asset"]["sha256"],
+            "days_between": record["days_between"],
+            "correlation_bin": record["correlation_bin"],
+            "selection_round": record["selection_round"],
+        }
+        for record in records
+    ]
 
 
 @pytest.fixture
@@ -74,7 +102,20 @@ def test_builds_immutable_host_free_preflight_from_frozen_metadata(
     assert result["upstream"]["evidence_sha256s"][
         "sen2naipv2-development-score-acceptance-v1.json"
     ] == "34741fe788cac6e28c6d8b1ce2fd96335b608e1b3e6ffb29e82ac064a2118227"
+    records = _calibration_records()
+    membership = _membership(records)
+    sample_ids = [record["sample_id"] for record in membership]
     assert result["calibration"]["sample_count"] == 120
+    assert result["calibration"]["split"] == "calibration"
+    assert result["calibration"]["ordered_sample_ids_sha256"] == hashlib.sha256(
+        canonical_json(sample_ids)
+    ).hexdigest()
+    assert result["calibration"]["ordered_membership_sha256"] == hashlib.sha256(
+        canonical_json(membership)
+    ).hexdigest()
+    assert result["calibration"]["input_receipt_sha256s"] == tuple(
+        hashlib.sha256(canonical_json(record)).hexdigest() for record in membership
+    )
     assert result["calibration"]["strata"] == tuple(
         {
             "days_between": day,
@@ -110,7 +151,9 @@ def test_builds_immutable_host_free_preflight_from_frozen_metadata(
     encoded = json.dumps(_plain(result), sort_keys=True)
     assert "secret/" not in encoded
     assert str(tmp_path) not in encoded
-    assert "sample_id" not in encoded
+    assert '"sample_id"' not in encoded
+    assert records[0]["sample_id"] not in encoded
+    assert records[0]["selection_sha256"] not in encoded
     assert "alpha" not in encoded
     assert "coverage" not in encoded
 
@@ -151,6 +194,8 @@ def test_rejects_incomplete_or_forged_calibration_metadata(
         ("non_string_spatial_group_id", "spatial_group_id"),
         ("missing_lr_asset", "lr_asset"),
         ("empty_hr_asset", "hr_asset"),
+        ("missing_lr_asset_sha256", "lr_asset.*sha256"),
+        ("uppercase_hr_asset_sha256", "hr_asset.*sha256"),
     ),
 )
 def test_rejects_forged_calibration_identity_or_asset_metadata(
@@ -170,6 +215,10 @@ def test_rejects_forged_calibration_identity_or_asset_metadata(
         records[0]["spatial_group_id"] = 1
     elif fault == "missing_lr_asset":
         records[0].pop("lr_asset")
+    elif fault == "missing_lr_asset_sha256":
+        records[0]["lr_asset"] = {"path": "secret/lr.tif"}
+    elif fault == "uppercase_hr_asset_sha256":
+        records[0]["hr_asset"] = {"sha256": "A" * 64}
     else:
         records[0]["hr_asset"] = {}
 
@@ -230,10 +279,10 @@ def test_path_loader_composes_only_verified_evidence_and_calibration_metadata(
     assert result["calibration"]["sample_count"] == 120
 
 
-def test_output_is_identical_when_valid_calibration_metadata_order_changes(
+def test_membership_digests_bind_manifest_order_while_strata_remain_canonical(
     frozen_evidence: object,
 ) -> None:
-    """Input iteration order cannot make a host-dependent or noncanonical receipt."""
+    """Manifest order is authoritative even though summary strata use fixed cell order."""
 
     first = phase2b3b_preflight.build_phase2b3b_preflight(
         frozen_evidence, _calibration_records()
@@ -242,4 +291,10 @@ def test_output_is_identical_when_valid_calibration_metadata_order_changes(
         frozen_evidence, tuple(reversed(_calibration_records()))
     )
 
-    assert _plain(first) == _plain(second)
+    assert first["calibration"]["strata"] == second["calibration"]["strata"]
+    for field in (
+        "ordered_sample_ids_sha256",
+        "ordered_membership_sha256",
+        "input_receipt_sha256s",
+    ):
+        assert first["calibration"][field] != second["calibration"][field]

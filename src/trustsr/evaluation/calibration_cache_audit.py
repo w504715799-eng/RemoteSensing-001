@@ -10,6 +10,7 @@ from trustsr.evaluation.calibration_predictions import (
     CachedCalibrationPrediction,
     CalibrationPredictionBundle,
 )
+from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 
 
 def _prediction_entry(item: CachedCalibrationPrediction) -> dict[str, object]:
@@ -98,6 +99,10 @@ def build_calibration_cache_audit(
     samples = tuple(_sample_entry(bundle, sample_maps) for bundle, sample_maps in validated)
     return {
         "schema": "trustsr.phase2b3b-calibration-cache-audit.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": ordered_sample_ids_sha256(
+            [bundle.sample_id for bundle, _ in validated]
+        ),
         "sample_count": len(samples),
         "prediction_count": sum(len(bundle.items) for bundle, _ in validated),
         "score_count": len(validated),

@@ -43,6 +43,7 @@ def _model_provenance(seed: int) -> dict[str, str | int]:
         "seed": seed,
         "backend": "tiny-cpu-fixture",
         "experiment_schema": EXPERIMENT_SCHEMA,
+        "split": "calibration",
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
@@ -122,12 +123,17 @@ def _sample(index: int) -> dict[str, object]:
 
 @pytest.fixture
 def parsed_audit() -> dict[str, object]:
+    samples = [_sample(index) for index in range(120)]
     return {
         "schema": "trustsr.phase2b3b-calibration-cache-audit.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": hashlib.sha256(
+            canonical_json([sample["sample_id"] for sample in samples])
+        ).hexdigest(),
         "sample_count": 120,
         "prediction_count": 600,
         "score_count": 120,
-        "samples": [_sample(index) for index in range(120)],
+        "samples": samples,
     }
 
 
@@ -141,6 +147,10 @@ def test_independently_verifies_audit_and_returns_immutable_host_free_receipt(
     second = calibration_cache_verify.verify_calibration_cache_audit(reparsed)
 
     assert first["schema"] == "trustsr.phase2b3b-calibration-cache-verification.v1"
+    assert first["split"] == "calibration"
+    assert first["ordered_sample_ids_sha256"] == parsed_audit[
+        "ordered_sample_ids_sha256"
+    ]
     assert first["counts"] == {
         "samples": 120,
         "predictions": 600,
@@ -196,6 +206,8 @@ def _assert_list(value: object) -> list[object]:
         "sample_count",
         "prediction_count",
         "score_count",
+        "audit_split",
+        "ordered_sample_digest",
         "seed",
         "seed_order",
         "model",
@@ -257,6 +269,10 @@ def test_rejects_hostile_schema_identity_and_digest_mutations(
         risk.pop("window")
     elif fault in {"sample_count", "prediction_count", "score_count"}:
         parsed_audit[fault] = True
+    elif fault == "audit_split":
+        parsed_audit["split"] = "internal_test"
+    elif fault == "ordered_sample_digest":
+        parsed_audit["ordered_sample_ids_sha256"] = "0" * 64
     elif fault == "seed":
         prediction["seed"] = 9999
     elif fault == "seed_order":

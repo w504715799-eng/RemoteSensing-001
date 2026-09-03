@@ -35,6 +35,7 @@ _BINS = (0, 1, 2, 3)
 _ROUNDS = tuple(range(1, 11))
 _CONTEXT_KEYS = (
     "experiment_schema",
+    "split",
     "post_manifest_sha256",
     "input_audit_sha256",
     "normalization_policy",
@@ -56,6 +57,7 @@ def build_cache_provenance(
     result.update(
         {
             "experiment_schema": EXPERIMENT_SCHEMA,
+            "split": "calibration",
             "post_manifest_sha256": phase2b3b_evidence.POST_MANIFEST_SHA256,
             "input_audit_sha256": phase2b3b_evidence.INPUT_AUDIT_SHA256,
             "normalization_policy": phase2b3b_evidence.NORMALIZATION_POLICY,

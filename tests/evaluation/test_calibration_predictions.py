@@ -152,6 +152,7 @@ def test_k5_identity_binds_calibration_context_and_upstream_evidence(tmp_path: P
         "seed": 3407,
         "backend": "tiny-cpu-fake",
         "experiment_schema": "trustsr.phase2b3b-predictions.v1",
+        "split": "calibration",
         "post_manifest_sha256": "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a",
         "input_audit_sha256": "fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b",
         "normalization_policy": "uint16_saturate_10000_divide_10000_v2",
@@ -247,6 +248,7 @@ def test_rejects_ldsr_factory_provenance_conflict_before_seed_views(tmp_path: Pa
 def test_rejects_reserved_context_provenance_keys() -> None:
     reserved = {
         "experiment_schema": EXPERIMENT_SCHEMA,
+        "split": "calibration",
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
@@ -302,6 +304,30 @@ def test_item_constructor_rejects_identity_with_wrong_calibration_context(tmp_pa
         item.identity.sample_id,
         _pair().pair.lr,
     )
+    with pytest.raises(ValueError, match="provenance"):
+        CachedCalibrationPrediction(
+            model_name=MODEL_NAME,
+            seed=3407,
+            identity=wrong_identity,
+            prediction_sha256=item.prediction_sha256,
+            tensor=item.tensor,
+        )
+
+
+def test_item_constructor_rejects_prediction_provenance_for_another_split(
+    tmp_path: Path,
+) -> None:
+    item = _generate(tmp_path).for_seed(3407)
+    provenance = dict(item.identity.model_provenance)
+    provenance["split"] = "internal_test"
+    wrong_identity = build_identity(
+        provenance,
+        item.identity.source,
+        item.identity.sample_id,
+        _pair().pair.lr,
+    )
+    assert wrong_identity.key != item.identity.key
+
     with pytest.raises(ValueError, match="provenance"):
         CachedCalibrationPrediction(
             model_name=MODEL_NAME,

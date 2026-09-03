@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 from trustsr.jsonio import canonical_json
 
 _SCHEMA = "trustsr.phase2b3b-calibration-radiometry.v1"
@@ -20,6 +21,8 @@ _BINS = (0, 1, 2, 3)
 _ROUNDS = tuple(range(1, 11))
 _TOP_KEYS = {
     "schema",
+    "split",
+    "ordered_sample_ids_sha256",
     "policy",
     "sample_count",
     "affected_sample_count",
@@ -58,6 +61,8 @@ class VerifiedCalibrationRadiometry:
 
     source_sha256: str
     aggregate_sha256: str
+    split: str
+    ordered_sample_ids_sha256: str
     sample_count: int
     affected_sample_count: int
     aggregates: Mapping[str, Mapping[str, object]]
@@ -72,6 +77,16 @@ def _exact_dict(value: object, keys: set[str], label: str) -> dict[str, object]:
 def _integer(value: object, label: str) -> int:
     if type(value) is not int:
         raise TypeError(f"{label} must be a built-in integer")
+    return value
+
+
+def _digest(value: object, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
     return value
 
 
@@ -194,6 +209,8 @@ def verify_calibration_radiometry(value: object) -> VerifiedCalibrationRadiometr
     receipt = _exact_dict(value, _TOP_KEYS, "radiometry receipt")
     if receipt["schema"] != _SCHEMA or type(receipt["schema"]) is not str:
         raise ValueError("radiometry receipt schema is invalid")
+    if receipt["split"] != "calibration" or type(receipt["split"]) is not str:
+        raise ValueError("radiometry receipt split is invalid")
     _validate_policy(receipt["policy"])
     sample_count = _integer(receipt["sample_count"], "radiometry receipt sample count")
     affected_count = _integer(
@@ -208,6 +225,11 @@ def verify_calibration_radiometry(value: object) -> VerifiedCalibrationRadiometr
     sample_ids = [sample["sample_id"] for sample in samples]
     if len(set(sample_ids)) != len(sample_ids):
         raise ValueError("radiometry receipt requires unique sample identities")
+    ordered_ids_digest = _digest(
+        receipt["ordered_sample_ids_sha256"], "radiometry ordered sample IDs digest"
+    )
+    if ordered_ids_digest != ordered_sample_ids_sha256(sample_ids):
+        raise ValueError("radiometry ordered sample IDs digest is inconsistent")
     cells: dict[tuple[int, int], list[int]] = {
         (day, bin_index): [] for day in _DAYS for bin_index in _BINS
     }
@@ -243,6 +265,8 @@ def verify_calibration_radiometry(value: object) -> VerifiedCalibrationRadiometr
     return VerifiedCalibrationRadiometry(
         source_sha256=hashlib.sha256(source_payload).hexdigest(),
         aggregate_sha256=hashlib.sha256(aggregate_payload_bytes).hexdigest(),
+        split="calibration",
+        ordered_sample_ids_sha256=ordered_ids_digest,
         sample_count=sample_count,
         affected_sample_count=affected_count,
         aggregates=MappingProxyType(

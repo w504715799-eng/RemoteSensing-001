@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 from dataclasses import replace
 from types import ModuleType
@@ -113,6 +114,8 @@ def test_builds_hand_checked_host_free_radiometric_receipt() -> None:
 
     assert set(result) == {
         "schema",
+        "split",
+        "ordered_sample_ids_sha256",
         "policy",
         "sample_count",
         "affected_sample_count",
@@ -121,6 +124,10 @@ def test_builds_hand_checked_host_free_radiometric_receipt() -> None:
         "samples",
     }
     assert result["schema"] == "trustsr.phase2b3b-calibration-radiometry.v1"
+    assert result["split"] == "calibration"
+    assert result["ordered_sample_ids_sha256"] == hashlib.sha256(
+        canonical_json([pair.pair.sample_id for pair in _pairs()])
+    ).hexdigest()
     assert result["policy"] == {
         "normalization_policy": "uint16_saturate_10000_divide_10000_v2",
         "raw_radiometric_max": 32767,

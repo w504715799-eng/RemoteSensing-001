@@ -16,6 +16,7 @@ from trustsr.data.crosssensor_pairs import (
     RadiometricSaturation,
 )
 from trustsr.data.subset_manifest import BANDS
+from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 
 _DAYS = (-1, 0, 1)
 _BINS = (0, 1, 2, 3)
@@ -142,6 +143,8 @@ def build_calibration_radiometry(
     )
     return {
         "schema": "trustsr.phase2b3b-calibration-radiometry.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": ordered_sample_ids_sha256(sample_ids),
         "policy": {
             "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
             "raw_radiometric_max": RAW_RADIOMETRIC_MAX,

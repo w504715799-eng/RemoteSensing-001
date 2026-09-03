@@ -56,6 +56,10 @@ def _document() -> dict[str, object]:
         )
     return {
         "schema": "trustsr.phase2b3b-calibration-radiometry.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": hashlib.sha256(
+            canonical_json([sample["sample_id"] for sample in samples])
+        ).hexdigest(),
         "policy": {
             "normalization_policy": "uint16_saturate_10000_divide_10000_v2",
             "raw_radiometric_max": 32767,
@@ -89,6 +93,8 @@ def test_independently_verifies_receipt_and_returns_immutable_host_free_digests(
     verified = _module().verify_calibration_radiometry(document)
 
     assert verified.source_sha256 == hashlib.sha256(canonical_json(document)).hexdigest()
+    assert verified.split == "calibration"
+    assert verified.ordered_sample_ids_sha256 == document["ordered_sample_ids_sha256"]
     assert verified.sample_count == 120
     assert verified.affected_sample_count == 1
     assert verified.aggregate_sha256 == hashlib.sha256(
@@ -125,6 +131,11 @@ def test_sample_reordering_is_bound_by_source_digest_but_not_aggregate_digest() 
         second_document["samples"][1],  # type: ignore[index]
         second_document["samples"][0],  # type: ignore[index]
     )
+    second_document["ordered_sample_ids_sha256"] = hashlib.sha256(
+        canonical_json(
+            [sample["sample_id"] for sample in second_document["samples"]]  # type: ignore[index]
+        )
+    ).hexdigest()
 
     first = module.verify_calibration_radiometry(first_document)
     second = module.verify_calibration_radiometry(second_document)
@@ -133,7 +144,9 @@ def test_sample_reordering_is_bound_by_source_digest_but_not_aggregate_digest() 
     assert first.aggregate_sha256 == second.aggregate_sha256
 
 
-@pytest.mark.parametrize("fault", ("extra", "missing", "schema", "non_dict"))
+@pytest.mark.parametrize(
+    "fault", ("extra", "missing", "schema", "split", "ordered_digest", "non_dict")
+)
 def test_rejects_wrong_top_level_schema_or_keys(fault: str) -> None:
     module = _module()
     document: object = _document()
@@ -143,10 +156,14 @@ def test_rejects_wrong_top_level_schema_or_keys(fault: str) -> None:
         document.pop("hr")  # type: ignore[union-attr]
     elif fault == "schema":
         document["schema"] = "wrong"  # type: ignore[index]
+    elif fault == "split":
+        document["split"] = "internal_test"  # type: ignore[index]
+    elif fault == "ordered_digest":
+        document["ordered_sample_ids_sha256"] = "0" * 64  # type: ignore[index]
     else:
         document = MappingProxyType(document)  # type: ignore[arg-type]
 
-    with pytest.raises((TypeError, ValueError), match="receipt|schema|JSON"):
+    with pytest.raises((TypeError, ValueError), match="receipt|schema|split|digest|JSON"):
         module.verify_calibration_radiometry(document)
 
 

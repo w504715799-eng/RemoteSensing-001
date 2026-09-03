@@ -138,12 +138,18 @@ def test_builds_canonical_host_free_exact_calibration_cache_audit(
     second = calibration_cache_audit.build_calibration_cache_audit(bundles, maps)
 
     assert first["schema"] == "trustsr.phase2b3b-calibration-cache-audit.v1"
+    assert first["split"] == "calibration"
+    assert first["ordered_sample_ids_sha256"] == hashlib.sha256(
+        canonical_json([bundle.sample_id for bundle in bundles])
+    ).hexdigest()
     assert first["sample_count"] == 120
     assert first["prediction_count"] == 600
     assert first["score_count"] == 120
     assert len(first["samples"]) == 120
     assert set(first) == {
         "schema",
+        "split",
+        "ordered_sample_ids_sha256",
         "sample_count",
         "prediction_count",
         "score_count",

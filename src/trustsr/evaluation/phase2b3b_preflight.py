@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -20,6 +21,7 @@ from trustsr.evaluation.phase2b3b_evidence import (
     FrozenPhase2B3AEvidence,
     load_frozen_phase2b3a_evidence,
 )
+from trustsr.jsonio import canonical_json
 
 _DAYS = (-1, 0, 1)
 _BINS = (0, 1, 2, 3)
@@ -33,6 +35,27 @@ _OPERATOR_PARAMETERS = {
     "seed_first": 3407,
     "seed_last": 3411,
 }
+
+
+def _digest(value: object, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+    return value
+
+
+def ordered_sample_ids_sha256(sample_ids: Sequence[str]) -> str:
+    """Digest one explicit sample sequence using its manifest order."""
+
+    if isinstance(sample_ids, str | bytes) or not isinstance(sample_ids, Sequence):
+        raise TypeError("ordered sample IDs must be a sequence")
+    values = list(sample_ids)
+    if any(type(sample_id) is not str or not sample_id for sample_id in values):
+        raise ValueError("ordered sample IDs must be non-empty strings")
+    return hashlib.sha256(canonical_json(values)).hexdigest()
 
 
 def _freeze(value: Any) -> object:
@@ -88,7 +111,7 @@ def _validated_evidence(value: object) -> FrozenPhase2B3AEvidence:
 
 def _calibration_strata(
     records: Sequence[Mapping[str, object]],
-) -> tuple[dict[str, int], ...]:
+) -> tuple[tuple[dict[str, int], ...], tuple[dict[str, object], ...]]:
     if not isinstance(records, Sequence) or len(records) != 120:
         raise ValueError("Phase 2B3-B preflight requires exactly 120 calibration records")
     rounds: dict[tuple[int, int], list[int]] = {
@@ -97,6 +120,7 @@ def _calibration_strata(
     identities: dict[str, list[str]] = {
         field: [] for field in ("sample_id", "selection_sha256", "spatial_group_id")
     }
+    membership: list[dict[str, object]] = []
     for record in records:
         if not isinstance(record, Mapping) or record.get("split") != "calibration":
             raise ValueError("Phase 2B3-B preflight accepts calibration metadata only")
@@ -105,10 +129,15 @@ def _calibration_strata(
             if type(identity) is not str or not identity:
                 raise ValueError(f"Phase 2B3-B calibration {field} must be a non-empty string")
             values.append(identity)
+        _digest(record["selection_sha256"], "Phase 2B3-B calibration selection_sha256")
+        asset_sha256s: dict[str, str] = {}
         for field in ("lr_asset", "hr_asset"):
             asset = record.get(field)
             if not isinstance(asset, Mapping) or not asset:
                 raise ValueError(f"Phase 2B3-B calibration record requires non-empty {field}")
+            asset_sha256s[field] = _digest(
+                asset.get("sha256"), f"Phase 2B3-B calibration {field} sha256"
+            )
         day = record.get("days_between")
         bin_index = record.get("correlation_bin")
         selection_round = record.get("selection_round")
@@ -120,6 +149,18 @@ def _calibration_strata(
         ):
             raise ValueError("Phase 2B3-B calibration stratum metadata is invalid")
         rounds[(day, bin_index)].append(selection_round)
+        membership.append(
+            {
+                "sample_id": record["sample_id"],
+                "selection_sha256": record["selection_sha256"],
+                "spatial_group_id": record["spatial_group_id"],
+                "lr_asset_sha256": asset_sha256s["lr_asset"],
+                "hr_asset_sha256": asset_sha256s["hr_asset"],
+                "days_between": day,
+                "correlation_bin": bin_index,
+                "selection_round": selection_round,
+            }
+        )
     for field, values in identities.items():
         if len(set(values)) != len(values):
             raise ValueError(f"Phase 2B3-B calibration records require unique {field}")
@@ -128,14 +169,17 @@ def _calibration_strata(
     counts = Counter(
         (record["days_between"], record["correlation_bin"]) for record in records
     )
-    return tuple(
-        {
-            "days_between": day,
-            "correlation_bin": bin_index,
-            "sample_count": counts[(day, bin_index)],
-        }
-        for day in _DAYS
-        for bin_index in _BINS
+    return (
+        tuple(
+            {
+                "days_between": day,
+                "correlation_bin": bin_index,
+                "sample_count": counts[(day, bin_index)],
+            }
+            for day in _DAYS
+            for bin_index in _BINS
+        ),
+        tuple(membership),
     )
 
 
@@ -146,7 +190,11 @@ def build_phase2b3b_preflight(
     """Build an immutable host-free summary without loading sample pixels."""
 
     frozen = _validated_evidence(evidence)
-    strata = _calibration_strata(calibration_records)
+    strata, membership = _calibration_strata(calibration_records)
+    sample_ids = [record["sample_id"] for record in membership]
+    input_receipt_sha256s = tuple(
+        hashlib.sha256(canonical_json(record)).hexdigest() for record in membership
+    )
     result = {
         "schema": "trustsr.phase2b3b-preflight.v1",
         "upstream": {
@@ -156,7 +204,16 @@ def build_phase2b3b_preflight(
             "input_audit_sha256": frozen.input_audit_sha256,
             "evidence_sha256s": dict(frozen.source_digests),
         },
-        "calibration": {"sample_count": 120, "strata": strata},
+        "calibration": {
+            "split": "calibration",
+            "sample_count": 120,
+            "ordered_sample_ids_sha256": ordered_sample_ids_sha256(sample_ids),
+            "ordered_membership_sha256": hashlib.sha256(
+                canonical_json(membership)
+            ).hexdigest(),
+            "input_receipt_sha256s": input_receipt_sha256s,
+            "strata": strata,
+        },
         "score": {
             "name": frozen.score_name,
             "operator_parameters": dict(frozen.operator_parameters),

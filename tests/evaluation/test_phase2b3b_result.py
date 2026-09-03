@@ -47,7 +47,29 @@ def _sample_ids(prefix: str = "calibration") -> tuple[str, ...]:
     return tuple(f"{prefix}-{index:03d}" for index in range(120))
 
 
-def _preflight() -> dict[str, object]:
+def _ordered_sample_ids_sha256(sample_ids: Sequence[str]) -> str:
+    return hashlib.sha256(canonical_json(list(sample_ids))).hexdigest()
+
+
+def _membership(sample_ids: Sequence[str]) -> list[dict[str, object]]:
+    return [
+        {
+            "sample_id": sample_id,
+            "selection_sha256": _sha(f"selection:{sample_id}"),
+            "spatial_group_id": f"group:{sample_id}",
+            "lr_asset_sha256": _sha(f"lr-asset:{sample_id}"),
+            "hr_asset_sha256": _sha(f"hr-asset:{sample_id}"),
+            "days_between": (-1, 0, 1)[index // 40],
+            "correlation_bin": (index % 40) // 10,
+            "selection_round": index % 10 + 1,
+        }
+        for index, sample_id in enumerate(sample_ids)
+    ]
+
+
+def _preflight(sample_ids: Sequence[str] | None = None) -> dict[str, object]:
+    ordered_ids = _sample_ids() if sample_ids is None else tuple(sample_ids)
+    membership = _membership(ordered_ids)
     return {
         "schema": "trustsr.phase2b3b-preflight.v1",
         "upstream": {
@@ -58,7 +80,16 @@ def _preflight() -> dict[str, object]:
             "evidence_sha256s": dict(PUBLISHED_EVIDENCE_SHA256S),
         },
         "calibration": {
+            "split": "calibration",
             "sample_count": 120,
+            "ordered_sample_ids_sha256": _ordered_sample_ids_sha256(ordered_ids),
+            "ordered_membership_sha256": hashlib.sha256(
+                canonical_json(membership)
+            ).hexdigest(),
+            "input_receipt_sha256s": [
+                hashlib.sha256(canonical_json(record)).hexdigest()
+                for record in membership
+            ],
             "strata": [
                 {
                     "days_between": day,
@@ -98,6 +129,7 @@ def _model_provenance(seed: int) -> dict[str, str | int]:
         "seed": seed,
         "backend": "tiny-cpu-fixture",
         "experiment_schema": EXPERIMENT_SCHEMA,
+        "split": "calibration",
         "post_manifest_sha256": POST_MANIFEST_SHA256,
         "input_audit_sha256": INPUT_AUDIT_SHA256,
         "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
@@ -178,6 +210,8 @@ def _audit(sample_ids: Sequence[str]) -> dict[str, object]:
         )
     return {
         "schema": "trustsr.phase2b3b-calibration-cache-audit.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": _ordered_sample_ids_sha256(sample_ids),
         "sample_count": 120,
         "prediction_count": 600,
         "score_count": 120,
@@ -207,6 +241,8 @@ def _radiometry(sample_ids: Sequence[str]) -> dict[str, object]:
     ]
     return {
         "schema": "trustsr.phase2b3b-calibration-radiometry.v1",
+        "split": "calibration",
+        "ordered_sample_ids_sha256": _ordered_sample_ids_sha256(sample_ids),
         "policy": {
             "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
             "raw_radiometric_max": 32767,
@@ -275,6 +311,7 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
 
     assert set(first) == {
         "schema",
+        "split",
         "upstream",
         "producer_revision",
         "frozen",
@@ -291,12 +328,19 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
         "phase_decision",
     }
     assert first["schema"] == "trustsr.phase2b3b-calibration.v1"
+    assert first["split"] == "calibration"
     assert first["producer_revision"] == "c" * 40
     assert first["cache_audit_sha256"] == hashlib.sha256(
         canonical_json(inputs[2])
     ).hexdigest()
     assert first["map_evidence_sha256"] == inputs[1].map_evidence_sha256
     assert first["upstream"]["phase2b3a_publication_commit"] == PUBLICATION_COMMIT
+    assert first["upstream"]["ordered_sample_ids_sha256"] == (
+        _ordered_sample_ids_sha256(sample_ids)
+    )
+    assert first["upstream"]["ordered_membership_sha256"] == _preflight()[
+        "calibration"
+    ]["ordered_membership_sha256"]
     assert first["frozen"]["risk"] == {
         "name": "local_l1_risk",
         "window": 9,
@@ -316,11 +360,13 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert first["samples"][0]["sample_id"] == "calibration-000"
     assert set(first["samples"][0]) == {
         "sample_id",
+        "split",
         "predictions",
         "score",
         "risk",
         "radiometric_saturation",
     }
+    assert first["samples"][0]["split"] == "calibration"
     assert set(first["samples"][0]["predictions"][0]) == {
         "seed",
         "cache_key",
@@ -382,6 +428,11 @@ def test_accepts_cache_audit_builder_tuple_arrays_before_independent_verificatio
         "score",
         "risk",
         "input",
+        "membership",
+        "preflight_split",
+        "ordered_ids",
+        "receipt_count",
+        "receipt_digest",
     ),
 )
 def test_rejects_forged_preflight_schema_and_frozen_identity(fault: str) -> None:
@@ -401,6 +452,16 @@ def test_rejects_forged_preflight_schema_and_frozen_identity(fault: str) -> None
         preflight["score"]["name"] = "three_model_disagreement"
     elif fault == "risk":
         preflight["risk"]["window"] = 1
+    elif fault == "membership":
+        preflight["calibration"]["ordered_membership_sha256"] = "invalid"
+    elif fault == "preflight_split":
+        preflight["calibration"]["split"] = "internal_test"
+    elif fault == "ordered_ids":
+        preflight["calibration"]["ordered_sample_ids_sha256"] = "0" * 64
+    elif fault == "receipt_count":
+        preflight["calibration"]["input_receipt_sha256s"].pop()
+    elif fault == "receipt_digest":
+        preflight["calibration"]["input_receipt_sha256s"][0] = "invalid"
     else:
         preflight["input"]["scale"] = 2
 
@@ -477,6 +538,21 @@ def test_rejects_any_ordered_sample_mismatch_across_layers(layer: str) -> None:
     with pytest.raises(ValueError, match="ordered samples"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(), fit, audit, radiometry, _revision()
+        )
+
+
+def test_rejects_fully_self_consistent_arbitrary_membership() -> None:
+    """A self-consistent internal-test-shaped stack is not frozen calibration membership."""
+
+    arbitrary_ids = _sample_ids("internal_test")
+
+    with pytest.raises(ValueError, match="authoritative|membership"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            _fit(arbitrary_ids),
+            _audit(arbitrary_ids),
+            _radiometry(arbitrary_ids),
+            _revision(),
         )
 
 
