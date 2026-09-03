@@ -394,12 +394,15 @@ def _write_reset_workspace(workspace: Path) -> dict[str, Path]:
     }
 
 
-def _invoke_reset(workspace_argument: str) -> subprocess.CompletedProcess[str]:
+def _invoke_reset(
+    workspace_argument: str, *, environment: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(RESET_LIVE), workspace_argument],
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
 
 
@@ -1139,3 +1142,41 @@ def test_reset_live_phase2b3a_rejects_active_output_lock_before_mutation(
     assert completed.returncode == 2, completed.stderr
     assert completed.stdout == ""
     assert protected.read_bytes() == b"disposable-result"
+
+
+def test_reset_live_phase2b3a_uses_raw_findmnt_output_for_nested_mounts(
+    tmp_path: Path,
+) -> None:
+    paths = _write_reset_workspace(tmp_path / "work-mount")
+    protected = paths["phase3"] / "results" / "stale.json"
+    nested_mount = paths["phase3"] / "nested-mount"
+    nested_mount.mkdir()
+    (nested_mount / "external.txt").write_bytes(b"external-preserved")
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _make_executable(
+        fake_bin / "findmnt",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "[[ \"$#\" == 6 && \"$1\" == -R && \"$3\" == -o && \"$4\" == TARGET "
+        "&& \"$5\" == --target && \"$6\" == \"$FAKE_PHASE_TARGET\" ]]\n"
+        "printf '/\\n'\n"
+        "if [[ \"$2\" == -rn ]]; then\n"
+        "  printf '%s\\n' \"$FAKE_NESTED_MOUNT\"\n"
+        "else\n"
+        "  printf '├─%s\\n' \"$FAKE_NESTED_MOUNT\"\n"
+        "fi\n",
+    )
+    environment = {
+        **os.environ,
+        "FAKE_NESTED_MOUNT": str(nested_mount),
+        "FAKE_PHASE_TARGET": str(paths["phase3"]),
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+
+    completed = _invoke_reset(str(paths["workspace"]), environment=environment)
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert protected.read_bytes() == b"disposable-result"
+    assert (nested_mount / "external.txt").read_bytes() == b"external-preserved"

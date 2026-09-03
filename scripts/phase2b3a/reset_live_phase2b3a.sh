@@ -58,7 +58,7 @@ reject_unsafe_entries() {
   )" || die 'live target cannot be inspected'
   [[ -z "$unsafe_entry" ]] || die 'live target contains an unsafe entry'
 
-  mount_output="$(findmnt -R -n -o TARGET --target "$target")" ||
+  mount_output="$(findmnt -R -rn -o TARGET --target "$target")" ||
     die 'live target mount identity cannot be inspected'
   while IFS= read -r mount_target; do
     [[ -n "$mount_target" ]] || continue
