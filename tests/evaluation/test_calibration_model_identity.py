@@ -81,6 +81,24 @@ def test_supports_exactly_the_frozen_k5_seed_set() -> None:
     ) == (3407, 3408, 3409, 3410, 3411)
 
 
+@pytest.mark.parametrize(
+    ("torch_version", "cuda_runtime"),
+    (("2.12.1+cu130", "13.0"), ("2.13.0+cu130", "13.0")),
+)
+def test_preserves_host_free_runtime_versions_without_freezing_them(
+    torch_version: str, cuda_runtime: str
+) -> None:
+    provenance = _provenance()
+    provenance["torch_version"] = torch_version
+    provenance["cuda_runtime"] = cuda_runtime
+
+    identity = validate_calibration_model_identity(provenance)
+
+    assert identity.torch_version == torch_version
+    assert identity.cuda_runtime == cuda_runtime
+    assert validate_cached_calibration_model_identity(identity.as_dict()) == identity
+
+
 def test_as_dict_returns_fresh_json_native_values() -> None:
     identity = validate_calibration_model_identity(_provenance())
     first = identity.as_dict()

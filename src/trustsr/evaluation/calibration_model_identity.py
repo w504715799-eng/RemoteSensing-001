@@ -42,8 +42,6 @@ _FIXED_IDENTITY_FIELDS = {
     "scale": 4,
     "implementation_schema_version": 1,
     "opensr_model_version": OPENSR_MODEL_VERSION,
-    "torch_version": "2.7.1+cu128",
-    "cuda_runtime": "12.8",
     "checkpoint_name": CHECKPOINT_NAME,
     "checkpoint_size": CHECKPOINT_SIZE,
     "checkpoint_sha256": CHECKPOINT_SHA256,

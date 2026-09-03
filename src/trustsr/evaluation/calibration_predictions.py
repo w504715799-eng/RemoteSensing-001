@@ -232,6 +232,25 @@ class CalibrationPredictionBundle:
             )
         if any(item.identity.sample_id != self.sample_id for item in self.items):
             raise ValueError("calibration prediction bundle items have mismatched identities")
+        try:
+            model_identities = tuple(
+                {
+                    key: value
+                    for key, value in validate_cached_calibration_prediction_provenance(
+                        item.identity.model_provenance, seed=item.seed
+                    ).items()
+                    if key not in _CONTEXT_KEYS and key != "seed"
+                }
+                for item in self.items
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "calibration prediction bundle items have invalid model scientific identities"
+            ) from exc
+        if any(identity != model_identities[0] for identity in model_identities[1:]):
+            raise ValueError(
+                "calibration prediction bundle items have mismatched model scientific identities"
+            )
         first_identity = self.items[0].identity
         input_identity = (
             first_identity.source,

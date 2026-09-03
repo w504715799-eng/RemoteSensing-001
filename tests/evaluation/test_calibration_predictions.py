@@ -305,7 +305,6 @@ def test_rejects_reserved_context_provenance_keys() -> None:
         ("config_sha256", "0" * 64),
         ("implementation_schema_version", 2),
         ("seed", 3412),
-        ("cuda_runtime", "forged-runtime"),
     ),
 )
 def test_cache_provenance_rejects_forged_raw_model_identity(field: str, value: object) -> None:
@@ -345,6 +344,32 @@ def test_cached_item_and_bundle_membership_cannot_be_forged(tmp_path: Path) -> N
         CalibrationPredictionBundle(sample_id=bundle.sample_id, items=(item,) * 5)
     with pytest.raises(FrozenInstanceError):
         item.seed = 0  # type: ignore[misc]
+
+
+def test_bundle_rejects_mixed_runtime_scientific_identity(tmp_path: Path) -> None:
+    bundle = _generate(tmp_path)
+    candidate = bundle.for_seed(3408)
+    provenance = dict(candidate.identity.model_provenance)
+    provenance["torch_version"] = "2.12.1+cu130"
+    provenance["cuda_runtime"] = "13.0"
+    alternate = CachedCalibrationPrediction(
+        model_name=candidate.model_name,
+        seed=candidate.seed,
+        identity=build_identity(
+            provenance,
+            candidate.identity.source,
+            candidate.identity.sample_id,
+            _pair().pair.lr,
+        ),
+        prediction_sha256=candidate.prediction_sha256,
+        tensor=candidate.tensor,
+    )
+
+    with pytest.raises(ValueError, match="model scientific identit"):
+        CalibrationPredictionBundle(
+            sample_id=bundle.sample_id,
+            items=(bundle.for_seed(3407), alternate, *bundle.items[2:]),
+        )
 
 
 def test_bundle_for_seed_rejects_absent_seed(tmp_path: Path) -> None:
