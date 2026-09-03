@@ -176,6 +176,163 @@ The runtime bundle contains:
 - `trustsr.phase2b3b-calibration-replay.v1`;
 - `trustsr.phase2b3b-bundle-manifest.v1`.
 
+### 7.1 Runtime manifest v1: exact metadata inventory, not a computation receipt
+
+`trustsr.phase2b3b-calibration-runtime.v1` is one canonical JSON object. It is produced only
+after the input receipt, cache audit, result, and recorded producer revision have each passed their
+independent verifier. It is a host-free inventory and cross-document binding, not a second cache
+audit and not a source of scientific parameters. Every object below has **exactly** the shown keys;
+unknown keys, omitted keys, non-JSON values, non-canonical JSON, non-lowercase 64-hex digests, and
+values with the wrong built-in JSON type fail closed.
+
+```json
+{
+  "schema": "trustsr.phase2b3b-calibration-runtime.v1",
+  "phase": "calibration",
+  "verification_scope": "metadata_inventory_only",
+  "cache_computation_verified": false,
+  "dependencies": {
+    "python": {"major_minor": "3.12"},
+    "uv_lock_sha256": "<64 lowercase hex>",
+    "packages": {
+      "numpy": "<version>",
+      "opensr-model": "<version>",
+      "rasterio": "<version>",
+      "torch": "<version>",
+      "trustsr": "<version>"
+    }
+  },
+  "model_inventory": {
+    "identity": {
+      "name": "ldsr-s2-x4",
+      "scale": 4,
+      "implementation_schema_version": 1,
+      "opensr_model_version": "<version>",
+      "torch_version": "<version>",
+      "cuda_runtime": "<version>",
+      "checkpoint_name": "opensr-ldsrs2_v1_0_0.ckpt",
+      "checkpoint_size": 1130715795,
+      "checkpoint_sha256": "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a",
+      "config_sha256": "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f",
+      "sampling_steps": 100,
+      "sampling_eta": 0.95,
+      "sampling_temperature": 1.0,
+      "histogram_matching": true,
+      "output_policy": "clip_to_[0,1]"
+    },
+    "seeds": [3407, 3408, 3409, 3410, 3411]
+  },
+  "inputs": {
+    "post_manifest_sha256": "<64 lowercase hex>",
+    "input_audit_sha256": "<64 lowercase hex>",
+    "normalization_policy": "uint16_saturate_10000_divide_10000_v2",
+    "crop_policy": "center_crop_lr_1_hr_4_v1",
+    "bands": ["B04", "B03", "B02", "B08"],
+    "scale": 4,
+    "ordered_sample_ids_sha256": "<64 lowercase hex>",
+    "ordered_membership_sha256": "<64 lowercase hex>",
+    "input_receipt_sha256": "<64 lowercase hex>",
+    "ordered_inputs_sha256": "<64 lowercase hex>"
+  },
+  "artifacts": {
+    "result_sha256": "<64 lowercase hex>",
+    "cache_audit_sha256": "<64 lowercase hex>",
+    "map_evidence_sha256": "<64 lowercase hex>",
+    "cache_audit_identity_digests": {
+      "prediction_identities_sha256": "<64 lowercase hex>",
+      "score_identities_sha256": "<64 lowercase hex>",
+      "risk_receipts_sha256": "<64 lowercase hex>"
+    }
+  },
+  "revision": {
+    "producer_revision": "<40 lowercase hex>",
+    "phase2b3a_calculation_revision": "<40 lowercase hex>",
+    "phase2b3a_publication_commit": "<40 lowercase hex>"
+  }
+}
+```
+
+The angle-bracket strings above denote validated values, not literal JSON values. The top-level
+key set is exactly `schema`, `phase`, `verification_scope`, `cache_computation_verified`,
+`dependencies`, `model_inventory`, `inputs`, `artifacts`, and `revision`. The nested key sets are
+also exactly those shown in the schema. `phase` is exactly `calibration`;
+`verification_scope` is exactly `metadata_inventory_only`; and
+`cache_computation_verified` is the built-in JSON boolean `false` (not `0`, a string, or a caller
+choice).
+
+Dependency values have one authority source each:
+
+- `dependencies.python.major_minor` is derived from `sys.version_info.major` and `.minor`, and
+  must match `^[0-9]+\\.[0-9]+$`.
+- `dependencies.uv_lock_sha256` is SHA-256 of the raw repository-root `uv.lock` bytes in the
+  clean verifier checkout, not a path, URL, lockfile excerpt, or resolver report.
+- `dependencies.packages` has exactly the five allowlisted distribution names shown. Their values
+  come from `importlib.metadata.version` for those distributions in the producing environment.
+  Each package version, `model_inventory.identity.opensr_model_version`, `torch_version`, and
+  `cuda_runtime` must match `^[0-9][0-9A-Za-z.+_-]*$` and must not contain, case-insensitively,
+  `internal_test`, `token`, `secret`, or `host`. This preserves legitimate values such as
+  `2.7.1+cu128`, `2.12.1+cu130`, and `13.0` without admitting paths, endpoints, credentials, or
+  free-form host labels.
+
+`model_inventory` is a compact projection, never a 600-entry duplicate. The runtime builder must
+first independently validate the parsed cache audit, then revalidate every prediction provenance
+with the cached calibration-model contract. It removes only `seed`, requires all 600 resulting
+scientific identities to be equal, emits that one seed-independent identity, and emits the exact
+ordered K5 seed list. `identity` is therefore the existing host-free
+`CalibrationModelIdentity.as_dict()` projection with `seed` removed; it deliberately excludes raw
+`checkpoint_url`, `device`, GPU identifiers, and all per-worker state. The current audit document
+does not contain a top-level model-inventory field: this is a verifier-derived projection from its
+already validated prediction identities, not an invented or separately trusted audit value.
+
+`inputs`, `artifacts`, and `revision` are likewise projections with fixed sources, not caller
+claims. A runtime builder must obtain them as follows:
+
+| Runtime field(s) | Required verified source |
+|---|---|
+| `inputs.post_manifest_sha256`, `input_audit_sha256`, normalization/crop/bands/scale | frozen preflight/result `upstream` and `frozen.input`, checked for equality with the fixed Phase 2B3-A evidence |
+| `inputs.ordered_sample_ids_sha256`, `ordered_membership_sha256`, `input_receipt_sha256`, `ordered_inputs_sha256` | `VerifiedCalibrationInputReceipt`, then checked equal to the result projection and authoritative preflight membership |
+| `artifacts.result_sha256` | SHA-256 of the canonical committed `trustsr.phase2b3b-calibration.v1` bytes |
+| `artifacts.cache_audit_sha256` and `cache_audit_identity_digests` | `verify_calibration_cache_audit` receipt; the first is its audit digest and the nested three are its existing prediction/score/risk identity digest projections |
+| `artifacts.map_evidence_sha256` | result field, recomputed from the same verified audit score/risk projection |
+| `revision.producer_revision` | result field after `verify_recorded_phase2b3b_revision` proves it exists, descends from both frozen A revisions, and is an ancestor of the clean verifier HEAD |
+| `revision.phase2b3a_calculation_revision`, `phase2b3a_publication_commit` | frozen Phase 2B3-A evidence/result upstream projection |
+
+No field in this schema carries alpha, a minimum-coverage gate, threshold, coverage, trusted or
+total pixels, a risk bound, or a phase decision. Those values remain result data and are not
+scientifically approved merely by appearing in a runtime inventory.
+
+The digest DAG is intentionally one-way:
+
+```text
+verified input receipt ─┐
+verified cache audit ───┼─> verified result ─┐
+verified model identity ┤                    ├─> runtime manifest
+verified revision ──────┘                    │
+verified input/model/revision ───────────────┘
+
+canonical result + canonical cache audit + canonical runtime ─> replay receipt
+canonical result + canonical cache audit + canonical runtime + replay receipt ─> bundle manifest
+verified bundle + replay receipt ─> any later acceptance record
+```
+
+Runtime creation must not read or contain a replay digest, replay receipt, bundle manifest digest,
+acceptance decision, or acceptance digest. Replay is allowed to bind the runtime-manifest digest
+only after the runtime bytes exist; bundle and any later acceptance record bind replay only after
+replay exists. Result composition, cache-audit construction, input receipt construction, model
+identity construction, and conformal fitting must not accept runtime bytes or a runtime digest as
+an input. This forbids self-consistent circular evidence.
+
+The manifest must contain no host or operational data: no literal paths, working directories,
+filenames, timestamps, timezones, hostnames, user names, process IDs, GPU/CUDA UUIDs or device
+ordinals, driver versions, endpoints, URLs, credentials, tokens, secrets, environment-variable
+values, `development`, or `internal_test`. It may not contain raw pixels, tensors, cache locations,
+prediction/score/risk values, or per-sample model entries.
+
+The runtime manifest proves only that these verified metadata projections were assembled under one
+declared dependency/model inventory. It does **not** prove cache pixels, prediction execution,
+score computation, risk computation, byte-identical replay, or scientific acceptance, and it must
+never independently authorize acceptance.
+
 After offline verification, Git may receive only a small result, cache audit, and acceptance JSON:
 
 - `sen2naipv2-calibration-conformal-v1.json`;
@@ -185,9 +342,9 @@ After offline verification, Git may receive only a small result, cache audit, an
 The result contains exactly the frozen upstream identities, calibration-only sample/stratum counts,
 score/risk configuration, numerical target, `threshold` or `null`, `all_abstain`, `risk_bound`,
 calibration pixel coverage, trusted/total pixel counts, per-sample cache identities and tensor
-digests, radiometric saturation aggregates, environment package/model provenance, and producer
-revision. It contains no raw pixels, tensors, model weights, per-pixel values, host paths,
-timestamps, endpoints, credentials, or `internal_test` metadata.
+digests, radiometric saturation aggregates, and producer revision. Package and model inventory
+belong only to the runtime manifest above. It contains no raw pixels, tensors, model weights,
+per-pixel values, host paths, timestamps, endpoints, credentials, or `internal_test` metadata.
 
 The cache audit enumerates every expected prediction/score identity and proves no extra split or
 seed entered the phase. The acceptance record binds result/cache/runtime/replay/bundle digests,
