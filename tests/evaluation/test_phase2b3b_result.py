@@ -127,6 +127,62 @@ def _preflight(sample_ids: Sequence[str] | None = None) -> dict[str, object]:
     }
 
 
+def _refresh_input_receipt(receipt: dict[str, object]) -> None:
+    samples = receipt["samples"]
+    membership = [sample["membership"] for sample in samples]
+    sample_ids = [record["sample_id"] for record in membership]
+    receipt["ordered_sample_ids_sha256"] = _ordered_sample_ids_sha256(sample_ids)
+    receipt["ordered_membership_sha256"] = hashlib.sha256(
+        canonical_json(membership)
+    ).hexdigest()
+    receipt["input_receipt_sha256s"] = [
+        hashlib.sha256(canonical_json(record)).hexdigest() for record in membership
+    ]
+    receipt["ordered_inputs_sha256"] = hashlib.sha256(canonical_json(samples)).hexdigest()
+
+
+def _input_receipt(sample_ids: Sequence[str]) -> dict[str, object]:
+    membership = _membership(sample_ids)
+    samples = [
+        {
+            "membership": record,
+            "lr": {
+                "asset_sha256": record["lr_asset_sha256"],
+                "tensor_sha256": _sha(f"lr:{record['sample_id']}"),
+                "shape": [4, 1, 1],
+                "dtype": "torch.float32",
+            },
+            "hr": {
+                "asset_sha256": record["hr_asset_sha256"],
+                "tensor_sha256": _sha(f"hr:{record['sample_id']}"),
+                "shape": [4, 4, 4],
+                "dtype": "torch.float32",
+            },
+        }
+        for record in membership
+    ]
+    receipt: dict[str, object] = {
+        "schema": "trustsr.phase2b3b-calibration-input-receipt.v1",
+        "split": "calibration",
+        "sample_count": 120,
+        "input": {
+            "manifest_sha256": POST_MANIFEST_SHA256,
+            "source": _SOURCE,
+            "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+            "crop_policy": CROP_POLICY,
+            "bands": ["B04", "B03", "B02", "B08"],
+            "scale": 4,
+        },
+        "ordered_sample_ids_sha256": "",
+        "ordered_membership_sha256": "",
+        "input_receipt_sha256s": [],
+        "samples": samples,
+        "ordered_inputs_sha256": "",
+    }
+    _refresh_input_receipt(receipt)
+    return receipt
+
+
 def _model_provenance(seed: int) -> dict[str, str | int]:
     return build_cache_provenance(
         {
@@ -172,10 +228,15 @@ def _score_parameters(lr_sha256: str) -> dict[str, str | int]:
     }
 
 
-def _audit(sample_ids: Sequence[str]) -> dict[str, object]:
+def _audit(
+    sample_ids: Sequence[str],
+    *,
+    lr_digest_prefix: str = "lr",
+    lr_shape: tuple[int, int, int] = (4, 1, 1),
+) -> dict[str, object]:
     samples: list[dict[str, object]] = []
     for sample_id in sample_ids:
-        lr_sha256 = _sha(f"lr:{sample_id}")
+        lr_sha256 = _sha(f"{lr_digest_prefix}:{sample_id}")
         predictions: list[dict[str, object]] = []
         prediction_sha256s: list[str] = []
         for seed in SEEDS:
@@ -183,7 +244,7 @@ def _audit(sample_ids: Sequence[str]) -> dict[str, object]:
                 model_provenance=_model_provenance(seed),
                 source=_SOURCE,
                 sample_id=sample_id,
-                lr_shape=(4, 1, 1),
+                lr_shape=lr_shape,
                 lr_dtype="torch.float32",
                 lr_sha256=lr_sha256,
             )
@@ -316,7 +377,13 @@ def _revision() -> Phase2B3BRevision:
 
 def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> None:
     sample_ids = _sample_ids()
-    inputs = (_preflight(), _fit(sample_ids), _audit(sample_ids), _radiometry(sample_ids))
+    inputs = (
+        _preflight(),
+        _input_receipt(sample_ids),
+        _fit(sample_ids),
+        _audit(sample_ids),
+        _radiometry(sample_ids),
+    )
 
     first = phase2b3b_result.build_phase2b3b_result(*inputs, _revision())
     second = phase2b3b_result.build_phase2b3b_result(*inputs, _revision())
@@ -335,6 +402,8 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
         "coverage",
         "radiometry",
         "samples",
+        "input_receipt_sha256",
+        "ordered_inputs_sha256",
         "cache_audit_sha256",
         "map_evidence_sha256",
         "phase_decision",
@@ -342,8 +411,12 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert first["schema"] == "trustsr.phase2b3b-calibration.v1"
     assert first["split"] == "calibration"
     assert first["producer_revision"] == "c" * 40
-    assert first["cache_audit_sha256"] == hashlib.sha256(canonical_json(inputs[2])).hexdigest()
-    assert first["map_evidence_sha256"] == inputs[1].map_evidence_sha256
+    assert first["input_receipt_sha256"] == hashlib.sha256(
+        canonical_json(inputs[1])
+    ).hexdigest()
+    assert first["ordered_inputs_sha256"] == inputs[1]["ordered_inputs_sha256"]
+    assert first["cache_audit_sha256"] == hashlib.sha256(canonical_json(inputs[3])).hexdigest()
+    assert first["map_evidence_sha256"] == inputs[2].map_evidence_sha256
     assert first["upstream"]["phase2b3a_publication_commit"] == PUBLICATION_COMMIT
     assert first["upstream"]["ordered_sample_ids_sha256"] == (
         _ordered_sample_ids_sha256(sample_ids)
@@ -376,12 +449,28 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
         "score",
         "risk",
         "radiometric_saturation",
+        "input",
     }
     assert first["samples"][0]["split"] == "calibration"
     assert set(first["samples"][0]["predictions"][0]) == {
         "seed",
         "cache_key",
         "prediction_sha256",
+    }
+    assert first["samples"][0]["input"] == {
+        "membership_sha256": inputs[1]["input_receipt_sha256s"][0],
+        "lr": {
+            "asset_sha256": _sha("lr-asset:calibration-000"),
+            "tensor_sha256": _sha("lr:calibration-000"),
+            "shape": [4, 1, 1],
+            "dtype": "torch.float32",
+        },
+        "hr": {
+            "asset_sha256": _sha("hr-asset:calibration-000"),
+            "tensor_sha256": _sha("hr:calibration-000"),
+            "shape": [4, 4, 4],
+            "dtype": "torch.float32",
+        },
     }
     assert "identity" not in canonical_json(first).decode()
     assert canonical_json(first) == canonical_json(second)
@@ -395,6 +484,7 @@ def test_all_abstain_result_keeps_null_threshold_and_single_stop_decision() -> N
 
     result = phase2b3b_result.build_phase2b3b_result(
         _preflight(),
+        _input_receipt(sample_ids),
         _fit(sample_ids, all_abstain=True),
         _audit(sample_ids),
         _radiometry(sample_ids),
@@ -417,6 +507,7 @@ def test_accepts_cache_audit_builder_tuple_arrays_before_independent_verificatio
 
     result = phase2b3b_result.build_phase2b3b_result(
         _preflight(),
+        _input_receipt(sample_ids),
         _fit(sample_ids),
         audit,
         _radiometry(sample_ids),
@@ -477,6 +568,7 @@ def test_rejects_forged_preflight_schema_and_frozen_identity(fault: str) -> None
     with pytest.raises(ValueError):
         phase2b3b_result.build_phase2b3b_result(
             preflight,
+            _input_receipt(sample_ids),
             _fit(sample_ids),
             _audit(sample_ids),
             _radiometry(sample_ids),
@@ -506,6 +598,7 @@ def test_rejects_forged_radiometry_and_cross_layer_order(fault: str) -> None:
     with pytest.raises(ValueError):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(sample_ids),
             _fit(sample_ids),
             _audit(sample_ids),
             radiometry,
@@ -529,6 +622,7 @@ def test_rejects_forged_revision_identity(fault: str) -> None:
     with pytest.raises(ValueError):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(sample_ids),
             _fit(sample_ids),
             _audit(sample_ids),
             _radiometry(sample_ids),
@@ -536,16 +630,19 @@ def test_rejects_forged_revision_identity(fault: str) -> None:
         )
 
 
-@pytest.mark.parametrize("layer", ("fit", "audit", "radiometry"))
+@pytest.mark.parametrize("layer", ("input", "fit", "audit", "radiometry"))
 def test_rejects_any_ordered_sample_mismatch_across_layers(layer: str) -> None:
     sample_ids = _sample_ids()
     alternate = _sample_ids("other")
     fit = _fit(alternate if layer == "fit" else sample_ids)
     audit = _audit(alternate if layer == "audit" else sample_ids)
     radiometry = _radiometry(alternate if layer == "radiometry" else sample_ids)
+    input_receipt = _input_receipt(alternate if layer == "input" else sample_ids)
 
     with pytest.raises(ValueError, match="ordered samples"):
-        phase2b3b_result.build_phase2b3b_result(_preflight(), fit, audit, radiometry, _revision())
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(), input_receipt, fit, audit, radiometry, _revision()
+        )
 
 
 def test_rejects_fully_self_consistent_arbitrary_membership() -> None:
@@ -556,6 +653,7 @@ def test_rejects_fully_self_consistent_arbitrary_membership() -> None:
     with pytest.raises(ValueError, match="authoritative|membership"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(arbitrary_ids),
             _fit(arbitrary_ids),
             _audit(arbitrary_ids),
             _radiometry(arbitrary_ids),
@@ -563,7 +661,7 @@ def test_rejects_fully_self_consistent_arbitrary_membership() -> None:
         )
 
 
-def test_reruns_fit_contract_and_independent_cache_verifier_first(
+def test_runs_independent_input_and_cache_verifiers_before_fit_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sample_ids = _sample_ids()
@@ -572,19 +670,34 @@ def test_reruns_fit_contract_and_independent_cache_verifier_first(
     audit = _audit(sample_ids)
     audit["extra"] = True
     events: list[str] = []
-    real_verify = phase2b3b_result.verify_calibration_cache_audit
+    real_input_verify = phase2b3b_result.verify_calibration_input_receipt
+    real_cache_verify = phase2b3b_result.verify_calibration_cache_audit
 
-    def verify(value: object) -> object:
+    def verify_input(value: object) -> object:
+        events.append("input")
+        return real_input_verify(value)
+
+    def verify_cache(value: object) -> object:
         events.append("cache")
-        return real_verify(value)
+        return real_cache_verify(value)
 
-    monkeypatch.setattr(phase2b3b_result, "verify_calibration_cache_audit", verify)
+    monkeypatch.setattr(
+        phase2b3b_result, "verify_calibration_input_receipt", verify_input
+    )
+    monkeypatch.setattr(
+        phase2b3b_result, "verify_calibration_cache_audit", verify_cache
+    )
 
     with pytest.raises(ValueError):
         phase2b3b_result.build_phase2b3b_result(
-            _preflight(), fit, audit, _radiometry(sample_ids), _revision()
+            _preflight(),
+            _input_receipt(sample_ids),
+            fit,
+            audit,
+            _radiometry(sample_ids),
+            _revision(),
         )
-    assert events == ["cache"]
+    assert events == ["input", "cache"]
 
 
 def test_rejects_forged_fit_after_a_valid_independent_cache_verification() -> None:
@@ -595,6 +708,7 @@ def test_rejects_forged_fit_after_a_valid_independent_cache_verification() -> No
     with pytest.raises(ValueError, match="fit public contract"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(sample_ids),
             fit,
             _audit(sample_ids),
             _radiometry(sample_ids),
@@ -614,6 +728,7 @@ def test_rejects_audit_map_digest_change_with_identical_sample_ids(
     with pytest.raises(ValueError, match="map evidence"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(sample_ids),
             _fit(sample_ids),
             audit,
             _radiometry(sample_ids),
@@ -628,8 +743,95 @@ def test_rejects_forged_fit_map_evidence_digest() -> None:
     with pytest.raises(ValueError, match="map evidence"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
+            _input_receipt(sample_ids),
             fit,
             _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+@pytest.mark.parametrize("fault", ("extra", "aggregate", "dtype"))
+def test_rejects_internally_invalid_input_receipt(fault: str) -> None:
+    sample_ids = _sample_ids()
+    receipt = _input_receipt(sample_ids)
+    if fault == "extra":
+        receipt["extra"] = True
+    elif fault == "aggregate":
+        receipt["ordered_inputs_sha256"] = "f" * 64
+    else:
+        receipt["samples"][0]["lr"]["dtype"] = "torch.float64"
+
+    with pytest.raises(ValueError):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            receipt,
+            _fit(sample_ids),
+            _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+def test_rejects_internally_valid_receipt_per_record_membership_attack() -> None:
+    sample_ids = _sample_ids()
+    receipt = _input_receipt(sample_ids)
+    receipt["samples"][0]["membership"]["selection_sha256"] = _sha("replacement")
+    _refresh_input_receipt(receipt)
+
+    with pytest.raises(ValueError, match="authoritative calibration membership"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            receipt,
+            _fit(sample_ids),
+            _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+def test_rejects_internally_valid_receipt_strata_attack() -> None:
+    sample_ids = _sample_ids()
+    receipt = _input_receipt(sample_ids)
+    first = receipt["samples"][0]["membership"]
+    second = receipt["samples"][40]["membership"]
+    for field in ("days_between", "correlation_bin", "selection_round"):
+        first[field], second[field] = second[field], first[field]
+    _refresh_input_receipt(receipt)
+    preflight = _preflight()
+    preflight["calibration"]["ordered_membership_sha256"] = receipt[
+        "ordered_membership_sha256"
+    ]
+    preflight["calibration"]["input_receipt_sha256s"] = receipt[
+        "input_receipt_sha256s"
+    ]
+
+    with pytest.raises(ValueError, match="radiometry strata"):
+        phase2b3b_result.build_phase2b3b_result(
+            preflight,
+            receipt,
+            _fit(sample_ids),
+            _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+@pytest.mark.parametrize("fault", ("sha256", "shape"))
+def test_rejects_internally_valid_audit_lr_replacement(fault: str) -> None:
+    sample_ids = _sample_ids()
+    kwargs = (
+        {"lr_digest_prefix": "replacement-lr"}
+        if fault == "sha256"
+        else {"lr_shape": (4, 2, 2)}
+    )
+
+    with pytest.raises(ValueError, match="LR identity"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            _input_receipt(sample_ids),
+            _fit(sample_ids),
+            _audit(sample_ids, **kwargs),
             _radiometry(sample_ids),
             _revision(),
         )
@@ -639,6 +841,7 @@ def test_result_leaks_no_runtime_tensor_path_host_or_unapproved_default() -> Non
     sample_ids = _sample_ids()
     result = phase2b3b_result.build_phase2b3b_result(
         _preflight(),
+        _input_receipt(sample_ids),
         _fit(sample_ids),
         _audit(sample_ids),
         _radiometry(sample_ids),
@@ -646,5 +849,5 @@ def test_result_leaks_no_runtime_tensor_path_host_or_unapproved_default() -> Non
     )
     encoded = canonical_json(result).decode()
 
-    for forbidden in ("tensor", "path", "timestamp", "hostname", "branch", "internal_test"):
+    for forbidden in ("path", "timestamp", "hostname", "branch", "internal_test"):
         assert forbidden not in encoded

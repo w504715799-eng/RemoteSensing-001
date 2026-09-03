@@ -17,6 +17,9 @@ from trustsr.data.crosssensor_pairs import (
 )
 from trustsr.evaluation.calibration_cache_verify import verify_calibration_cache_audit
 from trustsr.evaluation.calibration_fit import CalibrationFit
+from trustsr.evaluation.calibration_input_receipt import (
+    verify_calibration_input_receipt,
+)
 from trustsr.evaluation.calibration_predictions import SEEDS
 from trustsr.evaluation.calibration_radiometry_verify import verify_calibration_radiometry
 from trustsr.evaluation.phase2b3b_evidence import (
@@ -214,6 +217,7 @@ def _validate_preflight(preflight: Mapping[str, object]) -> dict[str, object]:
             "bands": list(_BANDS),
             "scale": 4,
         },
+        "input_receipt_sha256s": tuple(normalized_input_receipts),
     }
 
 
@@ -430,13 +434,20 @@ def _audit_map_evidence_sha256(samples: Sequence[object]) -> str:
 
 def build_phase2b3b_result(
     preflight: Mapping[str, object],
+    input_receipt: Mapping[str, object],
     fit: CalibrationFit,
     cache_audit: Mapping[str, object],
     radiometry: Mapping[str, object],
     revision: Phase2B3BRevision,
 ) -> dict[str, object]:
-    """Compose one canonical result after independently verifying every input layer."""
+    """Compose a derivative result after independently verifying every input layer.
 
+    A final verifier must rebuild the preflight authority from the frozen manifest;
+    this composer and its output are not themselves the membership authority.
+    """
+
+    normalized_input_receipt = _json_object(input_receipt, "input receipt")
+    input_verification = verify_calibration_input_receipt(normalized_input_receipt)
     normalized_audit = _json_object(cache_audit, "cache audit")
     cache_verification = verify_calibration_cache_audit(normalized_audit)
     validated_fit = _validate_fit(fit)
@@ -448,33 +459,74 @@ def build_phase2b3b_result(
     )
     producer_revision = _validate_revision(revision)
 
+    input_samples = normalized_input_receipt["samples"]
     audit_samples = normalized_audit["samples"]
+    input_sample_ids = tuple(
+        sample["membership"]["sample_id"] for sample in input_samples
+    )
     audit_sample_ids = tuple(sample["sample_id"] for sample in audit_samples)
     radiometry_sample_ids = tuple(sample["sample_id"] for sample in radiometry_samples)
     if not (
-        validated_fit.sample_ids == audit_sample_ids == radiometry_sample_ids
-        and validated_fit.calibration_size == normalized_audit["sample_count"] == 120
+        validated_fit.sample_ids
+        == input_sample_ids
+        == audit_sample_ids
+        == radiometry_sample_ids
+        and validated_fit.calibration_size
+        == input_verification.sample_count
+        == normalized_input_receipt["sample_count"]
+        == normalized_audit["sample_count"]
+        == radiometry_verification.sample_count
+        == 120
     ):
-        raise ValueError("fit, cache audit, and radiometry ordered samples differ")
+        raise ValueError("input, fit, cache audit, and radiometry ordered samples differ")
     authoritative_ordered_ids_digest = frozen["upstream"][
         "ordered_sample_ids_sha256"
     ]
     if not (
-        cache_verification["ordered_sample_ids_sha256"]
+        input_verification.ordered_sample_ids_sha256
+        == cache_verification["ordered_sample_ids_sha256"]
         == radiometry_verification.ordered_sample_ids_sha256
         == radiometry_ordered_ids_digest
         == ordered_sample_ids_sha256(validated_fit.sample_ids)
         == authoritative_ordered_ids_digest
     ):
         raise ValueError("derived artifacts differ from authoritative calibration membership")
+    if not (
+        input_verification.ordered_membership_sha256
+        == frozen["upstream"]["ordered_membership_sha256"]
+        and tuple(normalized_input_receipt["input_receipt_sha256s"])
+        == frozen["input_receipt_sha256s"]
+    ):
+        raise ValueError("input receipt differs from authoritative calibration membership")
     audit_map_evidence_sha256 = _audit_map_evidence_sha256(audit_samples)
     if validated_fit.map_evidence_sha256 != audit_map_evidence_sha256:
         raise ValueError("calibration fit map evidence differs from verified cache audit")
 
     samples = []
-    for audit_sample, radiometry_sample in zip(
-        audit_samples, radiometry_samples, strict=True
+    for membership_digest, input_sample, audit_sample, radiometry_sample in zip(
+        normalized_input_receipt["input_receipt_sha256s"],
+        input_samples,
+        audit_samples,
+        radiometry_samples,
+        strict=True,
     ):
+        membership = input_sample["membership"]
+        receipt_lr = input_sample["lr"]
+        expected_audit_lr = {
+            "shape": receipt_lr["shape"],
+            "dtype": receipt_lr["dtype"],
+            "sha256": receipt_lr["tensor_sha256"],
+        }
+        if any(
+            prediction["identity"]["lr"] != expected_audit_lr
+            for prediction in audit_sample["predictions"]
+        ):
+            raise ValueError("cache audit LR identity differs from verified input receipt")
+        if any(
+            membership[field] != radiometry_sample[field]
+            for field in ("days_between", "correlation_bin", "selection_round")
+        ):
+            raise ValueError("radiometry strata differ from verified input membership")
         samples.append(
             {
                 "sample_id": audit_sample["sample_id"],
@@ -493,6 +545,21 @@ def build_phase2b3b_result(
                 },
                 "risk": {"risk_sha256": audit_sample["risk"]["risk_sha256"]},
                 "radiometric_saturation": radiometry_sample["radiometric_saturation"],
+                "input": {
+                    "membership_sha256": membership_digest,
+                    "lr": {
+                        "asset_sha256": receipt_lr["asset_sha256"],
+                        "tensor_sha256": receipt_lr["tensor_sha256"],
+                        "shape": list(receipt_lr["shape"]),
+                        "dtype": receipt_lr["dtype"],
+                    },
+                    "hr": {
+                        "asset_sha256": input_sample["hr"]["asset_sha256"],
+                        "tensor_sha256": input_sample["hr"]["tensor_sha256"],
+                        "shape": list(input_sample["hr"]["shape"]),
+                        "dtype": input_sample["hr"]["dtype"],
+                    },
+                },
             }
         )
     cache_audit_sha256 = cache_verification["digests"]["audit_sha256"]
@@ -523,6 +590,8 @@ def build_phase2b3b_result(
         "coverage": validated_fit.coverage,
         "radiometry": radiometry_summary,
         "samples": samples,
+        "input_receipt_sha256": input_verification.source_sha256,
+        "ordered_inputs_sha256": input_verification.ordered_inputs_sha256,
         "cache_audit_sha256": cache_audit_sha256,
         "map_evidence_sha256": validated_fit.map_evidence_sha256,
         "phase_decision": validated_fit.phase_decision,
