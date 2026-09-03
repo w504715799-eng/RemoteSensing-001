@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,7 +20,7 @@ from trustsr.jsonio import canonical_json
 
 
 @pytest.fixture
-def artifacts() -> tuple[dict[str, object], dict[str, object], object, object]:
+def artifacts() -> tuple[dict[str, object], dict[str, object], dict[str, object], object, object]:
     sample_ids = result_fixtures._sample_ids()
     preflight = result_fixtures._preflight(sample_ids)
     input_receipt = result_fixtures._input_receipt(sample_ids)
@@ -53,7 +52,7 @@ def artifacts() -> tuple[dict[str, object], dict[str, object], object, object]:
         radiometry_aggregate_sha256="a" * 64,
         phase_decision=result["phase_decision"],
     )
-    return result, audit, result_verification, input_verification
+    return result, audit, input_receipt, result_verification, input_verification
 
 
 @pytest.fixture
@@ -74,10 +73,10 @@ def dependency_snapshot() -> dict[str, object]:
 def _build(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
     dependency_snapshot: dict[str, object],
 ) -> dict[str, object]:
-    result, audit, result_verification, input_verification = artifacts
+    result, audit, input_receipt, result_verification, input_verification = artifacts
     monkeypatch.setattr(
         phase2b3b_runtime,
         "verify_recorded_phase2b3b_revision",
@@ -88,23 +87,35 @@ def _build(
         "_capture_dependencies",
         lambda project_root: deepcopy(dependency_snapshot),
     )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_phase2b3b_result",
+        lambda result, audit, **kwargs: result_verification,
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_authoritative_calibration_input_receipt",
+        lambda receipt, **kwargs: input_verification,
+    )
     return phase2b3b_runtime.build_phase2b3b_runtime_manifest(
         deepcopy(result),
         deepcopy(audit),
-        result_verification=result_verification,
-        input_verification=input_verification,
+        deepcopy(input_receipt),
         project_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        storage_root=tmp_path / "storage",
+        manifest_path=tmp_path / "manifest.json",
     )
 
 
 def test_builds_exact_host_free_runtime_projection(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
     dependency_snapshot: dict[str, object],
 ) -> None:
     runtime = _build(monkeypatch, tmp_path, artifacts, dependency_snapshot)
-    result, audit, result_verification, input_verification = artifacts
+    result, audit, input_receipt, result_verification, input_verification = artifacts
 
     assert set(runtime) == {
         "schema",
@@ -132,9 +143,11 @@ def test_builds_exact_host_free_runtime_projection(
         runtime,
         deepcopy(result),
         deepcopy(audit),
-        result_verification=result_verification,
-        input_verification=input_verification,
+        deepcopy(input_receipt),
         project_root=tmp_path,
+        evidence_dir=tmp_path / "evidence",
+        storage_root=tmp_path / "storage",
+        manifest_path=tmp_path / "manifest.json",
     )
     assert verified.schema == runtime["schema"]
     assert verified.verification_scope == "metadata_inventory_only"
@@ -142,30 +155,14 @@ def test_builds_exact_host_free_runtime_projection(
     assert verified.runtime_sha256 == hashlib.sha256(canonical_json(runtime)).hexdigest()
 
 
-@pytest.mark.parametrize(
-    ("field", "replacement"),
-    (
-        ("post_manifest_sha256", "0" * 64),
-        ("input_audit_sha256", "0" * 64),
-        ("phase2b3a_calculation_revision", "0" * 40),
-        ("phase2b3a_publication_commit", "0" * 40),
-    ),
-)
-def test_rejects_self_consistent_receipt_with_wrong_frozen_upstream(
+def test_public_api_forwards_raw_inputs_to_authority_verifiers(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
     dependency_snapshot: dict[str, object],
-    field: str,
-    replacement: str,
 ) -> None:
-    result, audit, result_verification, input_verification = artifacts
-    forged_result = deepcopy(result)
-    forged_result["upstream"][field] = replacement
-    forged_receipt = replace(
-        result_verification,
-        result_sha256=hashlib.sha256(canonical_json(forged_result)).hexdigest(),
-    )
+    result, audit, input_receipt, result_verification, input_verification = artifacts
+    observed: dict[str, object] = {}
     monkeypatch.setattr(
         phase2b3b_runtime,
         "verify_recorded_phase2b3b_revision",
@@ -176,14 +173,111 @@ def test_rejects_self_consistent_receipt_with_wrong_frozen_upstream(
         "_capture_dependencies",
         lambda project_root: deepcopy(dependency_snapshot),
     )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_phase2b3b_result",
+        lambda received_result, received_audit, **kwargs: observed.update(
+            result=(received_result, received_audit, kwargs)
+        ) or result_verification,
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_authoritative_calibration_input_receipt",
+        lambda received_receipt, **kwargs: observed.update(
+            input=(received_receipt, kwargs)
+        ) or input_verification,
+    )
+    evidence_dir = tmp_path / "evidence"
+    storage_root = tmp_path / "storage"
+    manifest_path = tmp_path / "manifest.json"
 
-    with pytest.raises(ValueError, match="upstream"):
-        phase2b3b_runtime.build_phase2b3b_runtime_manifest(
-            forged_result,
+    phase2b3b_runtime.build_phase2b3b_runtime_manifest(
+        result,
+        audit,
+        input_receipt,
+        project_root=tmp_path,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+
+    assert observed == {
+        "result": (
+            result,
             audit,
-            result_verification=forged_receipt,
-            input_verification=input_verification,
+            {
+                "project_root": tmp_path,
+                "evidence_dir": evidence_dir,
+                "storage_root": storage_root,
+                "manifest_path": manifest_path,
+            },
+        ),
+        "input": (
+            input_receipt,
+            {
+                "evidence_dir": evidence_dir,
+                "storage_root": storage_root,
+                "manifest_path": manifest_path,
+            },
+        ),
+    }
+
+
+def test_public_api_has_no_direct_receipt_entrypoint(
+    tmp_path: Path,
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
+) -> None:
+    result, audit, input_receipt, result_verification, input_verification = artifacts
+
+    with pytest.raises(TypeError):
+        phase2b3b_runtime.build_phase2b3b_runtime_manifest(
+            result,
+            audit,
+            input_receipt,
             project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
+            result_verification=result_verification,
+            input_verification=input_verification,
+        )
+
+
+@pytest.mark.parametrize("authority", ("result", "input"))
+def test_authority_rejection_aborts_runtime_composition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
+    authority: str,
+) -> None:
+    result, audit, input_receipt, result_verification, _ = artifacts
+    if authority == "result":
+        monkeypatch.setattr(
+            phase2b3b_runtime,
+            "verify_phase2b3b_result",
+            lambda result, audit, **kwargs: (_ for _ in ()).throw(ValueError("result authority")),
+        )
+    else:
+        monkeypatch.setattr(
+            phase2b3b_runtime,
+            "verify_phase2b3b_result",
+            lambda result, audit, **kwargs: result_verification,
+        )
+        monkeypatch.setattr(
+            phase2b3b_runtime,
+            "verify_authoritative_calibration_input_receipt",
+            lambda receipt, **kwargs: (_ for _ in ()).throw(ValueError("input authority")),
+        )
+
+    with pytest.raises(ValueError, match="authority"):
+        phase2b3b_runtime.build_phase2b3b_runtime_manifest(
+            result,
+            audit,
+            input_receipt,
+            project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
         )
 
 
@@ -205,7 +299,7 @@ def test_rejects_self_consistent_receipt_with_wrong_frozen_upstream(
 def test_rejects_hostile_runtime_mutations(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
     dependency_snapshot: dict[str, object],
     fault: str,
 ) -> None:
@@ -231,25 +325,27 @@ def test_rejects_hostile_runtime_mutations(
     else:
         runtime["inputs"]["ordered_inputs_sha256"] = "0" * 64
 
-    result, audit, result_verification, input_verification = artifacts
+    result, audit, input_receipt, result_verification, input_verification = artifacts
     with pytest.raises((TypeError, ValueError)):
         phase2b3b_runtime.verify_phase2b3b_runtime_manifest(
             runtime,
             deepcopy(result),
             deepcopy(audit),
-            result_verification=result_verification,
-            input_verification=input_verification,
+            deepcopy(input_receipt),
             project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
         )
 
 
 def test_rejects_noncanonical_inputs_and_mixed_audit_model_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    artifacts: tuple[dict[str, object], dict[str, object], dict[str, object], object, object],
     dependency_snapshot: dict[str, object],
 ) -> None:
-    result, audit, result_verification, input_verification = artifacts
+    result, audit, input_receipt, result_verification, input_verification = artifacts
     monkeypatch.setattr(
         phase2b3b_runtime,
         "verify_recorded_phase2b3b_revision",
@@ -260,13 +356,25 @@ def test_rejects_noncanonical_inputs_and_mixed_audit_model_identity(
         "_capture_dependencies",
         lambda project_root: deepcopy(dependency_snapshot),
     )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_phase2b3b_result",
+        lambda result, audit, **kwargs: result_verification,
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_authoritative_calibration_input_receipt",
+        lambda receipt, **kwargs: input_verification,
+    )
     with pytest.raises(ValueError, match="canonical"):
         phase2b3b_runtime.build_phase2b3b_runtime_manifest(
             canonical_json(result) + b" ",
             audit,
-            result_verification=result_verification,
-            input_verification=input_verification,
+            input_receipt,
             project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
         )
 
     mixed = deepcopy(audit)
@@ -277,7 +385,9 @@ def test_rejects_noncanonical_inputs_and_mixed_audit_model_identity(
         phase2b3b_runtime.build_phase2b3b_runtime_manifest(
             result,
             mixed,
-            result_verification=result_verification,
-            input_verification=input_verification,
+            input_receipt,
             project_root=tmp_path,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=tmp_path / "storage",
+            manifest_path=tmp_path / "manifest.json",
         )

@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trustsr.evaluation.calibration_cache_verify import verify_calibration_cache_audit
-from trustsr.evaluation.calibration_input_receipt import VerifiedCalibrationInputReceipt
+from trustsr.evaluation.calibration_input_receipt import (
+    VerifiedCalibrationInputReceipt,
+    verify_authoritative_calibration_input_receipt,
+)
 from trustsr.evaluation.calibration_model_identity import (
     CalibrationModelIdentity,
     validate_cached_calibration_model_identity,
@@ -25,7 +28,10 @@ from trustsr.evaluation.phase2b3b_evidence import (
     PRODUCER_REVISION,
     PUBLICATION_COMMIT,
 )
-from trustsr.evaluation.phase2b3b_result_verify import VerifiedPhase2B3BResult
+from trustsr.evaluation.phase2b3b_result_verify import (
+    VerifiedPhase2B3BResult,
+    verify_phase2b3b_result,
+)
 from trustsr.evaluation.phase2b3b_revision import verify_recorded_phase2b3b_revision
 from trustsr.jsonio import canonical_json
 
@@ -500,6 +506,44 @@ def _expected_runtime(
     return json.loads(canonical_json(runtime))
 
 
+def _authoritative_runtime_inputs(
+    result: object,
+    cache_audit: object,
+    input_receipt: object,
+    *,
+    project_root: Path,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    VerifiedPhase2B3BResult,
+    VerifiedCalibrationInputReceipt,
+]:
+    result_value, _ = _canonical_document(
+        result, schema=_RESULT_SCHEMA, label="runtime result"
+    )
+    audit_value, _ = _canonical_document(
+        cache_audit, schema=_AUDIT_SCHEMA, label="runtime cache audit"
+    )
+    result_verification = verify_phase2b3b_result(
+        result_value,
+        audit_value,
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+    input_verification = verify_authoritative_calibration_input_receipt(
+        input_receipt,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+    return result_value, audit_value, result_verification, input_verification
+
+
 def _validate_runtime_shape(value: object) -> dict[str, object]:
     runtime = _exact_mapping(value, _RUNTIME_KEYS, "runtime manifest")
     if (
@@ -549,16 +593,30 @@ def _validate_runtime_shape(value: object) -> dict[str, object]:
 def build_phase2b3b_runtime_manifest(
     result: object,
     cache_audit: object,
+    input_receipt: object,
     *,
-    result_verification: VerifiedPhase2B3BResult,
-    input_verification: VerifiedCalibrationInputReceipt,
     project_root: Path,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
 ) -> dict[str, object]:
-    """Compose a runtime inventory from existing verified result/input/cache evidence."""
+    """Compose a runtime inventory after re-verifying raw result and input authority."""
+
+    result_value, audit_value, result_verification, input_verification = (
+        _authoritative_runtime_inputs(
+            result,
+            cache_audit,
+            input_receipt,
+            project_root=project_root,
+            evidence_dir=evidence_dir,
+            storage_root=storage_root,
+            manifest_path=manifest_path,
+        )
+    )
 
     return _expected_runtime(
-        result,
-        cache_audit,
+        result_value,
+        audit_value,
         result_verification=result_verification,
         input_verification=input_verification,
         project_root=project_root,
@@ -569,19 +627,32 @@ def verify_phase2b3b_runtime_manifest(
     runtime: object,
     result: object,
     cache_audit: object,
+    input_receipt: object,
     *,
-    result_verification: VerifiedPhase2B3BResult,
-    input_verification: VerifiedCalibrationInputReceipt,
     project_root: Path,
+    evidence_dir: Path,
+    storage_root: Path,
+    manifest_path: Path,
 ) -> VerifiedPhase2B3BRuntime:
-    """Verify one runtime manifest against independently verified upstream projections."""
+    """Verify a runtime manifest against freshly re-verified raw upstream evidence."""
 
     value, payload = _canonical_document(runtime, schema=SCHEMA, label="runtime manifest")
     _validate_runtime_shape(value)
     _reject_leaks(value)
+    result_value, audit_value, result_verification, input_verification = (
+        _authoritative_runtime_inputs(
+            result,
+            cache_audit,
+            input_receipt,
+            project_root=project_root,
+            evidence_dir=evidence_dir,
+            storage_root=storage_root,
+            manifest_path=manifest_path,
+        )
+    )
     expected = _expected_runtime(
-        result,
-        cache_audit,
+        result_value,
+        audit_value,
         result_verification=result_verification,
         input_verification=input_verification,
         project_root=project_root,
