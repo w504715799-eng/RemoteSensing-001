@@ -687,6 +687,38 @@ def test_a1_replay_rejects_malformed_or_inconsistent_radiometric_evidence(
         replay_a1_smoke(pairs, result, audit, prediction_cache, score_cache)
 
 
+@pytest.mark.parametrize(
+    ("maximum", "clipped"),
+    [(10000, 1), (10001, 0)],
+)
+def test_online_radiometric_policy_rejects_threshold_mismatches_from_evidence(
+    maximum: int, clipped: int
+) -> None:
+    """Fails if online aggregate accepts evidence the offline verifier rejects."""
+
+    sample = {
+        "radiometric_saturation": {
+            "lr": {
+                "raw_crop_minimum": 5000,
+                "raw_crop_maximum": maximum,
+                "clipped_high_count": clipped,
+                "clipped_high_by_band": [clipped, 0, 0, 0],
+            },
+            "hr": {
+                "raw_crop_minimum": 5000,
+                "raw_crop_maximum": 10000,
+                "clipped_high_count": 0,
+                "clipped_high_by_band": [0, 0, 0, 0],
+            },
+        }
+    }
+
+    with pytest.raises(ValueError, match="maximum and clipped count are inconsistent"):
+        development_score_audit._build_radiometric_policy(
+            [sample], expected_sample_count=1
+        )
+
+
 def test_a1_replay_detects_cache_mtime_change_during_rebuild(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

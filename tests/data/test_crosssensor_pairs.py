@@ -655,3 +655,43 @@ def test_radiometric_saturation_rejects_boolean_or_numpy_statistics(
             clipped_high_count=invalid_count,
             clipped_high_by_band=(2, 0, 0, 1),
         )
+
+
+class _TupleSubclass(tuple):
+    pass
+
+
+@pytest.mark.parametrize(
+    "band_counts",
+    [[0, 0, 0, 0], True, _TupleSubclass((0, 0, 0, 0))],
+)
+def test_radiometric_saturation_requires_an_exact_band_count_tuple(
+    band_counts: object,
+) -> None:
+    """Fails if mutable or subclassed band-count containers enter provenance."""
+
+    with pytest.raises(TypeError, match="exact tuple"):
+        crosssensor_pairs.RadiometricSaturation(
+            raw_crop_minimum=5000,
+            raw_crop_maximum=10000,
+            clipped_high_count=0,
+            clipped_high_by_band=band_counts,
+        )
+
+
+@pytest.mark.parametrize(
+    ("maximum", "clipped"),
+    [(10000, 1), (10001, 0)],
+)
+def test_radiometric_saturation_rejects_threshold_mismatches(
+    maximum: int, clipped: int
+) -> None:
+    """Fails if a constructed record can disagree about clipping at 10000."""
+
+    with pytest.raises(ValueError, match="maximum and clipped count are inconsistent"):
+        crosssensor_pairs.RadiometricSaturation(
+            raw_crop_minimum=5000,
+            raw_crop_maximum=maximum,
+            clipped_high_count=clipped,
+            clipped_high_by_band=(clipped, 0, 0, 0),
+        )

@@ -44,6 +44,8 @@ class RadiometricSaturation:
     clipped_high_by_band: tuple[int, int, int, int]
 
     def __post_init__(self) -> None:
+        if type(self.clipped_high_by_band) is not tuple:
+            raise TypeError("radiometric saturation band counts must use an exact tuple")
         values = (
             self.raw_crop_minimum,
             self.raw_crop_maximum,
@@ -62,6 +64,12 @@ class RadiometricSaturation:
             raise ValueError("radiometric saturation crop maximum exceeds 32767")
         if self.clipped_high_count != sum(self.clipped_high_by_band):
             raise ValueError("radiometric saturation band counts do not match total")
+        if (self.raw_crop_maximum > REFLECTANCE_SCALE) != (
+            self.clipped_high_count > 0
+        ):
+            raise ValueError(
+                "radiometric saturation maximum and clipped count are inconsistent"
+            )
 
 
 @dataclass(frozen=True)
