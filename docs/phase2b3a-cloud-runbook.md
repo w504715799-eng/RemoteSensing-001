@@ -12,9 +12,10 @@ restore uses an explicit verified copy into disposable storage; bind mode is all
 provider explicitly grants mount capability.
 
 No command below installs software, downloads data, or controls an instance. Instance-identifying
-values remain in the operator shell and never enter tracked files. The final reviewed integration
-commit is pending. Keep the GPU rerun paused until local integration passes, that exact commit is
-pushed, and the user reports that the GPU has been restarted.
+values remain in the operator shell and never enter tracked files. The saturation-v2 integration
+and evidence publication are complete, as is the post-publication four-worker benchmark. The
+operational default remains one worker, so the GPU can remain off. Commands below are retained as
+an explicit rerun and reproduction procedure; no additional cloud run is currently required.
 
 ## A0: local review and immutable handoff
 
@@ -430,10 +431,10 @@ credentials, and host runtime manifests are never downloaded or committed.
 ## Post-publication LDSR worker benchmark
 
 The saturation-v2 evidence published at `b386d4b38c9f3725107eed178829955d442f5601` is complete and
-remains the audit baseline. A later performance-only run may benchmark one, two, three, and four
-LDSR workers. Omission of `--ldsr-workers` remains compatible with the default of one. The option
-is valid only for the exact `development` compute stage; preflight, single, smoke, replay, and
-development-replay must omit it.
+remains the audit baseline. The completed post-publication performance-only run measured four LDSR
+workers; it did not measure separate one-, two-, or three-worker candidates. Omission of
+`--ldsr-workers` remains compatible with the default of one. The option is valid only for the exact
+`development` compute stage; preflight, single, smoke, replay, and development-replay must omit it.
 
 Run each candidate once from the same independently verified checkpoint in a fresh, isolated
 disposable workspace so result paths, caches, locks, and `development.jsonl` cannot collide. Pin
@@ -449,12 +450,12 @@ workers=4
 phase2b3a_replay development-replay
 ```
 
-Benchmark `workers=1`, `2`, `3`, and `4`; record elapsed time and peak GPU memory for each isolated
-run. Promote a worker count only when every per-prediction SHA matches the one-worker baseline,
-the replay remains byte-identical, measured GPU memory retains operational headroom, and wall-clock
-time improves. Prefer four workers when all gates pass; if four is unsafe or slower, fall back to a
-smaller measured candidate. Keep one worker as the compatibility default and use it whenever no
-benchmarked parallel count passes every gate.
+For any future comparative rerun, benchmark `workers=1`, `2`, `3`, and `4`; record elapsed time and
+peak GPU memory for each isolated run. Promote a worker count only when every per-prediction SHA
+matches the one-worker baseline, the replay remains byte-identical, measured GPU memory retains
+operational headroom, and wall-clock time improves. Prefer four workers when all gates pass; if
+four is unsafe or slower, fall back to a smaller measured candidate. Keep one worker as the
+compatibility default and use it whenever no benchmarked parallel count passes every gate.
 
 The first RTX 4090 measurement at `b444c2d64bb4bc512a2b3bc06e04e16af07df612` used four workers.
 It completed `development` in `1831` seconds, peaked at `22687 MiB` and `100%` GPU utilization, and
