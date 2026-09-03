@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,51 @@ def test_builds_exact_host_free_runtime_projection(
     assert verified.verification_scope == "metadata_inventory_only"
     assert verified.cache_computation_verified is False
     assert verified.runtime_sha256 == hashlib.sha256(canonical_json(runtime)).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("post_manifest_sha256", "0" * 64),
+        ("input_audit_sha256", "0" * 64),
+        ("phase2b3a_calculation_revision", "0" * 40),
+        ("phase2b3a_publication_commit", "0" * 40),
+    ),
+)
+def test_rejects_self_consistent_receipt_with_wrong_frozen_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    artifacts: tuple[dict[str, object], dict[str, object], object, object],
+    dependency_snapshot: dict[str, object],
+    field: str,
+    replacement: str,
+) -> None:
+    result, audit, result_verification, input_verification = artifacts
+    forged_result = deepcopy(result)
+    forged_result["upstream"][field] = replacement
+    forged_receipt = replace(
+        result_verification,
+        result_sha256=hashlib.sha256(canonical_json(forged_result)).hexdigest(),
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "verify_recorded_phase2b3b_revision",
+        lambda project_root, revision: revision,
+    )
+    monkeypatch.setattr(
+        phase2b3b_runtime,
+        "_capture_dependencies",
+        lambda project_root: deepcopy(dependency_snapshot),
+    )
+
+    with pytest.raises(ValueError, match="upstream"):
+        phase2b3b_runtime.build_phase2b3b_runtime_manifest(
+            forged_result,
+            audit,
+            result_verification=forged_receipt,
+            input_verification=input_verification,
+            project_root=tmp_path,
+        )
 
 
 @pytest.mark.parametrize(

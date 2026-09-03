@@ -19,6 +19,12 @@ from trustsr.evaluation.calibration_model_identity import (
 from trustsr.evaluation.calibration_predictions import (
     validate_cached_calibration_prediction_provenance,
 )
+from trustsr.evaluation.phase2b3b_evidence import (
+    INPUT_AUDIT_SHA256,
+    POST_MANIFEST_SHA256,
+    PRODUCER_REVISION,
+    PUBLICATION_COMMIT,
+)
 from trustsr.evaluation.phase2b3b_result_verify import VerifiedPhase2B3BResult
 from trustsr.evaluation.phase2b3b_revision import verify_recorded_phase2b3b_revision
 from trustsr.jsonio import canonical_json
@@ -357,9 +363,24 @@ def _result_projection(
         != input_receipt.ordered_membership_sha256
     ):
         raise ValueError("runtime result projections differ from verified receipts")
+    post_manifest_sha256 = _digest(upstream["post_manifest_sha256"], "runtime manifest")
+    input_audit_sha256 = _digest(upstream["input_audit_sha256"], "runtime input audit")
+    calculation_revision = _revision(
+        upstream["phase2b3a_calculation_revision"], "runtime calculation revision"
+    )
+    publication_commit = _revision(
+        upstream["phase2b3a_publication_commit"], "runtime publication revision"
+    )
+    if (
+        post_manifest_sha256 != POST_MANIFEST_SHA256
+        or input_audit_sha256 != INPUT_AUDIT_SHA256
+        or calculation_revision != PRODUCER_REVISION
+        or publication_commit != PUBLICATION_COMMIT
+    ):
+        raise ValueError("runtime result upstream differs from frozen Phase2B3A evidence")
     inputs = {
-        "post_manifest_sha256": _digest(upstream["post_manifest_sha256"], "runtime manifest"),
-        "input_audit_sha256": _digest(upstream["input_audit_sha256"], "runtime input audit"),
+        "post_manifest_sha256": post_manifest_sha256,
+        "input_audit_sha256": input_audit_sha256,
         "normalization_policy": frozen_input["normalization_policy"],
         "crop_policy": frozen_input["crop_policy"],
         "bands": list(bands),
@@ -371,12 +392,8 @@ def _result_projection(
     }
     revision = {
         "producer_revision": producer,
-        "phase2b3a_calculation_revision": _revision(
-            upstream["phase2b3a_calculation_revision"], "runtime calculation revision"
-        ),
-        "phase2b3a_publication_commit": _revision(
-            upstream["phase2b3a_publication_commit"], "runtime publication revision"
-        ),
+        "phase2b3a_calculation_revision": calculation_revision,
+        "phase2b3a_publication_commit": publication_commit,
     }
     return inputs, revision
 
@@ -441,7 +458,7 @@ def _expected_runtime(
     result_value, result_payload = _canonical_document(
         result, schema=_RESULT_SCHEMA, label="runtime result"
     )
-    audit_value, audit_payload = _canonical_document(
+    audit_value, _ = _canonical_document(
         cache_audit, schema=_AUDIT_SCHEMA, label="runtime cache audit"
     )
     audit_verification = verify_calibration_cache_audit(audit_value)
