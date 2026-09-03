@@ -117,6 +117,8 @@ class CalibrationFit:
             or self.all_abstain
         ):
             raise ValueError("calibration threshold must be finite in [0, 0.25]")
+        if self.threshold is not None and self.risk_bound > self.alpha:
+            raise ValueError("finite calibration threshold requires risk_bound <= alpha")
         expected_decision = (
             FREEZE_CALIBRATION
             if self.threshold is not None and self.coverage >= self.minimum_coverage

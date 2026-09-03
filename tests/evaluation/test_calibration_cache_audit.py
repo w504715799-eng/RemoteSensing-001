@@ -268,6 +268,35 @@ def test_rejects_reordered_or_mismatched_bundle_and_map_sequences(
         calibration_cache_audit.build_calibration_cache_audit(bundles, reordered_maps)
 
 
+def test_rejects_one_bundle_with_another_legal_runtime_identity(
+    audit_inputs: tuple[tuple[CalibrationPredictionBundle, ...], tuple[CalibrationMaps, ...]],
+) -> None:
+    """One valid bundle from another runtime cannot enter a global K5 audit."""
+
+    bundles, maps = audit_inputs
+    original = bundles[1]
+    items = tuple(
+        replace(
+            item,
+            identity=replace(
+                item.identity,
+                model_provenance={
+                    **dict(item.identity.model_provenance),
+                    "torch_version": "2.12.1+cu130",
+                    "cuda_runtime": "13.0",
+                },
+            ),
+        )
+        for item in original.items
+    )
+    alternate = CalibrationPredictionBundle(sample_id=original.sample_id, items=items)
+
+    with pytest.raises(ValueError, match="model scientific identit"):
+        calibration_cache_audit.build_calibration_cache_audit(
+            (bundles[0], alternate, *bundles[2:]), maps
+        )
+
+
 @pytest.mark.parametrize(
     "fault", ("identity", "prediction_digest", "seed", "score_digest", "risk_digest")
 )

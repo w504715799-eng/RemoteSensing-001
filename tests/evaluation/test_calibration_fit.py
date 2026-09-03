@@ -118,6 +118,13 @@ def test_finite_threshold_below_explicit_coverage_gate_stops() -> None:
     assert result.phase_decision == "stop_insufficient_coverage"
 
 
+def test_finite_threshold_rejects_risk_bound_above_alpha() -> None:
+    fit = fit_calibration_maps(_maps(), alpha=0.02, minimum_coverage=1.0)
+
+    with pytest.raises(ValueError, match="risk_bound.*alpha"):
+        replace(fit, risk_bound=0.03)
+
+
 @pytest.mark.parametrize("count", [119, 121])
 def test_rejects_anything_other_than_exactly_120_maps(count: int) -> None:
     with pytest.raises(ValueError, match="120"):

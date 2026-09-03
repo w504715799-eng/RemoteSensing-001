@@ -34,6 +34,7 @@ def _validate_inputs(
     if len(bundle_values) != 120 or len(map_values) != 120:
         raise ValueError("calibration cache audit requires exactly 120 bundles and maps")
     validated: list[tuple[CalibrationPredictionBundle, CalibrationMaps]] = []
+    global_model_identity: dict[str, object] | None = None
     for bundle, sample_maps in zip(bundle_values, map_values, strict=True):
         if not isinstance(bundle, CalibrationPredictionBundle):
             raise TypeError("calibration cache audit requires prediction bundles")
@@ -47,6 +48,17 @@ def _validate_inputs(
             item.__post_init__()
         bundle.__post_init__()
         sample_maps.__post_init__()
+        model_identity = {
+            key: value
+            for key, value in bundle.items[0].identity.model_provenance.items()
+            if key != "seed"
+        }
+        if global_model_identity is None:
+            global_model_identity = model_identity
+        elif model_identity != global_model_identity:
+            raise ValueError(
+                "calibration cache audit has mismatched model scientific identities"
+            )
         if bundle.sample_id != sample_maps.sample_id:
             raise ValueError("calibration bundle and maps sample order differs")
         prediction_sha256s = tuple(item.prediction_sha256 for item in bundle.items)
