@@ -38,6 +38,24 @@ def _required_integer(record: Mapping[str, object], field: str) -> int:
     return value
 
 
+def _is_sha256(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _asset_sha256(record: Mapping[str, object], kind: str) -> str:
+    asset = record.get(f"{kind}_asset")
+    if not isinstance(asset, Mapping) or not asset:
+        raise ValueError(f"calibration record {kind}_asset must be a non-empty asset mapping")
+    digest = asset.get("sha256")
+    if not _is_sha256(digest):
+        raise ValueError(f"calibration record {kind}_asset sha256 must be lowercase hexadecimal")
+    return digest
+
+
 def _validate_record(record: Mapping[str, object]) -> Mapping[str, object]:
     if not isinstance(record, Mapping):
         raise TypeError("calibration records must be mappings")
@@ -45,10 +63,10 @@ def _validate_record(record: Mapping[str, object]) -> Mapping[str, object]:
         raise ValueError("calibration records must use only the calibration split")
     for field in _IDENTITY_FIELDS:
         _required_string(record, field)
+    if not _is_sha256(record.get("selection_sha256")):
+        raise ValueError("calibration record selection_sha256 must be lowercase hexadecimal")
     for kind in ("lr", "hr"):
-        asset = record.get(f"{kind}_asset")
-        if not isinstance(asset, Mapping) or not asset:
-            raise ValueError(f"calibration record {kind}_asset must be a non-empty asset mapping")
+        _asset_sha256(record, kind)
     day = _required_integer(record, "days_between")
     bin_index = _required_integer(record, "correlation_bin")
     selection_round = _required_integer(record, "selection_round")
@@ -110,6 +128,20 @@ def _validate_loaded_pair(
         metadata.hr_saturation, RadiometricSaturation
     ):
         raise ValueError("calibration pair loader output requires saturation records")
+    for saturation in (metadata.lr_saturation, metadata.hr_saturation):
+        try:
+            saturation.__post_init__()
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "calibration pair loader output has invalid saturation records"
+            ) from exc
+    if (
+        metadata.lr_asset_sha256 != _asset_sha256(record, "lr")
+        or metadata.hr_asset_sha256 != _asset_sha256(record, "hr")
+    ):
+        raise ValueError(
+            "calibration pair loader output asset identity differs from the input record"
+        )
     expected_metadata = {
         "spatial_group_id": _required_string(record, "spatial_group_id"),
         "days_between": _required_integer(record, "days_between"),

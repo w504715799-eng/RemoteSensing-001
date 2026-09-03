@@ -33,8 +33,8 @@ def _records() -> tuple[dict[str, object], ...]:
             "days_between": day,
             "correlation_bin": bin_index,
             "selection_round": round_index,
-            "lr_asset": {"asset": "lr"},
-            "hr_asset": {"asset": "hr"},
+            "lr_asset": {"asset": "lr", "sha256": "a" * 64},
+            "hr_asset": {"asset": "hr", "sha256": "b" * 64},
         }
         for index, (day, bin_index, round_index) in enumerate(
             (day, bin_index, round_index)
@@ -64,8 +64,8 @@ def _loaded(record: dict[str, object]) -> LoadedCrosssensorPair:
             days_between=int(record["days_between"]),
             correlation_bin=int(record["correlation_bin"]),
             selection_round=int(record["selection_round"]),
-            lr_asset_sha256="a" * 64,
-            hr_asset_sha256="b" * 64,
+            lr_asset_sha256=str(record["lr_asset"]["sha256"]),  # type: ignore[index]
+            hr_asset_sha256=str(record["hr_asset"]["sha256"]),  # type: ignore[index]
             lr_crop_transform=(10.0, 0.0, 10.0, 0.0, -10.0, -10.0),
             hr_crop_transform=(2.5, 0.0, 10.0, 0.0, -2.5, -10.0),
             crop_bounds=(10.0, -30.0, 40.0, -10.0),
@@ -94,7 +94,9 @@ def test_validate_calibration_records_requires_exact_frozen_ordered_120() -> Non
         ("split", "development", "calibration"),
         ("split", "internal_test", "calibration"),
         ("sample_id", "calibration-000", "unique"),
+        ("selection_sha256", "A" * 64, "selection_sha256"),
         ("lr_asset", None, "asset"),
+        ("hr_asset", {"asset": "hr"}, "sha256"),
         ("selection_round", 11, "round"),
     ],
 )
@@ -140,7 +142,18 @@ def test_loader_starts_after_full_validation_in_input_order_with_fixed_context(
     assert all(item.metadata.split == "calibration" for item in loaded)
 
 
-@pytest.mark.parametrize("wrong", ["split", "manifest", "normalization", "saturation", "order"])
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        "split",
+        "manifest",
+        "normalization",
+        "saturation",
+        "asset_identity",
+        "forged_saturation",
+        "order",
+    ],
+)
 def test_rejects_forged_or_wrong_order_loader_output(tmp_path: Path, wrong: str) -> None:
     records = _records()
 
@@ -158,9 +171,20 @@ def test_rejects_forged_or_wrong_order_loader_output(tmp_path: Path, wrong: str)
             return replace(loaded, metadata=replace(loaded.metadata, normalization_policy="wrong"))
         if wrong == "saturation":
             return replace(loaded, metadata=replace(loaded.metadata, lr_saturation=None))
+        if wrong == "asset_identity":
+            return replace(loaded, metadata=replace(loaded.metadata, lr_asset_sha256="0" * 64))
+        if wrong == "forged_saturation":
+            forged = object.__new__(RadiometricSaturation)
+            object.__setattr__(forged, "raw_crop_minimum", 5)
+            object.__setattr__(forged, "raw_crop_maximum", 4)
+            object.__setattr__(forged, "clipped_high_count", 0)
+            object.__setattr__(forged, "clipped_high_by_band", (0, 0, 0, 0))
+            return replace(loaded, metadata=replace(loaded.metadata, lr_saturation=forged))
         if record is records[-1]:
             return _loaded(records[0])
         return loaded
 
-    with pytest.raises(ValueError, match="loader|calibration|manifest|policy|saturation|order"):
+    with pytest.raises(
+        ValueError, match="loader|calibration|manifest|policy|saturation|asset|order"
+    ):
         load_calibration_pairs(tmp_path, records, pair_loader=fake_loader)
