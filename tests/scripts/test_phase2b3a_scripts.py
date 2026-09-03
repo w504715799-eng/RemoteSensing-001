@@ -378,6 +378,87 @@ def test_runner_rejects_wrong_stage_argument_membership(
     assert calls == []
 
 
+@pytest.mark.parametrize("workers", ["1", "4"])
+def test_runner_forwards_one_valid_ldsr_worker_option_for_development(
+    tmp_path: Path, workers: str
+) -> None:
+    root = tmp_path / "persistent"
+    arguments = [*_stage_arguments(root, "development"), "--ldsr-workers", workers]
+
+    completed, calls, _ = _invoke_runner(
+        tmp_path,
+        stage="development",
+        storage_root=root,
+        stage_arguments=arguments,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert len(calls) == 1
+    forwarded = calls[0]
+    assert forwarded.count("--ldsr-workers") == 1
+    index = forwarded.index("--ldsr-workers")
+    assert forwarded[index + 1] == workers
+
+
+def test_runner_rejects_duplicate_ldsr_worker_option(tmp_path: Path) -> None:
+    root = tmp_path / "persistent"
+    arguments = [
+        *_stage_arguments(root, "development"),
+        "--ldsr-workers",
+        "1",
+        "--ldsr-workers",
+        "4",
+    ]
+
+    completed, calls, _ = _invoke_runner(
+        tmp_path,
+        stage="development",
+        stage_arguments=arguments,
+    )
+
+    assert completed.returncode == 2
+    assert "duplicate LDSR worker count" in completed.stderr
+    assert calls == []
+
+
+@pytest.mark.parametrize("workers", ["0", "5", "two", "1.5"])
+def test_runner_rejects_invalid_ldsr_worker_count(
+    tmp_path: Path, workers: str
+) -> None:
+    root = tmp_path / "persistent"
+    arguments = [*_stage_arguments(root, "development"), "--ldsr-workers", workers]
+
+    completed, calls, _ = _invoke_runner(
+        tmp_path,
+        stage="development",
+        stage_arguments=arguments,
+    )
+
+    assert completed.returncode == 2
+    assert "LDSR worker count must be an integer from 1 through 4" in completed.stderr
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "stage", ["preflight", "single", "smoke", "replay", "development-replay"]
+)
+def test_runner_rejects_ldsr_workers_outside_development(
+    tmp_path: Path, stage: str
+) -> None:
+    root = tmp_path / "persistent"
+    arguments = [*_stage_arguments(root, stage), "--ldsr-workers", "1"]
+
+    completed, calls, _ = _invoke_runner(
+        tmp_path,
+        stage=stage,
+        stage_arguments=arguments,
+    )
+
+    assert completed.returncode == 2
+    assert "LDSR workers are allowed only for development" in completed.stderr
+    assert calls == []
+
+
 def test_runner_rejects_option_like_or_non_normalized_stage_paths(tmp_path: Path) -> None:
     root = tmp_path / "persistent"
     for value in ("--checkpoint", str(root / "a" / ".." / "samples.jsonl")):

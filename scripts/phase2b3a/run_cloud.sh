@@ -107,6 +107,7 @@ run_main() {
   local input_digest=
   local sen2srlite_directory=
   local ldsr_directory=
+  local ldsr_workers=
   local reviewed_commit=
   local confirm_count=0
   local argument
@@ -118,6 +119,17 @@ run_main() {
     case "$argument" in
       --confirm-cloud-storage)
         ((confirm_count += 1))
+        ;;
+      --ldsr-workers)
+        (( $# > 0 )) || die 'missing value for --ldsr-workers'
+        value="$1"
+        shift
+        [[ "$value" != --* ]] || die 'option-like value for --ldsr-workers'
+        [[ -z "$ldsr_workers" ]] || die 'duplicate LDSR worker count'
+        [[ "$stage" == development ]] || die 'LDSR workers are allowed only for development'
+        [[ "$value" =~ ^[1-4]$ ]] ||
+          die 'LDSR worker count must be an integer from 1 through 4'
+        ldsr_workers="$value"
         ;;
       --selection-manifest | --selection-manifest-sha256 | --input-audit | --input-audit-sha256 | --sen2srlite-model-dir | --ldsr-model-dir | --reviewed-commit)
         (( $# > 0 )) || die "missing value for $argument"

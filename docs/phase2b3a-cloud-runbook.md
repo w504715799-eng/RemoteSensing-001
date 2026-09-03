@@ -426,3 +426,31 @@ Inspect each pulled `phase2b3a-bundle-manifest.json`, confirm the schemas above,
 six-file staged diff before commit. Commit, push, and prove local and remote branch SHAs match.
 Cloud pixels, tensors, caches, checkpoint archives, models, logs, remote markers, endpoints,
 credentials, and host runtime manifests are never downloaded or committed.
+
+## Post-publication LDSR worker benchmark
+
+The saturation-v2 evidence published at `b386d4b38c9f3725107eed178829955d442f5601` is complete and
+remains the audit baseline. A later performance-only run may benchmark one, two, three, and four
+LDSR workers. Omission of `--ldsr-workers` remains compatible with the default of one. The option
+is valid only for the exact `development` compute stage; preflight, single, smoke, replay, and
+development-replay must omit it.
+
+Run each candidate once from the same independently verified checkpoint in a fresh, isolated
+disposable workspace so result paths, caches, locks, and `development.jsonl` cannot collide. Pin
+the same reviewed commit, frozen inputs, and model inventories for every candidate. In that
+candidate's operator shell, invoke the existing runner directly:
+
+```bash
+workers=4
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/run_cloud.sh" \
+  "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_STORAGE_ROOT" "$PHASE2B3A_REPOSITORY" \
+  development "${PHASE2B3A_COMMON_ARGS[@]}" "${PHASE2B3A_COMPUTE_ONLY_ARGS[@]}" \
+  --ldsr-workers "$workers"
+phase2b3a_replay development-replay
+```
+
+Benchmark `workers=1`, `2`, `3`, and `4`; record elapsed time and peak GPU memory for each isolated
+run. Promote a worker count only when every per-prediction SHA matches the one-worker baseline,
+the replay remains byte-identical, and measured GPU memory retains operational headroom. Prefer
+four workers when all gates pass; if four is unsafe, fall back to three. Keep one worker as the
+compatibility default and use it whenever no benchmarked parallel count passes every gate.
