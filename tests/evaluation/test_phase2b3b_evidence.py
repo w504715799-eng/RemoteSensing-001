@@ -174,6 +174,87 @@ def test_semantic_validator_rejects_wrong_internal_result_or_cache_digest(
         phase2b3b_evidence._validate_semantics(documents)  # type: ignore[arg-type]
 
 
+def test_semantic_validator_rejects_mutated_frozen_cost_rank_without_digest_masking(
+    published_evidence_dir: Path,
+) -> None:
+    """The K5 score is third in the fixed zero-based cost order, not merely any frozen score."""
+
+    documents = copy.deepcopy(_documents(published_evidence_dir))
+    for name in (
+        "sen2naipv2-development-score-audit-v1.json",
+        "sen2naipv2-development-score-acceptance-v1.json",
+    ):
+        documents[name]["frozen_score"]["cost_rank"] = 0  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="cost"):
+        phase2b3b_evidence._validate_semantics(documents)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "result_name, audit_name, counts",
+    (
+        (
+            "sen2naipv2-development-smoke-v2.json",
+            "sen2naipv2-development-smoke-cache-audit-v2.json",
+            {"sample_count": 5, "prediction_count": 109, "score_count": 21},
+        ),
+        (
+            "sen2naipv2-development-score-audit-v1.json",
+            "sen2naipv2-development-score-cache-audit-v1.json",
+            {"sample_count": 119, "prediction_count": 839, "score_count": 359},
+        ),
+    ),
+)
+def test_semantic_validator_rejects_mutated_fixed_stage_counts(
+    published_evidence_dir: Path,
+    result_name: str,
+    audit_name: str,
+    counts: dict[str, int],
+) -> None:
+    """Both public result and cache-audit receipts carry the fixed A1/A2 stage counts."""
+
+    documents = copy.deepcopy(_documents(published_evidence_dir))
+    for name in (result_name, audit_name):
+        documents[name].update(counts)  # type: ignore[union-attr]
+
+    with pytest.raises(ValueError, match="count"):
+        phase2b3b_evidence._validate_semantics(documents)  # type: ignore[arg-type]
+
+
+def test_semantic_validator_rejects_non_roi_a2_statistical_unit(
+    published_evidence_dir: Path,
+) -> None:
+    """The A2 selection is frozen at the ROI unit; pixel-level substitution cannot enter B."""
+
+    documents = copy.deepcopy(_documents(published_evidence_dir))
+    documents["sen2naipv2-development-score-audit-v1.json"]["statistical_unit"] = "pixel"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="configuration"):
+        phase2b3b_evidence._validate_semantics(documents)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("fault", ("score_configuration", "candidate_entry", "selected_evidence"))
+def test_semantic_validator_rejects_wrong_a2_nested_types_and_selected_candidate(
+    published_evidence_dir: Path, fault: str
+) -> None:
+    """Malformed nested evidence always fails closed with ValueError, never AttributeError."""
+
+    documents = copy.deepcopy(_documents(published_evidence_dir))
+    result = documents["sen2naipv2-development-score-audit-v1.json"]
+    acceptance = documents["sen2naipv2-development-score-acceptance-v1.json"]
+    if fault == "score_configuration":
+        result["score_configuration"] = []  # type: ignore[index]
+    elif fault == "candidate_entry":
+        for frozen in (result["frozen_score"], acceptance["frozen_score"]):  # type: ignore[index]
+            frozen["candidate_eligibility_evidence"][0] = []
+    else:
+        for frozen in (result["frozen_score"], acceptance["frozen_score"]):  # type: ignore[index]
+            frozen["selected_candidate_evidence"] = frozen["candidate_eligibility_evidence"][0]
+
+    with pytest.raises(ValueError):
+        phase2b3b_evidence._validate_semantics(documents)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("fault", ("decision", "eligibility", "frozen_mismatch"))
 def test_semantic_validator_rejects_a2_freeze_tampering_without_digest_masking(
     published_evidence_dir: Path, fault: str

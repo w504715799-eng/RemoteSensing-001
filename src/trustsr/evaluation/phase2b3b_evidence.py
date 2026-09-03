@@ -98,6 +98,25 @@ _OPERATOR_PARAMETERS = {
 }
 _SEEDS = (3407, 3408, 3409, 3410, 3411)
 _BANDS = ("B04", "B03", "B02", "B08")
+_A1_COUNTS = {"sample_count": 4, "prediction_count": 108, "score_count": 20}
+_A2_COUNTS = {"sample_count": 120, "prediction_count": 840, "score_count": 360}
+_CANDIDATE_EVIDENCE_KEYS = {
+    "aurc_gain_quartiles",
+    "eligible",
+    "failure_reasons",
+    "mean_aurc_gain",
+    "mean_aurc_gain_ci95",
+    "mean_rho",
+    "mean_rho_ci95",
+    "median_aurc_gain",
+    "median_rho",
+    "minimum_stratum_mean_rho",
+    "name",
+    "nonconstant_count",
+    "positive_strata",
+    "rho_quartiles",
+    "stratum_mean_rho",
+}
 
 
 @dataclass(frozen=True)
@@ -216,6 +235,55 @@ def _validate_common_identity(result: Mapping[str, object], audit: Mapping[str, 
         raise ValueError("published evidence has a mismatched frozen input identity")
 
 
+def _validate_candidate_evidence(candidate: object, name: str) -> dict[str, object]:
+    value = _require_exact_keys(candidate, _CANDIDATE_EVIDENCE_KEYS, "A2 candidate evidence")
+    numeric_keys = {
+        "mean_aurc_gain",
+        "mean_rho",
+        "median_aurc_gain",
+        "median_rho",
+        "minimum_stratum_mean_rho",
+    }
+    interval_keys = {
+        "aurc_gain_quartiles",
+        "mean_aurc_gain_ci95",
+        "mean_rho_ci95",
+        "rho_quartiles",
+    }
+    strata = value["stratum_mean_rho"]
+    if (
+        value["name"] != name
+        or value["eligible"] is not True
+        or value["failure_reasons"] != []
+        or any(type(value[key]) not in (int, float) for key in numeric_keys)
+        or any(
+            type(value[key]) is not list
+            or len(value[key]) != 2
+            or any(type(item) not in (int, float) for item in value[key])
+            for key in interval_keys
+        )
+        or type(value["nonconstant_count"]) is not int
+        or type(value["positive_strata"]) is not int
+        or type(strata) is not list
+        or len(strata) != 12
+    ):
+        raise ValueError("A2 candidate eligibility evidence is invalid")
+    for stratum in strata:
+        stratum_value = _require_exact_keys(
+            stratum,
+            {"days_between", "correlation_bin", "mean_rho", "mean_aurc_gain"},
+            "A2 candidate stratum evidence",
+        )
+        if (
+            type(stratum_value["days_between"]) is not int
+            or type(stratum_value["correlation_bin"]) is not int
+            or type(stratum_value["mean_rho"]) not in (int, float)
+            or type(stratum_value["mean_aurc_gain"]) not in (int, float)
+        ):
+            raise ValueError("A2 candidate stratum evidence is invalid")
+    return value
+
+
 def _validate_a1(documents: Mapping[str, dict[str, object]]) -> None:
     result = documents["sen2naipv2-development-smoke-v2.json"]
     audit = documents["sen2naipv2-development-smoke-cache-audit-v2.json"]
@@ -259,6 +327,10 @@ def _validate_a1(documents: Mapping[str, dict[str, object]]) -> None:
         "A1 cache audit",
     )
     _validate_common_identity(result, audit)
+    if any(
+        result.get(key) != value or audit.get(key) != value for key, value in _A1_COUNTS.items()
+    ):
+        raise ValueError("A1 result/cache-audit counts are invalid")
     _validate_receipt(
         receipt,
         schema="trustsr.phase2b3a-development-smoke-acceptance.v2",
@@ -341,18 +413,27 @@ def _validate_a2(documents: Mapping[str, dict[str, object]]) -> dict[str, object
     if receipt.get("no_eligible_score") is not False:
         raise ValueError("A2 acceptance incorrectly reports no eligible score")
     expected_names = ["lr_reprojection_l1", "three_model_disagreement", "ldsr_variance_k5"]
+    score_configuration = result.get("score_configuration")
+    risk_configuration = result.get("risk_configuration")
+    if type(score_configuration) is not dict or type(risk_configuration) is not dict:
+        raise ValueError("A2 nested score/risk configuration is invalid")
     if (
         result.get("dataset_role") != "development_score_selection_only"
         or result.get("include_ldsr_variance_k5") is not True
         or result.get("candidate_names") != expected_names
-        or result.get("score_configuration", {}).get("ldsr_variance_k5") != _OPERATOR_PARAMETERS
-        or result.get("risk_configuration")
+        or score_configuration.get("ldsr_variance_k5") != _OPERATOR_PARAMETERS
+        or risk_configuration
         != {"name": "local_l1_risk", "primary_window": 9, "sensitivity_window": 1}
         or result.get("selection_risk") != "primary_window_9"
+        or result.get("statistical_unit") != "roi"
         or result.get("code_revision") != PRODUCER_REVISION
         or audit.get("code_revision") != PRODUCER_REVISION
+        or any(
+            result.get(key) != value or audit.get(key) != value
+            for key, value in _A2_COUNTS.items()
+        )
     ):
-        raise ValueError("A2 frozen score configuration is invalid")
+        raise ValueError("A2 frozen score configuration or counts are invalid")
     frozen = result.get("frozen_score")
     if type(frozen) is not dict or frozen != receipt.get("frozen_score"):
         raise ValueError("A2 result and acceptance frozen-score evidence differ")
@@ -378,6 +459,8 @@ def _validate_a2(documents: Mapping[str, dict[str, object]]) -> dict[str, object
         or frozen.get("seeds") != list(_SEEDS)
         or frozen.get("post_manifest_sha256") != POST_MANIFEST_SHA256
         or frozen.get("code_revision") != PRODUCER_REVISION
+        or type(frozen.get("cost_rank")) is not int
+        or frozen.get("cost_rank") != 2
         or frozen.get("statistical_leader") != "ldsr_variance_k5"
         or frozen.get("indistinguishable_candidates") != ["ldsr_variance_k5"]
         or not isinstance(candidates, list)
@@ -385,19 +468,25 @@ def _validate_a2(documents: Mapping[str, dict[str, object]]) -> dict[str, object
         or len(candidates) != len(expected_names)
         or len(summaries) != len(expected_names)
     ):
-        raise ValueError("A2 frozen-score identity or eligibility evidence is invalid")
-    candidate_names = [
-        candidate.get("name") if type(candidate) is dict else None for candidate in candidates
+        raise ValueError("A2 frozen-score cost or eligibility evidence is invalid")
+    verified_candidates = [
+        _validate_candidate_evidence(candidate, name)
+        for candidate, name in zip(candidates, expected_names, strict=True)
     ]
+    candidate_names = [candidate["name"] for candidate in verified_candidates]
     if candidate_names != expected_names:
         raise ValueError("A2 candidate eligibility order is invalid")
-    expected_candidates = [
-        summary.get("primary_window_9") if type(summary) is dict else None for summary in summaries
-    ]
+    if any(type(summary) is not dict for summary in summaries):
+        raise ValueError("A2 candidate summary type is invalid")
+    expected_candidates: list[object] = []
+    for summary in summaries:
+        primary = summary.get("primary_window_9")
+        if type(primary) is not dict:
+            raise ValueError("A2 primary candidate evidence is invalid")
+        expected_candidates.append(primary)
     if (
         candidates != expected_candidates
-        or frozen.get("selected_candidate_evidence") != candidates[-1]
-        or candidates[-1].get("eligible") is not True
+        or frozen.get("selected_candidate_evidence") != verified_candidates[-1]
     ):
         raise ValueError("A2 selected candidate eligibility evidence is invalid")
     return frozen
