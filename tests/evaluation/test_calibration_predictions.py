@@ -310,3 +310,69 @@ def test_item_constructor_rejects_identity_with_wrong_calibration_context(tmp_pa
             prediction_sha256=item.prediction_sha256,
             tensor=item.tensor,
         )
+
+
+def test_cached_item_rejects_identity_with_wrong_source(tmp_path: Path) -> None:
+    item = _generate(tmp_path).for_seed(3407)
+    wrong_source = build_identity(
+        dict(item.identity.model_provenance),
+        "wrong-source",
+        item.identity.sample_id,
+        _pair().pair.lr,
+    )
+
+    with pytest.raises(ValueError, match="source"):
+        CachedCalibrationPrediction(
+            model_name=MODEL_NAME,
+            seed=3407,
+            identity=wrong_source,
+            prediction_sha256=item.prediction_sha256,
+            tensor=item.tensor,
+        )
+
+
+def test_bundle_rejects_member_with_a_different_lr_identity(tmp_path: Path) -> None:
+    bundle = _generate(tmp_path)
+    changed_lr = torch.full((4, 2, 3), 0.75, dtype=torch.float32)
+    second = bundle.for_seed(3408)
+    mixed_item = CachedCalibrationPrediction(
+        model_name=MODEL_NAME,
+        seed=3408,
+        identity=build_identity(
+            dict(second.identity.model_provenance),
+            second.identity.source,
+            second.identity.sample_id,
+            changed_lr,
+        ),
+        prediction_sha256=second.prediction_sha256,
+        tensor=second.tensor,
+    )
+    items = (bundle.for_seed(3407), mixed_item, *bundle.items[2:])
+
+    with pytest.raises(ValueError, match="input"):
+        CalibrationPredictionBundle(sample_id=bundle.sample_id, items=items)
+
+
+def test_bundle_rejects_non_item_without_attribute_error() -> None:
+    with pytest.raises(TypeError, match="CachedCalibrationPrediction"):
+        CalibrationPredictionBundle(sample_id="calibration-0", items=(object(),) * 5)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("layout", ["noncontiguous", "requires_grad"])
+def test_cached_item_requires_cache_tensor_layout(tmp_path: Path, layout: str) -> None:
+    item = _generate(tmp_path).for_seed(3407)
+    if layout == "noncontiguous":
+        tensor = item.tensor.transpose(1, 2).contiguous().transpose(1, 2)
+        assert not tensor.is_contiguous()
+    else:
+        tensor = item.tensor.clone().requires_grad_()
+        assert tensor.requires_grad
+
+    with pytest.raises(ValueError, match="cache contract"):
+        CachedCalibrationPrediction(
+            model_name=item.model_name,
+            seed=item.seed,
+            identity=item.identity,
+            prediction_sha256=tensor_sha256(tensor),
+            tensor=tensor,
+        )

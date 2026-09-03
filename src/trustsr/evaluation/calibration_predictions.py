@@ -151,6 +151,10 @@ class CachedCalibrationPrediction:
             raise ValueError("cached calibration prediction has an invalid model or seed")
         if not isinstance(self.identity, PredictionIdentity):
             raise TypeError("cached calibration prediction requires a PredictionIdentity")
+        if self.identity.source != (
+            f"sen2naipv2-crosssensor/{phase2b3b_evidence.POST_MANIFEST_SHA256}"
+        ):
+            raise ValueError("cached calibration prediction identity source is invalid")
         provenance = self.identity.model_provenance
         if (
             provenance.get("name") != MODEL_NAME
@@ -173,6 +177,9 @@ class CachedCalibrationPrediction:
         )
         if (
             self.tensor.dtype != torch.float32
+            or self.tensor.device.type != "cpu"
+            or not self.tensor.is_contiguous()
+            or self.tensor.requires_grad
             or tuple(self.tensor.shape) != expected_shape
             or not torch.isfinite(self.tensor).all()
             or (self.tensor < 0).any()
@@ -191,16 +198,36 @@ class CalibrationPredictionBundle:
     def __post_init__(self) -> None:
         if type(self.sample_id) is not str or not self.sample_id:
             raise TypeError("calibration prediction bundle sample_id must be a non-empty string")
-        if type(self.items) is not tuple or tuple(item.seed for item in self.items) != SEEDS:
+        if type(self.items) is not tuple:
+            raise TypeError("calibration prediction bundle items must be an exact tuple")
+        if any(not isinstance(item, CachedCalibrationPrediction) for item in self.items):
+            raise TypeError(
+                "calibration prediction bundle items must be CachedCalibrationPrediction"
+            )
+        if tuple(item.seed for item in self.items) != SEEDS:
             raise ValueError(
                 "calibration prediction bundle must contain the fixed ordered K5 seeds"
             )
-        if any(
-            not isinstance(item, CachedCalibrationPrediction)
-            or item.identity.sample_id != self.sample_id
-            for item in self.items
-        ):
+        if any(item.identity.sample_id != self.sample_id for item in self.items):
             raise ValueError("calibration prediction bundle items have mismatched identities")
+        first_identity = self.items[0].identity
+        input_identity = (
+            first_identity.source,
+            first_identity.lr_shape,
+            first_identity.lr_dtype,
+            first_identity.lr_sha256,
+        )
+        if any(
+            (
+                item.identity.source,
+                item.identity.lr_shape,
+                item.identity.lr_dtype,
+                item.identity.lr_sha256,
+            )
+            != input_identity
+            for item in self.items[1:]
+        ):
+            raise ValueError("calibration prediction bundle items have mismatched inputs")
 
     def for_seed(self, seed: int) -> CachedCalibrationPrediction:
         matches = tuple(item for item in self.items if item.seed == seed)
