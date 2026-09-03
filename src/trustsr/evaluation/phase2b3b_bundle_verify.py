@@ -16,7 +16,7 @@ from trustsr.evaluation.phase2b3b_result_verify import (
     verify_phase2b3b_result,
 )
 
-SCHEMA = "trustsr.phase2b3b-bundle-verification.v1"
+SCHEMA = "trustsr.phase2b3b-candidate-bundle-metadata-verification.v1"
 _RUNTIME_SCHEMA = "trustsr.phase2b3b-calibration-runtime.v1"
 _REPLAY_SCHEMA = "trustsr.phase2b3b-calibration-replay.v1"
 _RESULT_NAME = "phase2b3b-calibration-result.json"
@@ -35,9 +35,15 @@ _REPLAY_KEYS = {
 
 @dataclass(frozen=True)
 class VerifiedPhase2B3BBundle:
-    """Host-free semantic receipt for a candidate, without acceptance status."""
+    """Candidate metadata-consistency receipt for transport and cross-document checks.
+
+    It cannot prove cache pixels, prediction, or score/risk computations and cannot
+    authorize acceptance on its own.
+    """
 
     schema: str
+    verification_scope: str
+    cache_computation_verified: bool
     manifest_sha256: str
     result_sha256: str
     cache_audit_sha256: str
@@ -100,12 +106,13 @@ def verify_phase2b3b_bundle(
     storage_root: Path,
     manifest_path: Path,
 ) -> VerifiedPhase2B3BBundle:
-    """Verify one candidate bundle without publishing an acceptance decision.
+    """Verify candidate metadata consistency without publishing an acceptance decision.
 
     The atomic writer proves publication integrity only. This function is the
     semantic entry point: it retains the reader's raw byte snapshot, validates
     replay identities against those bytes, and delegates result authority to the
-    independent final-result verifier.
+    independent final-result verifier. It does not prove cache pixels, prediction,
+    or score/risk computations and cannot authorize acceptance on its own.
     """
 
     loaded = read_phase2b3b_bundle(bundle_dir)
@@ -147,6 +154,8 @@ def verify_phase2b3b_bundle(
 
     return VerifiedPhase2B3BBundle(
         schema=SCHEMA,
+        verification_scope="metadata_consistency_only",
+        cache_computation_verified=False,
         manifest_sha256=loaded.manifest_sha256,
         result_sha256=result_sha256,
         cache_audit_sha256=audit_sha256,

@@ -60,7 +60,9 @@ def _write(directory: Path, documents: dict[str, dict[str, object]]) -> None:
 
 def _result_receipt(documents: dict[str, dict[str, object]]) -> VerifiedPhase2B3BResult:
     return VerifiedPhase2B3BResult(
-        schema="trustsr.phase2b3b-calibration-result-verification.v1",
+        schema="trustsr.phase2b3b-calibration-result-metadata-verification.v1",
+        verification_scope="metadata_consistency_only",
+        cache_computation_verified=False,
         result_sha256=_sha(canonical_json(documents["result"])),
         cache_audit_sha256=_sha(canonical_json(documents["audit"])),
         producer_revision="c" * 40,
@@ -122,7 +124,12 @@ def test_verifies_semantics_from_reader_raw_bytes_and_forwards_trusted_paths(
         "storage_root": tmp_path / "storage",
         "manifest_path": tmp_path / "post.json",
     }
-    assert receipt.schema == "trustsr.phase2b3b-bundle-verification.v1"
+    assert (
+        receipt.schema
+        == "trustsr.phase2b3b-candidate-bundle-metadata-verification.v1"
+    )
+    assert receipt.verification_scope == "metadata_consistency_only"
+    assert receipt.cache_computation_verified is False
     assert receipt.result_sha256 == expected.result_sha256
     assert receipt.cache_audit_sha256 == expected.cache_audit_sha256
     assert receipt.runtime_manifest_sha256 == documents["replay"][
@@ -133,6 +140,20 @@ def test_verifies_semantics_from_reader_raw_bytes_and_forwards_trusted_paths(
     assert str(directory) not in repr(receipt)
     with pytest.raises(FrozenInstanceError):
         receipt.phase_decision = "accept"  # type: ignore[misc]
+
+
+def test_receipt_and_entrypoint_express_metadata_only_boundary() -> None:
+    receipt_docstring = phase2b3b_bundle_verify.VerifiedPhase2B3BBundle.__doc__
+    verify_docstring = phase2b3b_bundle_verify.verify_phase2b3b_bundle.__doc__
+
+    assert receipt_docstring is not None
+    normalized_receipt_docstring = " ".join(receipt_docstring.split())
+    assert "cache pixels" in normalized_receipt_docstring
+    assert "prediction" in normalized_receipt_docstring
+    assert "score/risk" in normalized_receipt_docstring
+    assert "cannot authorize acceptance" in normalized_receipt_docstring
+    assert verify_docstring is not None
+    assert "does not prove cache pixels" in " ".join(verify_docstring.split())
 
 
 def test_calls_real_result_verifier_with_forwarded_authority_paths(
