@@ -283,8 +283,9 @@ PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" \
 ```
 
 Before A2 can replace the live bundle manifest, use the existing pull script from the clean local
-reviewed checkout to fetch and offline-verify the A1-v2 bundle into a new destination. Do not stage
-evidence yet.
+reviewed checkout to fetch and offline-verify the A1-v2 bundle into a new destination. The
+`.gitignore` allowlist for the three new A1-v2 publication paths must already be present in the
+reviewed integration commit. Materialize exactly those three files, but do not stage them yet.
 
 ```bash
 set -euo pipefail
@@ -295,7 +296,6 @@ set -euo pipefail
 : "${PHASE2B3A_SSH_HOST:?set operator-provided endpoint only in this shell}"
 : "${PHASE2B3A_SSH_PORT:?set operator-provided numeric port only in this shell}"
 : "${PHASE2B3A_A1_V2_BUNDLE:?set new absolute local A1-v2 bundle destination}"
-: "${PHASE2B3A_A1_V2_ACCEPTANCE:?set new untracked A1-v2 acceptance JSON path}"
 [[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
 test "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" = \
@@ -304,10 +304,21 @@ test -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracke
 git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor \
   "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
+a1_result=artifacts/phase2b3a/sen2naipv2-development-smoke-v2.json
+a1_audit=artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v2.json
+a1_acceptance=artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v2.json
+for path in "$a1_result" "$a1_audit" "$a1_acceptance"; do
+  test ! -e "$path" && test ! -L "$path"
+done
 scripts/phase2b3a/pull_results.sh "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" \
   "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A1_V2_BUNDLE"
 uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_V2_BUNDLE" \
-  --output "$PHASE2B3A_A1_V2_ACCEPTANCE"
+  --output "$a1_acceptance"
+cp -- "$PHASE2B3A_A1_V2_BUNDLE/phase2b3a-a1-result.json" "$a1_result"
+cp -- "$PHASE2B3A_A1_V2_BUNDLE/phase2b3a-a1-cache-audit.json" "$a1_audit"
+expected_a1_status="$(printf '?? %s\n' "$a1_result" "$a1_audit" "$a1_acceptance" | sort)"
+test "$(git status --porcelain=v1 --untracked-files=all | sort)" = "$expected_a1_status"
+test -z "$(git diff --cached --name-only)"
 ```
 
 Return to the cloud shell for exact A2, replay, checkpoint, and independent checkpoint
@@ -337,11 +348,13 @@ The expected scientific schemas are:
 
 - A1 result: `trustsr.phase2b3a-development-smoke.v2`
 - A1 cache audit: `trustsr.phase2b3a-development-smoke-cache-audit.v2`
+- A1 acceptance: `trustsr.phase2b3a-development-smoke-acceptance.v2`
 - A1 runtime: `trustsr.phase2b3a-a1-runtime.v2`
 - A1 replay: `trustsr.phase2b3a-a1-replay.v2`
 - A1 bundle manifest: `trustsr.phase2b3a-bundle-manifest.v2`
 - A2 result: `trustsr.phase2b3a-development-score-audit.v1`
 - A2 cache audit: `trustsr.phase2b3a-development-score-cache-audit.v1`
+- A2 acceptance: `trustsr.phase2b3a-development-score-acceptance.v1`
 - A2 runtime: `trustsr.phase2b3a-a2-runtime.v1`
 - A2 replay: `trustsr.phase2b3a-a2-replay.v1`
 - A2 bundle manifest: `trustsr.phase2b3a-bundle-manifest.v1`
@@ -364,28 +377,52 @@ set -euo pipefail
 : "${PHASE2B3A_SSH_HOST:?set operator-provided endpoint only in this shell}"
 : "${PHASE2B3A_SSH_PORT:?set operator-provided numeric port only in this shell}"
 : "${PHASE2B3A_A1_V2_BUNDLE:?set previously verified A1-v2 bundle destination}"
-: "${PHASE2B3A_A1_V2_ACCEPTANCE:?set existing untracked A1-v2 acceptance JSON path}"
 : "${PHASE2B3A_A2_V1_BUNDLE:?set new absolute local A2-v1 bundle destination}"
-: "${PHASE2B3A_A2_V1_ACCEPTANCE:?set new untracked A2-v1 acceptance JSON path}"
 [[ "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 PHASE2B3A_LOCAL_REPOSITORY="$(realpath -e -- "$PHASE2B3A_LOCAL_REPOSITORY")"
 test "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" symbolic-ref --short HEAD)" = \
   "$PHASE2B3A_LOCAL_BRANCH"
-test -z "$(git -C "$PHASE2B3A_LOCAL_REPOSITORY" status --porcelain=v1 --untracked-files=all)"
 git -C "$PHASE2B3A_LOCAL_REPOSITORY" merge-base --is-ancestor \
   "$PHASE2B3A_LOCAL_REVIEWED_COMMIT" HEAD
 cd -- "$PHASE2B3A_LOCAL_REPOSITORY"
+a1_result=artifacts/phase2b3a/sen2naipv2-development-smoke-v2.json
+a1_audit=artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v2.json
+a1_acceptance=artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v2.json
+expected_a1_status="$(printf '?? %s\n' "$a1_result" "$a1_audit" "$a1_acceptance" | sort)"
+test "$(git status --porcelain=v1 --untracked-files=all | sort)" = "$expected_a1_status"
+test -z "$(git diff --cached --name-only)"
+for path in "$a1_result" "$a1_audit" "$a1_acceptance"; do
+  test -f "$path" && test ! -L "$path"
+done
+a2_result=artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json
+a2_audit=artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
+a2_acceptance=artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
+for path in "$a2_result" "$a2_audit" "$a2_acceptance"; do
+  test ! -e "$path" && test ! -L "$path"
+done
 scripts/phase2b3a/pull_results.sh "$PHASE2B3A_SSH_HOST" "$PHASE2B3A_SSH_PORT" \
   "$PHASE2B3A_REMOTE_STORAGE_ROOT" "$PHASE2B3A_A2_V1_BUNDLE"
 uv run trustsr-phase2b3a-verify a2 --bundle "$PHASE2B3A_A2_V1_BUNDLE" \
-  --output "$PHASE2B3A_A2_V1_ACCEPTANCE"
+  --output "$a2_acceptance"
 uv run trustsr-phase2b3a-verify a1 --bundle "$PHASE2B3A_A1_V2_BUNDLE" \
-  --output "$PHASE2B3A_A1_V2_ACCEPTANCE"
+  --output "$a1_acceptance"
+cp -- "$PHASE2B3A_A2_V1_BUNDLE/phase2b3a-a2-result.json" "$a2_result"
+cp -- "$PHASE2B3A_A2_V1_BUNDLE/phase2b3a-a2-cache-audit.json" "$a2_audit"
+expected_all_status="$(printf '?? %s\n' \
+  "$a1_result" "$a1_audit" "$a1_acceptance" \
+  "$a2_result" "$a2_audit" "$a2_acceptance" | sort)"
+test "$(git status --porcelain=v1 --untracked-files=all | sort)" = "$expected_all_status"
+git add -- "$a1_result" "$a1_audit" "$a1_acceptance" \
+  "$a2_result" "$a2_audit" "$a2_acceptance"
+expected_staged="$(printf '%s\n' \
+  "$a1_result" "$a1_audit" "$a1_acceptance" \
+  "$a2_result" "$a2_audit" "$a2_acceptance" | sort)"
+test "$(git diff --cached --name-only | sort)" = "$expected_staged"
+test -z "$(git diff --name-only)"
+git diff --cached --check
 ```
 
-Inspect each pulled `phase2b3a-bundle-manifest.json`, confirm the schemas above, and copy only the
-allowlisted host-free result, cache-audit, and acceptance JSON into new tracked paths. Require a
-clean index before `git add`, compare the staged filenames with an exact sorted allowlist, review
-the diff, commit, push, and prove local and remote branch SHAs match. Cloud pixels, tensors, caches,
-checkpoint archives, models, logs, remote markers, endpoints, credentials, and host runtime
-manifests are never downloaded or committed.
+Inspect each pulled `phase2b3a-bundle-manifest.json`, confirm the schemas above, and review the
+six-file staged diff before commit. Commit, push, and prove local and remote branch SHAs match.
+Cloud pixels, tensors, caches, checkpoint archives, models, logs, remote markers, endpoints,
+credentials, and host runtime manifests are never downloaded or committed.

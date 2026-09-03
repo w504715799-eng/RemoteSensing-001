@@ -67,6 +67,7 @@ Fresh A1 uses:
 
 - result `trustsr.phase2b3a-development-smoke.v2`;
 - cache audit `trustsr.phase2b3a-development-smoke-cache-audit.v2`;
+- acceptance `trustsr.phase2b3a-development-smoke-acceptance.v2`;
 - runtime `trustsr.phase2b3a-a1-runtime.v2`;
 - replay `trustsr.phase2b3a-a1-replay.v2`;
 - bundle manifest `trustsr.phase2b3a-bundle-manifest.v2`.
@@ -75,6 +76,7 @@ A2 remains pre-publication v1 while requiring the v2 policy and radiometric evid
 
 - result `trustsr.phase2b3a-development-score-audit.v1`;
 - cache audit `trustsr.phase2b3a-development-score-cache-audit.v1`;
+- acceptance `trustsr.phase2b3a-development-score-acceptance.v1`;
 - runtime `trustsr.phase2b3a-a2-runtime.v1`;
 - replay `trustsr.phase2b3a-a2-replay.v1`;
 - bundle manifest `trustsr.phase2b3a-bundle-manifest.v1`.
@@ -117,15 +119,21 @@ Follow [the cloud runbook](phase2b3a-cloud-runbook.md) using runtime-only operat
    disposable live `trustsr/phase2b3a`; it must never target the durable checkpoint or model roots.
 5. Run formal preflight, then fresh v2 `single`, `smoke`, and inference-free `replay`.
 6. Checkpoint the new A1 and independently verify its exact manifest. Before A2 replaces the live
-   bundle manifest, pull the A1-v2 bundle with the existing pull script and verify it offline into a
-   new local destination.
+   bundle manifest, pull the A1-v2 bundle with the existing pull script and verify it offline. Write
+   only these three new tracked paths, enabled by the integration `.gitignore` allowlist:
+   - `artifacts/phase2b3a/sen2naipv2-development-smoke-v2.json`;
+   - `artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v2.json`;
+   - `artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v2.json`.
 7. Run exact A2 `development`, inference-free `development-replay`, checkpoint A2, and independently
    verify its exact manifest.
-8. Pull the A2-v1 bundle with the existing pull script into a different new local destination and
-   verify it offline. Reverify both local bundles before staging evidence.
-9. Copy only the exact allowlisted host-free A1-v2 and A2-v1 result, cache-audit, and acceptance JSON
-   into new tracked paths. Preserve the old A1 v1 publications unchanged, require an exact staged
-   filename allowlist, review the diff, commit, push, and prove remote and local SHAs match.
+8. Before the A2 pull, require Git porcelain status to contain exactly the three untracked A1-v2
+   files above and no other tracked or untracked change. Pull the A2-v1 bundle into a different new
+   local destination, reverify both bundles, and write exactly:
+   - `artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json`;
+   - `artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json`;
+   - `artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json`.
+9. Require an exact six-file status and staged-filename allowlist. Preserve the old A1 v1
+   publications unchanged, review the diff, commit, push, and prove remote and local SHAs match.
 
 No stale instruction to restore the historical A1 and immediately run `development` is valid. The
 guarded reset, fresh v2 A1, checkpoint verification, and A1-v2 offline bundle verification are hard
