@@ -94,9 +94,21 @@ def _calibration_strata(
     rounds: dict[tuple[int, int], list[int]] = {
         (day, bin_index): [] for day in _DAYS for bin_index in _BINS
     }
+    identities: dict[str, list[str]] = {
+        field: [] for field in ("sample_id", "selection_sha256", "spatial_group_id")
+    }
     for record in records:
         if not isinstance(record, Mapping) or record.get("split") != "calibration":
             raise ValueError("Phase 2B3-B preflight accepts calibration metadata only")
+        for field, values in identities.items():
+            identity = record.get(field)
+            if type(identity) is not str or not identity:
+                raise ValueError(f"Phase 2B3-B calibration {field} must be a non-empty string")
+            values.append(identity)
+        for field in ("lr_asset", "hr_asset"):
+            asset = record.get(field)
+            if not isinstance(asset, Mapping) or not asset:
+                raise ValueError(f"Phase 2B3-B calibration record requires non-empty {field}")
         day = record.get("days_between")
         bin_index = record.get("correlation_bin")
         selection_round = record.get("selection_round")
@@ -108,6 +120,9 @@ def _calibration_strata(
         ):
             raise ValueError("Phase 2B3-B calibration stratum metadata is invalid")
         rounds[(day, bin_index)].append(selection_round)
+    for field, values in identities.items():
+        if len(set(values)) != len(values):
+            raise ValueError(f"Phase 2B3-B calibration records require unique {field}")
     if any(tuple(sorted(cell_rounds)) != _ROUNDS for cell_rounds in rounds.values()):
         raise ValueError("each Phase 2B3-B calibration stratum requires rounds 1 through 10")
     counts = Counter(

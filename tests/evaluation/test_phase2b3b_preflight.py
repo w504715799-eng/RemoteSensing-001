@@ -19,6 +19,8 @@ def _calibration_records() -> tuple[dict[str, object], ...]:
     return tuple(
         {
             "sample_id": f"calibration-{day}-{bin_index}-{round_index}",
+            "selection_sha256": f"selection-{day}-{bin_index}-{round_index}",
+            "spatial_group_id": f"group-{day}-{bin_index}-{round_index}",
             "split": "calibration",
             "days_between": day,
             "correlation_bin": bin_index,
@@ -135,6 +137,43 @@ def test_rejects_incomplete_or_forged_calibration_metadata(
         records[0]["selection_round"] = 2
 
     with pytest.raises(ValueError, match="120|stratum|round"):
+        phase2b3b_preflight.build_phase2b3b_preflight(frozen_evidence, records)
+
+
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    (
+        ("duplicate_sample_id", "unique sample_id"),
+        ("duplicate_selection_sha256", "unique selection_sha256"),
+        ("duplicate_spatial_group_id", "unique spatial_group_id"),
+        ("missing_sample_id", "sample_id"),
+        ("empty_selection_sha256", "selection_sha256"),
+        ("non_string_spatial_group_id", "spatial_group_id"),
+        ("missing_lr_asset", "lr_asset"),
+        ("empty_hr_asset", "hr_asset"),
+    ),
+)
+def test_rejects_forged_calibration_identity_or_asset_metadata(
+    frozen_evidence: object, fault: str, message: str
+) -> None:
+    """Direct callers cannot bypass the frozen subset identity and asset contract."""
+
+    records = [dict(record) for record in _calibration_records()]
+    if fault.startswith("duplicate_"):
+        field = fault.removeprefix("duplicate_")
+        records[1][field] = records[0][field]
+    elif fault == "missing_sample_id":
+        records[0].pop("sample_id")
+    elif fault == "empty_selection_sha256":
+        records[0]["selection_sha256"] = ""
+    elif fault == "non_string_spatial_group_id":
+        records[0]["spatial_group_id"] = 1
+    elif fault == "missing_lr_asset":
+        records[0].pop("lr_asset")
+    else:
+        records[0]["hr_asset"] = {}
+
+    with pytest.raises(ValueError, match=message):
         phase2b3b_preflight.build_phase2b3b_preflight(frozen_evidence, records)
 
 
