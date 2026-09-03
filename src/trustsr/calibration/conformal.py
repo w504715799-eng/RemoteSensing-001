@@ -36,7 +36,8 @@ class _ThresholdSweep:
     """Grouped score events used by the private exact threshold sweep."""
 
     thresholds: torch.Tensor
-    worst_risk_sums: torch.Tensor
+    roi_scores: tuple[torch.Tensor, ...]
+    roi_maxima: tuple[torch.Tensor, ...]
     event_count: int
 
 
@@ -164,10 +165,10 @@ def _risk_bound(
     return (sum(worst_risks) + risk_upper_bound) / (len(scores) + 1)
 
 
-def _roi_score_events(
+def _roi_score_maxima(
     score: torch.Tensor, risk: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return score-group events for one ROI's cumulative maximum risk."""
+    """Return score groups and their cumulative maximum risk for one ROI."""
     sorted_score, order = torch.sort(score.reshape(-1))
     sorted_risk = risk.reshape(-1)[order]
     group_starts = torch.ones_like(sorted_score, dtype=torch.bool)
@@ -179,43 +180,51 @@ def _roi_score_events(
     group_maxima.scatter_reduce_(
         0, group_ids, sorted_risk, reduce="amax", include_self=False
     )
-    running_maxima = torch.cummax(group_maxima, dim=0).values
-    increments = running_maxima.clone()
-    increments[1:] -= running_maxima[:-1]
-    return sorted_score[group_starts], increments
+    return sorted_score[group_starts], torch.cummax(group_maxima, dim=0).values
 
 
 def _sweep_thresholds(
     scores: Sequence[torch.Tensor], risks: Sequence[torch.Tensor]
 ) -> _ThresholdSweep:
-    """Sweep all observed thresholds with one grouped event per ROI score value."""
+    """Prepare sorted threshold candidates and cumulative ROI-risk curves."""
     total_pixels = sum(score.numel() for score in scores)
     event_scores = torch.empty(total_pixels, dtype=torch.float64)
-    event_increments = torch.empty(total_pixels, dtype=torch.float64)
+    roi_scores: list[torch.Tensor] = []
+    roi_maxima: list[torch.Tensor] = []
     event_offset = 0
     for score, risk in zip(scores, risks, strict=True):
-        roi_scores, roi_increments = _roi_score_events(score, risk)
-        next_offset = event_offset + roi_scores.numel()
-        event_scores[event_offset:next_offset] = roi_scores
-        event_increments[event_offset:next_offset] = roi_increments
+        score_groups, cumulative_maxima = _roi_score_maxima(score, risk)
+        roi_scores.append(score_groups)
+        roi_maxima.append(cumulative_maxima)
+        next_offset = event_offset + score_groups.numel()
+        event_scores[event_offset:next_offset] = score_groups
         event_offset = next_offset
 
     event_scores = event_scores[:event_offset]
-    event_increments = event_increments[:event_offset]
     sorted_scores, order = torch.sort(event_scores)
-    sorted_increments = event_increments[order]
-    del event_scores, event_increments, order
-    thresholds, threshold_pixel_counts = torch.unique_consecutive(
-        sorted_scores, return_counts=True
-    )
-    risk_increments = torch.segment_reduce(
-        sorted_increments, reduce="sum", lengths=threshold_pixel_counts
-    )
+    del event_scores, order
     return _ThresholdSweep(
-        thresholds=thresholds,
-        worst_risk_sums=torch.cumsum(risk_increments, dim=0),
+        thresholds=torch.unique_consecutive(sorted_scores),
+        roi_scores=tuple(roi_scores),
+        roi_maxima=tuple(roi_maxima),
         event_count=event_offset,
     )
+
+
+def _sweep_risk_bound(
+    sweep: _ThresholdSweep, *, threshold: float, risk_upper_bound: float
+) -> float:
+    """Compute the original ROI-ordered finite-sample bound at one threshold."""
+    threshold_tensor = torch.tensor(threshold, dtype=torch.float64)
+    worst_risks = []
+    for roi_scores, roi_maxima in zip(
+        sweep.roi_scores, sweep.roi_maxima, strict=True
+    ):
+        score_index = int(
+            torch.searchsorted(roi_scores, threshold_tensor, right=True).item()
+        ) - 1
+        worst_risks.append(0.0 if score_index < 0 else roi_maxima[score_index].item())
+    return (sum(worst_risks) + risk_upper_bound) / (len(sweep.roi_scores) + 1)
 
 
 def calibrate_fidelity_mask(
@@ -235,14 +244,25 @@ def calibrate_fidelity_mask(
     )
 
     sweep = _sweep_thresholds(validated_scores, validated_risks)
-    bounds = (sweep.worst_risk_sums + validated_upper_bound) / (
-        len(validated_scores) + 1
-    )
-    passing_indices = torch.nonzero(bounds <= validated_alpha, as_tuple=False)
     threshold = float("-inf")
     trusted_pixels = 0
-    if passing_indices.numel() != 0:
-        selected_index = int(passing_indices[-1].item())
+    lower_index = 0
+    upper_index = sweep.thresholds.numel() - 1
+    selected_index = -1
+    while lower_index <= upper_index:
+        candidate_index = (lower_index + upper_index) // 2
+        candidate_threshold = sweep.thresholds[candidate_index].item()
+        candidate_bound = _sweep_risk_bound(
+            sweep,
+            threshold=candidate_threshold,
+            risk_upper_bound=validated_upper_bound,
+        )
+        if candidate_bound <= validated_alpha:
+            selected_index = candidate_index
+            lower_index = candidate_index + 1
+        else:
+            upper_index = candidate_index - 1
+    if selected_index >= 0:
         threshold = sweep.thresholds[selected_index].item()
         trusted_pixels = sum(
             int((score <= threshold).sum().item()) for score in validated_scores
