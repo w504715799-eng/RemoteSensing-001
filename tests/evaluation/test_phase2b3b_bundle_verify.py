@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from trustsr.evaluation import (
 )
 from trustsr.evaluation.phase2b3b_bundle import write_phase2b3b_bundle
 from trustsr.evaluation.phase2b3b_result_verify import VerifiedPhase2B3BResult
+from trustsr.evaluation.phase2b3b_runtime import VerifiedPhase2B3BRuntime
 from trustsr.jsonio import canonical_json
 
 _RESULT_SCHEMA = "trustsr.phase2b3b-calibration.v1"
@@ -76,6 +78,24 @@ def _result_receipt(documents: dict[str, dict[str, object]]) -> VerifiedPhase2B3
     )
 
 
+def _runtime_receipt(
+    documents: dict[str, dict[str, object]], result: VerifiedPhase2B3BResult
+) -> VerifiedPhase2B3BRuntime:
+    return VerifiedPhase2B3BRuntime(
+        schema="trustsr.phase2b3b-calibration-runtime.v1",
+        verification_scope="metadata_inventory_only",
+        cache_computation_verified=False,
+        runtime_sha256=_sha(canonical_json(documents["runtime"])),
+        result_sha256=result.result_sha256,
+        cache_audit_sha256=result.cache_audit_sha256,
+        input_receipt_sha256=result.input_receipt_sha256,
+        ordered_inputs_sha256=result.ordered_inputs_sha256,
+        map_evidence_sha256=result.map_evidence_sha256,
+        producer_revision=result.producer_revision,
+        model_identity_sha256="7" * 64,
+    )
+
+
 def _records(sample_ids: tuple[str, ...]) -> tuple[dict[str, object], ...]:
     return tuple(
         {
@@ -99,6 +119,7 @@ def test_verifies_semantics_from_reader_raw_bytes_and_forwards_trusted_paths(
     directory = tmp_path / "bundle"
     documents = _documents()
     expected = _result_receipt(documents)
+    expected_runtime = _runtime_receipt(documents, expected)
     _write(directory, documents)
     calls: list[tuple[object, ...]] = []
 
@@ -107,6 +128,19 @@ def test_verifies_semantics_from_reader_raw_bytes_and_forwards_trusted_paths(
         return expected
 
     monkeypatch.setattr(phase2b3b_bundle_verify, "verify_phase2b3b_result", verify)
+    runtime_calls: list[tuple[object, ...]] = []
+
+    def verify_runtime(
+        runtime: object, result: object, audit: object, **paths: object
+    ) -> object:
+        runtime_calls.append((runtime, result, audit, paths))
+        return expected_runtime
+
+    monkeypatch.setattr(
+        phase2b3b_bundle_verify,
+        "verify_phase2b3b_runtime_manifest",
+        verify_runtime,
+    )
 
     receipt = phase2b3b_bundle_verify.verify_phase2b3b_bundle(
         directory,
@@ -124,6 +158,14 @@ def test_verifies_semantics_from_reader_raw_bytes_and_forwards_trusted_paths(
         "storage_root": tmp_path / "storage",
         "manifest_path": tmp_path / "post.json",
     }
+    assert runtime_calls == [
+        (
+            canonical_json(documents["runtime"]),
+            documents["result"],
+            documents["audit"],
+            calls[0][2],
+        )
+    ]
     assert (
         receipt.schema
         == "trustsr.phase2b3b-candidate-bundle-metadata-verification.v1"
@@ -206,6 +248,42 @@ def test_calls_real_result_verifier_with_forwarded_authority_paths(
         "verify_recorded_phase2b3b_revision",
         verify_revision,
     )
+    real_result_verifier = phase2b3b_bundle_verify.verify_phase2b3b_result
+    result_receipts: list[VerifiedPhase2B3BResult] = []
+
+    def verify_result(*args: object, **kwargs: object) -> VerifiedPhase2B3BResult:
+        verified = real_result_verifier(*args, **kwargs)
+        result_receipts.append(verified)
+        return verified
+
+    monkeypatch.setattr(
+        phase2b3b_bundle_verify,
+        "verify_phase2b3b_result",
+        verify_result,
+    )
+
+    def verify_runtime(
+        runtime_value: object,
+        runtime_result: object,
+        runtime_audit: object,
+        **paths: object,
+    ) -> VerifiedPhase2B3BRuntime:
+        assert runtime_value == canonical_json(runtime)
+        assert runtime_result == result
+        assert runtime_audit == audit
+        assert paths == {
+            "project_root": tmp_path,
+            "evidence_dir": tmp_path / "evidence",
+            "storage_root": tmp_path / "storage",
+            "manifest_path": tmp_path / "post.json",
+        }
+        return _runtime_receipt(documents, result_receipts[0])
+
+    monkeypatch.setattr(
+        phase2b3b_bundle_verify,
+        "verify_phase2b3b_runtime_manifest",
+        verify_runtime,
+    )
 
     receipt = phase2b3b_bundle_verify.verify_phase2b3b_bundle(
         directory,
@@ -226,6 +304,53 @@ def test_calls_real_result_verifier_with_forwarded_authority_paths(
         ("records", tmp_path / "storage", tmp_path / "post.json"),
         ("revision", tmp_path, "c" * 40),
     ]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ("type", "runtime", "result", "audit", "input", "ordered", "map", "revision"),
+)
+def test_rejects_invalid_or_cross_document_runtime_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    directory = tmp_path / "bundle"
+    documents = _documents()
+    result_receipt = _result_receipt(documents)
+    runtime_receipt: object = _runtime_receipt(documents, result_receipt)
+    if fault == "type":
+        runtime_receipt = object()
+    else:
+        field = {
+            "runtime": "runtime_sha256",
+            "result": "result_sha256",
+            "audit": "cache_audit_sha256",
+            "input": "input_receipt_sha256",
+            "ordered": "ordered_inputs_sha256",
+            "map": "map_evidence_sha256",
+            "revision": "producer_revision",
+        }[fault]
+        replacement = "d" * (40 if field == "producer_revision" else 64)
+        runtime_receipt = dataclass_replace(runtime_receipt, **{field: replacement})
+    _write(directory, documents)
+    monkeypatch.setattr(
+        phase2b3b_bundle_verify,
+        "verify_phase2b3b_result",
+        lambda *args, **kwargs: result_receipt,
+    )
+    monkeypatch.setattr(
+        phase2b3b_bundle_verify,
+        "verify_phase2b3b_runtime_manifest",
+        lambda *args, **kwargs: runtime_receipt,
+    )
+
+    with pytest.raises((TypeError, ValueError), match="runtime verifier|runtime verification"):
+        phase2b3b_bundle_verify.verify_phase2b3b_bundle(
+            directory,
+            project_root=tmp_path,
+            evidence_dir=tmp_path,
+            storage_root=tmp_path,
+            manifest_path=tmp_path / "post.json",
+        )
 
 
 @pytest.mark.parametrize("fault", ("false", "result", "audit", "runtime"))

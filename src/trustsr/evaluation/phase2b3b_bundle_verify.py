@@ -15,9 +15,12 @@ from trustsr.evaluation.phase2b3b_result_verify import (
     VerifiedPhase2B3BResult,
     verify_phase2b3b_result,
 )
+from trustsr.evaluation.phase2b3b_runtime import (
+    VerifiedPhase2B3BRuntime,
+    verify_phase2b3b_runtime_manifest,
+)
 
 SCHEMA = "trustsr.phase2b3b-candidate-bundle-metadata-verification.v1"
-_RUNTIME_SCHEMA = "trustsr.phase2b3b-calibration-runtime.v1"
 _REPLAY_SCHEMA = "trustsr.phase2b3b-calibration-replay.v1"
 _RESULT_NAME = "phase2b3b-calibration-result.json"
 _AUDIT_NAME = "phase2b3b-calibration-cache-audit.json"
@@ -68,12 +71,6 @@ def _sha256(payload: bytes) -> str:
 def _digest(value: object, label: str) -> str:
     if type(value) is not str or _DIGEST.fullmatch(value) is None:
         raise ValueError(f"{label} must be a lowercase SHA-256 digest")
-    return value
-
-
-def _runtime(value: object) -> dict[str, object]:
-    if type(value) is not dict or value.get("schema") != _RUNTIME_SCHEMA:
-        raise ValueError("runtime manifest must be an exact JSON object with frozen schema")
     return value
 
 
@@ -129,7 +126,6 @@ def verify_phase2b3b_bundle(
     runtime_sha256 = _sha256(runtime_payload)
     replay_sha256 = _sha256(replay_payload)
 
-    _runtime(documents[_RUNTIME_NAME])
     _replay(
         documents[_REPLAY_NAME],
         result_sha256=result_sha256,
@@ -151,6 +147,29 @@ def verify_phase2b3b_bundle(
         or verified_result.cache_audit_sha256 != audit_sha256
     ):
         raise ValueError("result verification receipt differs from actual bundle bytes")
+    verified_runtime = verify_phase2b3b_runtime_manifest(
+        runtime_payload,
+        documents[_RESULT_NAME],
+        documents[_AUDIT_NAME],
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=manifest_path,
+    )
+    if type(verified_runtime) is not VerifiedPhase2B3BRuntime:
+        raise TypeError("runtime verifier returned an invalid receipt type")
+    if (
+        verified_runtime.runtime_sha256 != runtime_sha256
+        or verified_runtime.result_sha256 != result_sha256
+        or verified_runtime.cache_audit_sha256 != audit_sha256
+        or verified_runtime.input_receipt_sha256
+        != verified_result.input_receipt_sha256
+        or verified_runtime.ordered_inputs_sha256
+        != verified_result.ordered_inputs_sha256
+        or verified_runtime.map_evidence_sha256 != verified_result.map_evidence_sha256
+        or verified_runtime.producer_revision != verified_result.producer_revision
+    ):
+        raise ValueError("runtime verification receipt differs from actual bundle bytes")
 
     return VerifiedPhase2B3BBundle(
         schema=SCHEMA,
