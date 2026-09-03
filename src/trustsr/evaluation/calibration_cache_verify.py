@@ -252,6 +252,7 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
     prediction_receipts: list[dict[str, object]] = []
     score_receipts: list[dict[str, object]] = []
     risk_receipts: list[dict[str, object]] = []
+    global_model_identity: dict[str, object] | None = None
     for raw_sample in samples:
         sample = _mapping(raw_sample, _SAMPLE_KEYS, "calibration audit sample")
         sample_id = sample["sample_id"]
@@ -270,6 +271,17 @@ def verify_calibration_cache_audit(audit: object) -> Mapping[str, object]:
             identities.append(identity)
             prediction_sha256s.append(prediction_sha256)
             prediction_receipts.append(receipt)
+            model_identity = {
+                key: provenance_value
+                for key, provenance_value in identity.model_provenance.items()
+                if key != "seed"
+            }
+            if global_model_identity is None:
+                global_model_identity = model_identity
+            elif model_identity != global_model_identity:
+                raise ValueError(
+                    "calibration cache audit has mismatched model scientific identities"
+                )
         first_identity = identities[0]
         lr_identity = (
             first_identity.source,

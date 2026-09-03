@@ -49,6 +49,7 @@ class ReplayInputs:
             raise TypeError("replay inputs must use exact immutable tuples")
         if len(self.bundles) != CALIBRATION_SIZE or len(self.maps) != CALIBRATION_SIZE:
             raise ValueError("replay inputs require exactly 120 bundles and maps")
+        global_model_identity: dict[str, object] | None = None
         for bundle, maps in zip(self.bundles, self.maps, strict=True):
             if not isinstance(bundle, CalibrationPredictionBundle) or not isinstance(
                 maps, CalibrationMaps
@@ -58,6 +59,15 @@ class ReplayInputs:
                 item.__post_init__()
             bundle.__post_init__()
             maps.__post_init__()
+            model_identity = {
+                key: value
+                for key, value in bundle.items[0].identity.model_provenance.items()
+                if key != "seed"
+            }
+            if global_model_identity is None:
+                global_model_identity = model_identity
+            elif model_identity != global_model_identity:
+                raise ValueError("replay inputs have mismatched model scientific identities")
             if bundle.sample_id != maps.sample_id:
                 raise ValueError("replay bundle and maps order differs")
             prediction_sha256s = tuple(item.prediction_sha256 for item in bundle.items)

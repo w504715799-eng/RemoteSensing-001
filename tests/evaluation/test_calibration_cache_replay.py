@@ -218,3 +218,37 @@ def test_replay_inputs_rejects_same_sample_with_a_different_k5_identity(tmp_path
 
     with pytest.raises(ValueError, match="prediction|LR|source|bundle"):
         ReplayInputs(bundles=replayed.bundles, maps=maps)
+
+
+def test_replay_inputs_rejects_one_bundle_with_another_legal_runtime(
+    tmp_path: Path,
+) -> None:
+    audit, pairs, prediction_cache, score_cache = _prepared(tmp_path)
+    replayed = replay_calibration_caches(audit, pairs, prediction_cache, score_cache)
+    original = replayed.bundles[1]
+    runtime = {
+        "torch_version": "2.12.1+cu130",
+        "cuda_runtime": "13.0",
+    }
+    items = tuple(
+        CachedCalibrationPrediction(
+            model_name=item.model_name,
+            seed=item.seed,
+            identity=build_identity(
+                {**dict(item.identity.model_provenance), **runtime},
+                item.identity.source,
+                item.identity.sample_id,
+                pairs[1].pair.lr,
+            ),
+            prediction_sha256=item.prediction_sha256,
+            tensor=item.tensor,
+        )
+        for item in original.items
+    )
+    alternate = CalibrationPredictionBundle(sample_id=original.sample_id, items=items)
+
+    with pytest.raises(ValueError, match="model scientific identit"):
+        ReplayInputs(
+            bundles=(replayed.bundles[0], alternate, *replayed.bundles[2:]),
+            maps=replayed.maps,
+        )

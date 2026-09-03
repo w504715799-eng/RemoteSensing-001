@@ -192,6 +192,33 @@ def test_independently_verifies_audit_and_returns_immutable_host_free_receipt(
         first["digests"]["audit_sha256"] = "0" * 64  # type: ignore[index]
 
 
+def test_rejects_one_sample_with_another_legal_runtime_identity(
+    parsed_audit: dict[str, object],
+) -> None:
+    sample = _assert_mapping(_assert_list(parsed_audit["samples"])[1])
+    predictions = _assert_list(sample["predictions"])
+    for prediction in predictions:
+        entry = _assert_mapping(prediction)
+        original = _assert_mapping(entry["identity"])
+        provenance = dict(_assert_mapping(original["model_provenance"]))
+        provenance["torch_version"] = "2.12.1+cu130"
+        provenance["cuda_runtime"] = "13.0"
+        lr = _assert_mapping(original["lr"])
+        identity = PredictionIdentity(
+            model_provenance=provenance,
+            source=original["source"],
+            sample_id=original["sample_id"],
+            lr_shape=tuple(_assert_list(lr["shape"])),
+            lr_dtype=lr["dtype"],
+            lr_sha256=lr["sha256"],
+        )
+        entry["identity"] = identity.as_dict()
+        entry["cache_key"] = identity.key
+
+    with pytest.raises(ValueError, match="model scientific identit"):
+        calibration_cache_verify.verify_calibration_cache_audit(parsed_audit)
+
+
 def _assert_mapping(value: object) -> Mapping[str, object]:
     assert isinstance(value, Mapping)
     return value
