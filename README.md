@@ -348,4 +348,6 @@ downloaded locally or committed; only allowlisted JSON evidence enters Git. Mode
 commit markers, lock files, instance endpoints, and credentials also stay out of Git. The disposable
 work/durable checkpoint workflow, A0/A1/A2 checkpoints, exact command arrays, failure branches,
 local verification, and pause conditions are in
-[`docs/phase2b3a-cloud-runbook.md`](docs/phase2b3a-cloud-runbook.md).
+[`docs/phase2b3a-cloud-runbook.md`](docs/phase2b3a-cloud-runbook.md). Development and review happen
+locally before renting GPU time; the current unprivileged cloud container restores models through
+verified, non-writable disposable copies rather than privileged bind mounts.

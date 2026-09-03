@@ -4,7 +4,10 @@ Phase 2B3-A audits the frozen `development` split. A1 is the four-ROI stability/
 A2 is the exact 120-ROI audit; neither is calibration or `internal_test` evaluation. The disposable
 work mount holds live pixels, tensors, caches, logs, and the checkpointed `trustsr` trees. The
 durable mount holds immutable checkpoint pairs and durable model sources. GitHub is the durable
-source for code and Git history.
+source for code and Git history. Local development, review, and synthetic/CPU verification finish
+before the rented GPU instance is started. On the current unprivileged cloud container, model
+restore uses an explicit verified copy into disposable storage; bind mode is allowed only when the
+provider explicitly grants mount capability.
 
 No command below installs software, downloads data, or controls an instance. Instance-identifying
 values remain in the operator shell and never enter tracked files.
@@ -19,6 +22,7 @@ uv run ruff check .
 bash -n scripts/phase2b3a/*.sh
 uv run trustsr-phase2b3a --help >/dev/null
 PYTHONPATH=src uv run python -m trustsr.artifacts.workspace_checkpoint --help >/dev/null
+PYTHONPATH=src uv run python -m trustsr.artifacts.model_restore --help >/dev/null
 git diff --check
 git status --short --branch
 git rev-parse HEAD
@@ -36,9 +40,13 @@ runtime-only values in the cloud operator shell:
 : "${PHASE2B3A_REVIEWED_COMMIT:?set exact reviewed and pushed 40-hex SHA}"
 : "${PHASE2B3A_SEN2SRLITE_SOURCE:?set durable SEN2SRLite model directory}"
 : "${PHASE2B3A_LDSR_SOURCE:?set durable LDSR-S2 model directory}"
+PHASE2B3A_MODEL_RESTORE_MODE=copy
+PHASE2B3A_A1_CHECKPOINT_COMMIT=4df5195e0a28701391c3951659a42409f81a11c2
 PHASE2B3A_STORAGE_ROOT="$PHASE2B3A_WORK_ROOT"
 PHASE2B3A_SEN2SRLITE_DIR="$PHASE2B3A_WORK_ROOT/model-mounts/sen2srlite"
 PHASE2B3A_LDSR_DIR="$PHASE2B3A_WORK_ROOT/model-mounts/ldsr-s2"
+[[ "$PHASE2B3A_MODEL_RESTORE_MODE" == copy ]]
+[[ "$PHASE2B3A_A1_CHECKPOINT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 ```
 
 The allowed compute-session transitions are exactly:
@@ -140,9 +148,11 @@ df -Pi -- "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT"
 ## Initial setup, preflight, and A0 checkpoint
 
 The initial verified input tree provides ordinary `trustsr/phase2b1b` and `trustsr/phase2b2a`
-under work storage. Create the empty ordinary `trustsr/phase2b3a` directory and model targets. For
-this initial uncheckpointed tree, use the four explicit bind commands; use the restore script only
-for an existing checkpoint.
+under work storage. Create the empty ordinary `trustsr/phase2b3a` directory. For the current
+unprivileged provider, copy both durable model trees through the reviewed verifier; it compares a
+canonical type/mode/per-file-SHA-256 inventory before publication, removes all write permission
+from the copies, and leaves the durable sources unchanged. The restore script is used once an
+existing workspace checkpoint is available.
 
 ```bash
 set -euo pipefail
@@ -153,19 +163,16 @@ model_mount_parent="$PHASE2B3A_WORK_ROOT/model-mounts"
 [[ "$(realpath -e -- "$trustsr_parent")" == "$trustsr_parent" ]]
 [[ ! -e "$phase2b3a_target" && ! -L "$phase2b3a_target" ]]
 [[ ! -e "$model_mount_parent" && ! -L "$model_mount_parent" ]]
-mkdir -- "$phase2b3a_target" "$model_mount_parent"
+mkdir -- "$phase2b3a_target"
 [[ "$(realpath -e -- "$phase2b3a_target")" == "$phase2b3a_target" ]]
-[[ "$(realpath -e -- "$model_mount_parent")" == "$model_mount_parent" ]]
 [[ -z "$(find "$phase2b3a_target" -mindepth 1 -print -quit)" ]]
-[[ ! -e "$PHASE2B3A_SEN2SRLITE_DIR" && ! -L "$PHASE2B3A_SEN2SRLITE_DIR" ]]
-[[ ! -e "$PHASE2B3A_LDSR_DIR" && ! -L "$PHASE2B3A_LDSR_DIR" ]]
-mkdir -- "$PHASE2B3A_SEN2SRLITE_DIR" "$PHASE2B3A_LDSR_DIR"
-[[ "$(realpath -e -- "$PHASE2B3A_SEN2SRLITE_DIR")" == "$PHASE2B3A_SEN2SRLITE_DIR" ]]
-[[ "$(realpath -e -- "$PHASE2B3A_LDSR_DIR")" == "$PHASE2B3A_LDSR_DIR" ]]
-mount --bind "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_SEN2SRLITE_DIR"
-mount -o remount,bind,ro "$PHASE2B3A_SEN2SRLITE_DIR"
-mount --bind "$PHASE2B3A_LDSR_SOURCE" "$PHASE2B3A_LDSR_DIR"
-mount -o remount,bind,ro "$PHASE2B3A_LDSR_DIR"
+PYTHONPATH="$PHASE2B3A_REPOSITORY/src" "$PHASE2B3A_BASE_PYTHON" \
+  -m trustsr.artifacts.model_restore "$model_mount_parent" \
+  "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE"
+[[ "$(realpath -e -- "$model_mount_parent")" == "$model_mount_parent" ]]
+[[ -d "$PHASE2B3A_SEN2SRLITE_DIR" && ! -L "$PHASE2B3A_SEN2SRLITE_DIR" ]]
+[[ -d "$PHASE2B3A_LDSR_DIR" && ! -L "$PHASE2B3A_LDSR_DIR" ]]
+[[ -z "$(find "$model_mount_parent" -perm /222 -print -quit)" ]]
 ```
 
 This verified initial setup establishes `RESTORED`. Define the frozen inputs and commands from the
@@ -260,11 +267,17 @@ verification establishes `A2_OK`.
 
 ```bash
 : "${PHASE2B3A_A1_MANIFEST_BASENAME:?copy recorded a1 manifest basename exactly}"
-"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/restore_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" "$PHASE2B3A_A1_MANIFEST_BASENAME" "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE"
+"$PHASE2B3A_REPOSITORY/scripts/phase2b3a/restore_workspace.sh" "$PHASE2B3A_BASE_PYTHON" "$PHASE2B3A_WORK_ROOT" "$PHASE2B3A_PERSISTENT_ROOT" "$PHASE2B3A_REPOSITORY" "$PHASE2B3A_A1_MANIFEST_BASENAME" "$PHASE2B3A_SEN2SRLITE_SOURCE" "$PHASE2B3A_LDSR_SOURCE" "$PHASE2B3A_MODEL_RESTORE_MODE" "$PHASE2B3A_A1_CHECKPOINT_COMMIT"
 phase2b3a_compute preflight
 phase2b3a_compute development
 phase2b3a_replay development-replay
 ```
+
+Require the restore JSON to contain `"model_restore_mode":"copy"`, the exact old
+`"checkpoint_reviewed_commit":"4df5195e..."`, and the new pushed A2 code identity in
+`"restore_code_commit"`. The old checkpoint commit must be an ancestor of the restore code commit;
+the script fails before model publication otherwise. Do not retry with bind mode after a permission
+error, and do not replace either model directory with a symlink.
 
 Repeat the labelled **local reviewed checkout** evidence sequence for the exact A2 filenames, then
 return to the cloud shell to checkpoint `a2` and reverify. A complete reverified A2 checkpoint

@@ -135,6 +135,7 @@ def _checkpoint_environment(
         "  'symbolic-ref --short') [[ \"${5:-}\" == HEAD ]]; "
         "printf '%s\\n' \"$FAKE_GIT_BRANCH\" ;;\n"
         "  'status --porcelain') printf '%s' \"$FAKE_GIT_STATUS\" ;;\n"
+        "  'merge-base --is-ancestor') [[ \"$FAKE_CHECKPOINT_ANCESTOR\" == 1 ]] ;;\n"
         "  *) exit 97 ;;\n"
         "esac\n",
     )
@@ -222,6 +223,7 @@ def _checkpoint_environment(
             "FAKE_GIT_HEAD": git_head,
             "FAKE_GIT_STATUS": git_status,
             "FAKE_FINDMNT_CALLS": str(tmp_path / "findmnt-calls.jsonl"),
+            "FAKE_CHECKPOINT_ANCESTOR": "1",
             "FAKE_MOUNT_CALLS": str(tmp_path / "mount-calls.jsonl"),
             "FAKE_MOUNT_STATE": str(tmp_path / "mount-state.json"),
             "FAKE_PERSISTENT_AFTER_BUILD_KIB": (
@@ -251,10 +253,18 @@ def _real_base_python(tmp_path: Path) -> Path:
         f"#!{sys.executable}\n"
         "import contextlib, io, json, os, sys\n"
         "sys.path.insert(0, os.environ['CHECKPOINT_SOURCE'])\n"
-        "from trustsr.artifacts import workspace_checkpoint as checkpoint\n"
+        "from trustsr.artifacts import model_restore, workspace_checkpoint as checkpoint\n"
         "checkpoint.SELECTION_MANIFEST_SHA256 = os.environ['FAKE_SELECTION_DIGEST']\n"
         "checkpoint.INPUT_AUDIT_SHA256 = os.environ['FAKE_INPUT_AUDIT_DIGEST']\n"
         "arguments = sys.argv[1:]\n"
+        "if arguments[:2] == ['-m', 'trustsr.artifacts.model_restore']:\n"
+        "    if os.environ.get('FAKE_MODEL_COPY_FAIL_AFTER_PUBLISH') == '1':\n"
+        "        Path = __import__('pathlib').Path\n"
+        "        target = Path(arguments[2])\n"
+        "        (target / 'sen2srlite').mkdir(parents=True)\n"
+        "        (target / 'ldsr-s2').mkdir()\n"
+        "        raise SystemExit(2)\n"
+        "    raise SystemExit(model_restore.main(arguments[2:]))\n"
         "if arguments[:2] != ['-m', 'trustsr.artifacts.workspace_checkpoint']:\n"
         "    raise SystemExit(96)\n"
         "captured = io.StringIO()\n"
@@ -351,12 +361,21 @@ def _invoke_restore(
     (repository / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     base_python = _real_base_python(tmp_path / "base-python")
     restore_git_head = str(boundary_state.pop("git_head", REVISION))
+    restore_mode = boundary_state.pop("restore_mode", None)
+    checkpoint_reviewed_commit = boundary_state.pop("checkpoint_reviewed_commit", None)
+    checkpoint_is_ancestor = bool(boundary_state.pop("checkpoint_is_ancestor", True))
+    model_copy_fail_after_publish = bool(
+        boundary_state.pop("model_copy_fail_after_publish", False)
+    )
     environment, prohibited = _checkpoint_environment(
         tmp_path, workspace, persistent, repository
     )
     environment.update(
         {
             "FAKE_INPUT_AUDIT_DIGEST": INPUT_AUDIT_DIGEST,
+            "FAKE_MODEL_COPY_FAIL_AFTER_PUBLISH": (
+                "1" if model_copy_fail_after_publish else "0"
+            ),
             "FAKE_SELECTION_DIGEST": SELECTION_DIGEST,
         }
     )
@@ -386,6 +405,7 @@ def _invoke_restore(
     )
     shutil.rmtree(workspace / "trustsr")
     environment["FAKE_GIT_HEAD"] = restore_git_head
+    environment["FAKE_CHECKPOINT_ANCESTOR"] = "1" if checkpoint_is_ancestor else "0"
 
     models = persistent / "models"
     sen2_source = models / "sen2srlite"
@@ -430,6 +450,8 @@ def _invoke_restore(
         target = workspace / "model-mounts" / "sen2srlite"
         target.mkdir(parents=True)
         (target / "collision").write_text("occupied", encoding="utf-8")
+    elif state == "hard-linked-model-source":
+        os.link(sen2_source / "weights.bin", sen2_source / "weights-copy.bin")
 
     fail_call = boundary_state.pop("mount_fail_call", None)
     if fail_call is not None:
@@ -450,18 +472,25 @@ def _invoke_restore(
     if boundary_state:
         raise AssertionError(f"unknown restore boundary state: {boundary_state}")
 
+    arguments = [
+        "bash",
+        str(RESTORE),
+        str(base_python),
+        str(workspace),
+        str(persistent),
+        str(repository),
+        manifest_basename,
+        str(sen2_source),
+        str(ldsr_source),
+    ]
+    if restore_mode is not None:
+        arguments.append(str(restore_mode))
+    if checkpoint_reviewed_commit is not None:
+        if restore_mode is None:
+            arguments.append("bind")
+        arguments.append(str(checkpoint_reviewed_commit))
     completed = subprocess.run(
-        [
-            "bash",
-            str(RESTORE),
-            str(base_python),
-            str(workspace),
-            str(persistent),
-            str(repository),
-            manifest_basename,
-            str(sen2_source),
-            str(ldsr_source),
-        ],
+        arguments,
         check=False,
         capture_output=True,
         text=True,
@@ -581,6 +610,7 @@ def test_restore_script_mounts_models_read_only_then_restores_explicit_checkpoin
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.count("\n") == 1
     assert json.loads(completed.stdout)["status"] == "restore"
+    assert json.loads(completed.stdout)["model_restore_mode"] == "bind"
     assert _recorded_calls(paths["mount_calls"]) == [
         ["--bind", str(paths["sen2_source"]), str(sen2_target)],
         ["-o", "remount,bind,ro", str(sen2_target)],
@@ -613,6 +643,120 @@ def test_restore_script_mounts_models_read_only_then_restores_explicit_checkpoin
     assert (workspace / "trustsr/phase2b1b").is_dir()
     assert (workspace / "trustsr/phase2b2a").is_dir()
     assert (workspace / "trustsr/phase2b3a").is_dir()
+    assert not prohibited.exists()
+
+
+def test_restore_script_copies_verified_models_without_mount_privilege(tmp_path: Path) -> None:
+    completed, paths, prohibited = _invoke_restore(tmp_path, restore_mode="copy")
+    workspace = paths["workspace"]
+    sen2_target = workspace / "model-mounts" / "sen2srlite"
+    ldsr_target = workspace / "model-mounts" / "ldsr-s2"
+
+    assert completed.returncode == 0, completed.stderr
+    record = json.loads(completed.stdout)
+    assert record["status"] == "restore"
+    assert record["model_restore_mode"] == "copy"
+    assert (sen2_target / "weights.bin").read_bytes() == b"sen2"
+    assert (ldsr_target / "weights.bin").read_bytes() == b"ldsr"
+    assert stat.S_IMODE((workspace / "model-mounts").stat().st_mode) == 0o500
+    assert stat.S_IMODE(sen2_target.stat().st_mode) & 0o222 == 0
+    assert stat.S_IMODE((sen2_target / "weights.bin").stat().st_mode) & 0o222 == 0
+    assert stat.S_IMODE(ldsr_target.stat().st_mode) & 0o222 == 0
+    assert stat.S_IMODE((ldsr_target / "weights.bin").stat().st_mode) & 0o222 == 0
+    assert _recorded_calls(paths["mount_calls"]) == []
+    assert _recorded_calls(paths["umount_calls"]) == []
+    assert _recorded_calls(paths["findmnt_calls"]) == []
+    assert (workspace / "trustsr/phase2b3a").is_dir()
+    assert not list(workspace.glob(".phase2b3a-model-copy.*"))
+    assert not prohibited.exists()
+
+
+def test_restore_script_explicitly_binds_checkpoint_and_restore_code_commits(
+    tmp_path: Path,
+) -> None:
+    restore_code_commit = "b" * 40
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path,
+        git_head=restore_code_commit,
+        restore_mode="copy",
+        checkpoint_reviewed_commit=REVISION,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    record = json.loads(completed.stdout)
+    assert set(record) == {
+        "archive_basename",
+        "archive_sha256",
+        "archive_size_bytes",
+        "checkpoint_reviewed_commit",
+        "completed_stage",
+        "manifest_basename",
+        "model_restore_mode",
+        "restore_code_commit",
+        "status",
+    }
+    assert record["checkpoint_reviewed_commit"] == REVISION
+    assert record["restore_code_commit"] == restore_code_commit
+    assert record["model_restore_mode"] == "copy"
+    assert record["completed_stage"] == "a0"
+    assert record["status"] == "restore"
+    assert (paths["workspace"] / "trustsr/phase2b3a").is_dir()
+    assert not prohibited.exists()
+
+
+def test_restore_script_rejects_checkpoint_commit_outside_restore_history(
+    tmp_path: Path,
+) -> None:
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path,
+        git_head="b" * 40,
+        restore_mode="copy",
+        checkpoint_reviewed_commit=REVISION,
+        checkpoint_is_ancestor=False,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert not (paths["workspace"] / "trustsr").exists()
+    assert not (paths["workspace"] / "model-mounts").exists()
+    assert _recorded_calls(paths["mount_calls"]) == []
+    assert not prohibited.exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "state"),
+    [
+        ("unknown-copy-mode", {"restore_mode": "automatic"}),
+        (
+            "hard-linked-copy-source",
+            {"restore_mode": "copy", "state": "hard-linked-model-source"},
+        ),
+    ],
+)
+def test_restore_script_rejects_invalid_copy_restore(
+    tmp_path: Path, name: str, state: dict[str, object]
+) -> None:
+    completed, paths, prohibited = _invoke_restore(tmp_path, **state)
+
+    assert completed.returncode == 2, (name, completed.stderr)
+    assert completed.stdout == ""
+    assert not (paths["workspace"] / "trustsr").exists()
+    assert not (paths["workspace"] / "model-mounts").exists()
+    assert _recorded_calls(paths["mount_calls"]) == []
+    assert not prohibited.exists()
+
+
+def test_restore_script_cleans_copy_published_by_failing_subprocess(tmp_path: Path) -> None:
+    completed, paths, prohibited = _invoke_restore(
+        tmp_path,
+        restore_mode="copy",
+        model_copy_fail_after_publish=True,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert completed.stdout == ""
+    assert not (paths["workspace"] / "trustsr").exists()
+    assert not (paths["workspace"] / "model-mounts").exists()
     assert not prohibited.exists()
 
 
