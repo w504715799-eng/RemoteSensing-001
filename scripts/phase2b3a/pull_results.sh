@@ -132,11 +132,15 @@ if canonical != raw or not isinstance(value, dict):
     raise ValueError("bundle manifest is not canonical JSON")
 if set(value) != {"schema", "phase", "files"}:
     raise ValueError("bundle manifest schema is invalid")
-if value["schema"] != "trustsr.phase2b3a-bundle-manifest.v1":
-    raise ValueError("bundle manifest schema is invalid")
 phase = value["phase"]
 if phase not in {"a1", "a2"}:
     raise ValueError("bundle manifest phase is invalid")
+expected_schema = {
+    "a1": "trustsr.phase2b3a-bundle-manifest.v2",
+    "a2": "trustsr.phase2b3a-bundle-manifest.v1",
+}[phase]
+if value["schema"] != expected_schema:
+    raise ValueError("bundle manifest schema is invalid")
 expected = sorted(
     [
         f"phase2b3a-{phase}-result.json",

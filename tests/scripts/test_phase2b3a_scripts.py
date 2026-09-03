@@ -523,7 +523,9 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _remote_bundle(root: Path, phase: str = "a1") -> dict[str, bytes]:
+def _remote_bundle(
+    root: Path, phase: str = "a1", manifest_schema: str | None = None
+) -> dict[str, bytes]:
     root.mkdir(parents=True)
     payloads = {
         name: _canonical({"name": name, "phase": phase}) for name in PHASE_FILES[phase]
@@ -531,7 +533,11 @@ def _remote_bundle(root: Path, phase: str = "a1") -> dict[str, bytes]:
     for name, payload in payloads.items():
         (root / name).write_bytes(payload)
     manifest = {
-        "schema": "trustsr.phase2b3a-bundle-manifest.v1",
+        "schema": manifest_schema
+        or {
+            "a1": "trustsr.phase2b3a-bundle-manifest.v2",
+            "a2": "trustsr.phase2b3a-bundle-manifest.v1",
+        }[phase],
         "phase": phase,
         "files": [
             {
@@ -661,6 +667,7 @@ def _invoke_puller(
     remote_root: str | None = None,
     destination: str | Path | None = None,
     phase: str = "a1",
+    manifest_schema: str | None = None,
     mutate_remote: Callable[[Path], None] | None = None,
     environment_updates: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path, Path]:
@@ -672,7 +679,7 @@ def _invoke_puller(
         / "results"
         / POST_MANIFEST_SHA256
     )
-    _remote_bundle(remote, phase)
+    _remote_bundle(remote, phase, manifest_schema)
     if mutate_remote is not None:
         mutate_remote(remote)
     environment, calls_path, prohibited = _pull_environment(tmp_path)
@@ -700,16 +707,25 @@ def _invoke_puller(
     return completed, calls, prohibited, output
 
 
-@pytest.mark.parametrize("phase", ["a1", "a2"])
+@pytest.mark.parametrize(
+    ("phase", "manifest_schema"),
+    [
+        ("a1", "trustsr.phase2b3a-bundle-manifest.v2"),
+        ("a2", "trustsr.phase2b3a-bundle-manifest.v1"),
+    ],
+)
 def test_puller_fetches_only_manifest_and_its_four_allowlisted_files(
-    tmp_path: Path, phase: str
+    tmp_path: Path, phase: str, manifest_schema: str
 ) -> None:
     def add_remote_internal_files(remote: Path) -> None:
         (remote / f"phase2b3a-{phase}-pair-commit.json").write_text("do not copy")
         (remote / ".phase2b3a.lock").write_text("do not copy")
 
     completed, calls, prohibited, output = _invoke_puller(
-        tmp_path, phase=phase, mutate_remote=add_remote_internal_files
+        tmp_path,
+        phase=phase,
+        manifest_schema=manifest_schema,
+        mutate_remote=add_remote_internal_files,
     )
     assert completed.returncode == 0, completed.stderr
     assert {path.name for path in output.iterdir()} == {
@@ -731,6 +747,24 @@ def test_puller_fetches_only_manifest_and_its_four_allowlisted_files(
     assert all(call[5:8] == ["bash", "-s", "--"] for call in ssh_calls)
     assert ssh_calls[0][-1].endswith("/phase2b3a-bundle-manifest.json")
     assert not prohibited.exists()
+
+
+@pytest.mark.parametrize(
+    ("phase", "manifest_schema"),
+    [
+        ("a1", "trustsr.phase2b3a-bundle-manifest.v1"),
+        ("a2", "trustsr.phase2b3a-bundle-manifest.v2"),
+        ("a1", "trustsr.phase2b3a-bundle-manifest.v3"),
+    ],
+)
+def test_puller_rejects_manifest_schema_not_exact_for_phase(
+    tmp_path: Path, phase: str, manifest_schema: str
+) -> None:
+    completed, _, _, output = _invoke_puller(
+        tmp_path, phase=phase, manifest_schema=manifest_schema
+    )
+    assert completed.returncode != 0
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("port", ["", "0", "65536", "22x", "-1", " 22"])
