@@ -1,180 +1,184 @@
-# Codex handoff: Phase 2B3-A saturation-v2 rerun
+# Codex handoff: Phase 2B3-B local CPU engineering
 
 Date: 2026-09-03 (Asia/Shanghai)
 
 ## Repository checkpoint
 
-- Integration branch: `main`; local Git is authoritative. Do not merge cloud-side code.
-- Resume handoff checkpoint: `fcaf135749c934426f86ed2629cfb26ad6c53502`.
-- Previously reviewed and pushed cross-commit repair:
-  `68e13d99553a94ea0f875f0fdd03dcc352e854ec`.
-- The reviewed saturation-v2 deployment commit was
-  `58694420c3c0e11d495953a1963c71b997261601`.
-- The six accepted A1-v2/A2-v1 evidence files were published at
-  `b386d4b38c9f3725107eed178829955d442f5601`.
-- Post-publication GPU worker support was integrated at
-  `b444c2d64bb4bc512a2b3bc06e04e16af07df612`; its measured result is recorded in the cloud
-  runbook. The GPU rerun and benchmark are complete, so no GPU remains required for this phase.
+- Integration branch: `main`; local Git is authoritative. Cloud code is disposable and must never
+  be merged back.
+- This handoff was written from
+  `adb15824cc7381244195098968c8dc98344cea37`.
+- The main coordinator must replace that checkpoint with the final integrated `main` SHA after the
+  remaining parallel workflow is reviewed and merged.
+- Do not infer readiness from a branch name or this document; resume only from the recorded clean,
+  attached commit and re-run the scoped gates below.
 
-## Objective and scope
+## Frozen Phase 2B3-A baseline
 
-Rerun Phase 2B3-A with the explicit
-`uint16_saturate_10000_divide_10000_v2` policy, first producing a fresh four-ROI A1 and then the
-exact frozen 120-development-ROI A2. Preserve every ROI and every existing asset-integrity check.
-This phase does not inspect calibration or `internal_test` pixels.
+Phase 2B3-A saturation-v2 compute, replay, offline verification, evidence publication, and the
+post-publication worker benchmark are complete. The GPU can remain off. The operational default is
+one worker: the four-worker benchmark used `22687 MiB` and reached `100%` utilization without
+improving end-to-end elapsed time.
 
-Only allowlisted, host-free JSON evidence may enter Git. Pixels, tensors, caches, logs, models,
-checkpoint archives, endpoints, credentials, host paths, and host runtime details remain outside
-the repository. Cloud checkouts and disposable compute state may be deleted and recreated from the
-exact pushed local commit; no cloud branch or cloud-side modification is a merge source.
+The immutable trust anchors are:
 
-## Completed diagnosis
+- Phase 2B3-A calculation revision:
+  `58694420c3c0e11d495953a1963c71b997261601`;
+- six-file evidence publication commit:
+  `b386d4b38c9f3725107eed178829955d442f5601`;
+- post-publication worker integration commit:
+  `b444c2d64bb4bc512a2b3bc06e04e16af07df612`;
+- Phase 2B1-B post-manifest SHA-256:
+  `c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a`;
+- Phase 2B2-A input-audit SHA-256:
+  `fceb2ec04680ddf46bf4d0ed5a4a93edd33d58a09fc176d936bdef783114b44b`;
+- normalization policy `uint16_saturate_10000_divide_10000_v2`;
+- crop policy `center_crop_lr_1_hr_4_v1` and bands `B04,B03,B02,B08` at scale 4.
 
-The exact A2 development attempt stopped while loading the ninth ROI, before model construction or
-inference, because raw reflectance exceeded the former `[0,10000]` assumption. It produced no A2
-result, runtime, or replay, and GPU processes returned to zero.
+The six immutable Git-safe evidence files are:
 
-Host-free inspection of the frozen 120-ROI set established:
+| File | SHA-256 |
+|---|---|
+| `sen2naipv2-development-smoke-v2.json` | `2c962de9651f3d2cc65f321877564c3509d8d4414801fd5b445503aed5dbb947` |
+| `sen2naipv2-development-smoke-cache-audit-v2.json` | `88144cb6dcfc4d8fc68289188aa909fd2e597304b95e47d23f9d0f0c17127a47` |
+| `sen2naipv2-development-smoke-acceptance-v2.json` | `5ac7bd232ce2a0897b9b93a35f896de4f5641a0adc9f42ce3d1f6986f1a054d2` |
+| `sen2naipv2-development-score-audit-v1.json` | `5bb0e5138d6ed1df6c65744556be02ccd48b77d3288df39630d16fbd9cd2dce9` |
+| `sen2naipv2-development-score-cache-audit-v1.json` | `d61c36e2180a2dc3468d4d9aba083ac0925d163ac2bb910e0227138e9fa249f1` |
+| `sen2naipv2-development-score-acceptance-v1.json` | `34741fe788cac6e28c6d8b1ce2fd96335b608e1b3e6ffb29e82ac064a2118227` |
 
-- Exactly one of 120 ROIs is affected; the other 119 have raw maxima no greater than `9572`.
-- LR contains eight values above `10000`, ordered B04/B03/B02/B08 as `[4,0,0,4]`.
-- HR contains 117 values above `10000`, ordered B04/B03/B02/B08 as `[56,0,0,61]`.
-- The affected aligned-crop raw maximum is `11968`.
-- Asset bytes, sidecars, shape, dtype, CRS, nodata, masks, and alignment remain internally
-  consistent; this is a policy/data-contract mismatch, not evidence of corrupt input.
+Do not overwrite, relabel, or recompute these artifacts. The completed recovery, rerun, benchmark,
+and reproduction procedure remains in [the Phase 2B3-A cloud runbook](phase2b3a-cloud-runbook.md).
 
-The former `uint16_divide_10000_no_clip_v1` assumption came from the smaller smoke sample and is
-retained only for historical paths. The frozen metadata does not justify inventing an offset.
+## Current Phase 2B3-B boundary
 
-## Saturation-v2 decision
+The active design is
+[Phase 2B3-B: Calibration-only conformal threshold design](superpowers/specs/2026-09-03-phase2b3b-calibration-design.md).
+It remains a draft pending scientific-parameter approval.
 
-For each Phase 2B3-A aligned LR and HR crop:
+At this checkpoint, local CPU engineering and synthetic tests cover:
 
-1. Keep all existing byte, sidecar, geometry, dtype, nodata, and mask checks.
-2. Reject the full raw input if any value exceeds `32767`.
-3. Count values strictly above `10000`, in total and in B04/B03/B02/B08 order.
-4. Saturate only the aligned crop at `10000` without mutating the source.
-5. Convert to contiguous CPU float32 and divide by `10000.0`.
+- frozen Phase 2B3-A evidence validation and clean Git revision/ancestry gates;
+- complete-manifest validation, exact 120-member calibration selection, and strict
+  calibration-only pair loading;
+- frozen LDSR-S2-x4 scientific model identity and fixed K5 seeds `3407..3411`;
+- prediction/score cache identities, ensemble-variance score maps, R9 local-L1 risk maps, cache
+  audit, and inference-free cache replay;
+- radiometric saturation receipts and an independent radiometry verifier;
+- exact ROI-level conformal fitting, including all-abstain and minimum-coverage decisions;
+- authoritative input receipts that bind frozen manifest membership to loaded LR/HR tensor
+  identities;
+- final result composition with per-sample input/cache/radiometry bindings;
+- an independent final result verifier with trusted local Git ancestry revalidation;
+- replay receipt composition; and
+- canonical atomic bundle I/O hardened against symlinks, FIFOs, overwrite races, partial staging,
+  noncanonical files, and mismatched digests.
 
-Each sample records `radiometric_saturation` for LR and HR. Each result records a derived
-`radiometric_policy` aggregate, and prediction provenance records the normalization policy. Replay,
-offline bundle verification, and current checkpoint construction fail closed on policy or aggregate
-mismatch.
+The semantic cross-document bundle verifier is still being developed in a separate isolated
+workflow. It is not part of this checkpoint and must not be described as complete until its commit
+is reviewed, integrated, and tested by the main coordinator.
 
-Existing tracked Phase 2B2-A evidence and the accepted A1 v1 publications remain byte-for-byte
-historical. They must not be overwritten, relabelled, or represented as v2 evidence.
+## Implemented command surface
 
-## Schema contract
+The only formal Phase 2B3-B command currently implemented is metadata-only preflight:
 
-Fresh A1 uses:
+```text
+trustsr-phase2b3b preflight \
+  --project-root PROJECT_ROOT \
+  --evidence-dir EVIDENCE_DIR \
+  --storage-root STORAGE_ROOT \
+  --manifest MANIFEST
+```
 
-- result `trustsr.phase2b3a-development-smoke.v2`;
-- cache audit `trustsr.phase2b3a-development-smoke-cache-audit.v2`;
-- acceptance `trustsr.phase2b3a-development-smoke-acceptance.v2`;
-- runtime `trustsr.phase2b3a-a1-runtime.v2`;
-- replay `trustsr.phase2b3a-a1-replay.v2`;
-- bundle manifest `trustsr.phase2b3a-bundle-manifest.v2`.
+There is no formal `calibration` or `calibration-replay` subcommand and no
+`trustsr-phase2b3b-verify` entry point yet. The similarly named functions and modules are library
+boundaries exercised with synthetic inputs; they do not authorize a real run.
 
-A2 remains pre-publication v1 while requiring the v2 policy and radiometric evidence:
+## Unapproved scientific parameters and hard stop
 
-- result `trustsr.phase2b3a-development-score-audit.v1`;
-- cache audit `trustsr.phase2b3a-development-score-cache-audit.v1`;
-- acceptance `trustsr.phase2b3a-development-score-acceptance.v1`;
-- runtime `trustsr.phase2b3a-a2-runtime.v1`;
-- replay `trustsr.phase2b3a-a2-replay.v1`;
-- bundle manifest `trustsr.phase2b3a-bundle-manifest.v1`.
+The design recommends, but the user has not approved:
 
-Both result and cache audit require top-level `normalization_policy`. Result samples require exact
-LR/HR saturation statistics, and result/runtime require identical `radiometric_policy` objects.
-A2 keeps v1 because no A2 evidence has yet been published, not because it permits legacy input.
+- `alpha = 0.05`;
+- minimum calibration pixel coverage `0.10` for permission to design Phase 2B3-C.
 
-## Immutable recovery identity and checkpoint asymmetry
+The synthetic Phase 2A default `0.27` is prohibited. Neither value may be selected after observing
+calibration pixels, scores, risks, coverage, or the fitted threshold.
 
-The accepted historical A1 recovery identity is exact:
+Until the user explicitly approves or replaces both values:
 
-- Manifest:
-  `phase2b3a-workspace-a1-623535c33fee50e7d05b83386158b349c4056d1f4aa256efda1189933e9993f8.json`.
-- Archive digest: the 64-hex value embedded in that basename.
-- Archive size: `933263360` bytes.
-- Producer commit: `4df5195e0a28701391c3951659a42409f81a11c2`.
+- do not open real calibration pixel files;
+- do not construct or run the model;
+- do not use the GPU or cloud server;
+- do not generate real K5 calibration predictions or scores;
+- do not fit or publish a formal threshold, runtime bundle, replay, result, or acceptance record;
+- do not inspect any `internal_test` pixels, caches, predictions, scores, risks, or metrics.
 
-The manifest/archive pair was independently verified before the pause and remains immutable. It may
-be restored only under its exact accepted identity and producer lineage, and only to recover frozen
-data and verified models. After recovery, the disposable live `trustsr/phase2b3a` must be reset and
-A1 must be rebuilt from scratch under v2.
+## GPU and cloud status
 
-New A1 and A2 checkpoint builds require the current
-`uint16_saturate_10000_divide_10000_v2` runtime policy. The exact accepted historical A1 is the sole
-legacy restore exception; it cannot be re-checkpointed, accepted as current evidence, or used to
-resume A2 directly. A pause after the new A1 checkpoint resumes from that exact new v2 checkpoint.
+No GPU or cloud server is needed for the remaining local CPU implementation and verification work.
+Keep the server off. Request the user's permission before starting it, and only when all of the
+following are true:
 
-## Required cloud sequence
+1. `alpha` and minimum coverage have been explicitly approved;
+2. the formal calibration, replay, and independent verifier commands are integrated and locally
+   verified;
+3. the exact clean reviewed commit is ready for a disposable cloud checkout; and
+4. verified calibration K5 cache entries are missing and must be generated.
 
-Follow [the cloud runbook](phase2b3a-cloud-runbook.md) using runtime-only operator values:
+Cloud-side code, logs, tensors, caches, models, paths, endpoints, and credentials must never enter
+Git or become a merge source.
 
-1. Confirm the user has restarted the GPU, then verify mount identities, free bytes and inodes,
-   idle GPU, canonical non-symlink base Python, the exact immutable A1 pair, and model inventories.
-2. Recreate a clean attached cloud checkout at the exact final reviewed and pushed local commit.
-   Require exact HEAD and a clean status; never merge cloud code.
-3. Restore the accepted legacy A1 only for data/model recovery, with the explicit historical
-   producer and verified copy-mode models.
-4. Run `scripts/phase2b3a/reset_live_phase2b3a.sh WORKSPACE_ROOT`. It may delete and recreate only
-   disposable live `trustsr/phase2b3a`; it must never target the durable checkpoint or model roots.
-5. Run formal preflight, then fresh v2 `single`, `smoke`, and inference-free `replay`.
-6. Checkpoint the new A1 and independently verify its exact manifest. Before A2 replaces the live
-   bundle manifest, pull the A1-v2 bundle with the existing pull script and verify it offline. Write
-   only these three new tracked paths, enabled by the integration `.gitignore` allowlist:
-   - `artifacts/phase2b3a/sen2naipv2-development-smoke-v2.json`;
-   - `artifacts/phase2b3a/sen2naipv2-development-smoke-cache-audit-v2.json`;
-   - `artifacts/phase2b3a/sen2naipv2-development-smoke-acceptance-v2.json`.
-7. Run exact A2 `development`, inference-free `development-replay`, checkpoint A2, and independently
-   verify its exact manifest.
-8. Before the A2 pull, require Git porcelain status to contain exactly the three untracked A1-v2
-   files above and no other tracked or untracked change. Pull the A2-v1 bundle into a different new
-   local destination, reverify both bundles, and write exactly:
-   - `artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json`;
-   - `artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json`;
-   - `artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json`.
-9. Require an exact six-file status and staged-filename allowlist. Preserve the old A1 v1
-   publications unchanged, review the diff, commit, push, and prove remote and local SHAs match.
+## Next local work
 
-No stale instruction to restore the historical A1 and immediately run `development` is valid. The
-guarded reset, fresh v2 A1, checkpoint verification, and A1-v2 offline bundle verification are hard
-prerequisites for A2.
+1. Review and integrate the in-progress semantic bundle verifier.
+2. Add the exact host-free calibration runtime manifest and cross-bind model, dependency, input,
+   result, cache-audit, replay, and revision identities.
+3. Implement the formal fixed `calibration`, inference-free `calibration-replay`, and independent
+   `verify` command surfaces without alpha, coverage, score, seed, window, split, sample-limit, or
+   sample-ID override flags.
+4. Add the acceptance record and the strict three-file Git-safe publication boundary.
+5. Run the final integrated CPU test/static gates. Only then ask the user to approve or replace the
+   two preregistered numerical values.
+6. After approval, separately request GPU/cloud authorization if cache generation is necessary.
+7. Run calibration once, replay without inference, independently verify the copied bundle, review
+   the three Git-safe files, and publish either `freeze_calibration` or
+   `stop_insufficient_coverage` without relaxing the preregistered gates.
 
-## Local integration status and gates
+Phase 2B3-C remains out of scope. It requires a separate written and approved specification before
+any one-time `internal_test` access.
 
-The versioned loader, online provenance, offline verifier, checkpoint boundary, guarded reset,
-phase-aware pull, artifact allowlist, tests, documentation, accepted evidence, and optional GPU
-worker support are integrated and pushed on `main`. The implementation commits were reviewed
-independently; all Critical and Important findings were fixed and scoped re-reviews passed.
+## Verification at handoff
 
-One integrated full pytest run reached 100%. Its only failures were five script-wrapper fixtures
-that still emitted legacy/placeholder checkpoint evidence; production validation correctly rejected
-them. The test-only repair updated those fixtures to A1-v2 and A2-v1-with-v2-policy, after which the
-exact five failed nodes passed. The final static gate passed Ruff, every Phase 2B3-A shell syntax
-check, CLI help checks, `git diff --check`, and the clean integration status before this handoff-only
-update. The active connection-token scan had no repository matches after removing those literals
-from the tracked plan command.
+Individual workstreams ran targeted tests, Ruff, and `git diff --check` before their commits. The
+main coordinator owns the final integrated run after all pending commits are merged:
 
-The exact A1-v2 and A2-v1 bundles were verified offline before publication. A2 completed all 120
-frozen development ROIs, and both the formal run and the four-worker benchmark produced
-`byte_identical=true` replay records. The benchmark retained all `840` prediction and `360` score
-identities from the published baseline. Focused integrated tests and static gates passed after the
-worker implementation; use the actual pushed `main` SHA, never this prose, for future work.
+```bash
+uv run pytest -q \
+  tests/cli/test_phase2b3b.py \
+  tests/evaluation/test_phase2b3b_*.py \
+  tests/evaluation/test_calibration_*.py
+uv run ruff check \
+  src/trustsr/cli/phase2b3b.py \
+  src/trustsr/evaluation \
+  tests/cli/test_phase2b3b.py \
+  tests/evaluation
+uv run trustsr-phase2b3b --help >/dev/null
+uv run trustsr-phase2b3b preflight --help >/dev/null
+git diff --check
+git status --short --branch
+git rev-parse HEAD
+```
 
-## Stop conditions and remaining risks
+A final full `uv run pytest -q` is intentionally deferred to the main coordinator after the
+semantic bundle verifier and any final integration repairs land. Do not claim Phase 2B3-B complete
+from targeted tests alone.
 
-- Phase 2B3-A compute is complete; the GPU server may remain off unless a new phase explicitly
-  requires it.
-- Never bypass exact commit ancestry, canonical JSON, digest, model inventory, mount, inode,
-  capacity, GPU-idleness, lock, path, or output-collision checks.
-- Never broaden the guarded reset target or alter the immutable accepted A1 checkpoint pair.
-- Model copy mode consumes disposable capacity; recheck bytes and inodes before restore and compute.
-- Values above `32767`, malformed or inconsistent radiometric evidence, a legacy current runtime,
-  or any policy mismatch are hard failures.
-- Preserve the published A1-v2 and A2-v1 evidence as immutable baseline artifacts.
-- Four workers used `22687 MiB` and reached `100%` utilization without changing prediction
-  identities, but did not improve end-to-end elapsed time; the operational default remains one.
-- Do not inspect or evaluate `internal_test` data in Phase 2B3-A.
-- Do not commit cloud payloads or operator connection details.
+## Persistent stop conditions
+
+- Accept only the exact 120 frozen `calibration` records in canonical manifest order.
+- Fail closed on any evidence, revision, membership, asset, tensor, model, policy, cache, replay,
+  canonical JSON, path, or digest mismatch.
+- Never use development or `internal_test` observations to tune Phase 2B3-B.
+- Never lower alpha or minimum coverage to rescue an unfavorable result.
+- Never treat a structurally self-consistent receipt or transport-valid bundle as scientific
+  authority without independent manifest, Git ancestry, and semantic verification.
+- Preserve the six published Phase 2B3-A evidence files as the immutable upstream baseline.
