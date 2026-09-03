@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -37,6 +38,8 @@ _INPUT_KEYS = {
     "output_policy",
 }
 _CACHED_KEYS = _INPUT_KEYS - {"checkpoint_url", "device"}
+_VERSION = re.compile(r"^[0-9][0-9A-Za-z.+_-]*$")
+_FORBIDDEN_VERSION_MARKERS = ("internal_test", "token", "secret", "host")
 _FIXED_IDENTITY_FIELDS = {
     "name": "ldsr-s2-x4",
     "scale": 4,
@@ -57,11 +60,10 @@ _FIXED_IDENTITY_FIELDS = {
 def _validated_version(value: object, key: str) -> str:
     if (
         type(value) is not str
-        or not value
-        or value.strip() != value
-        or any(character in value for character in ("/", "\\", "\0", "\r", "\n"))
+        or _VERSION.fullmatch(value) is None
+        or any(marker in value.casefold() for marker in _FORBIDDEN_VERSION_MARKERS)
     ):
-        raise ValueError(f"LDSR provenance {key} must be a host-free non-empty version string")
+        raise ValueError(f"LDSR provenance {key} must be a host-free version string")
     return value
 
 

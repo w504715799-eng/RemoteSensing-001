@@ -219,6 +219,32 @@ def test_rejects_one_sample_with_another_legal_runtime_identity(
         calibration_cache_verify.verify_calibration_cache_audit(parsed_audit)
 
 
+def test_rejects_cache_audit_with_rekeyed_runtime_secret(
+    parsed_audit: dict[str, object],
+) -> None:
+    for raw_sample in _assert_list(parsed_audit["samples"]):
+        sample = _assert_mapping(raw_sample)
+        for raw_prediction in _assert_list(sample["predictions"]):
+            prediction = _assert_mapping(raw_prediction)
+            original = _assert_mapping(prediction["identity"])
+            provenance = dict(_assert_mapping(original["model_provenance"]))
+            provenance["torch_version"] = "token=secret"
+            lr = _assert_mapping(original["lr"])
+            identity = PredictionIdentity(
+                model_provenance=provenance,
+                source=original["source"],
+                sample_id=original["sample_id"],
+                lr_shape=tuple(_assert_list(lr["shape"])),
+                lr_dtype=lr["dtype"],
+                lr_sha256=lr["sha256"],
+            )
+            prediction["identity"] = identity.as_dict()
+            prediction["cache_key"] = identity.key
+
+    with pytest.raises(ValueError, match="provenance|version"):
+        calibration_cache_verify.verify_calibration_cache_audit(parsed_audit)
+
+
 def _assert_mapping(value: object) -> Mapping[str, object]:
     assert isinstance(value, Mapping)
     return value

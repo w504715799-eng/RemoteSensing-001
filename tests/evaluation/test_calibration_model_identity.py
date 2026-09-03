@@ -99,6 +99,30 @@ def test_preserves_host_free_runtime_versions_without_freezing_them(
     assert validate_cached_calibration_model_identity(identity.as_dict()) == identity
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("torch_version", "token=secret"),
+        ("cuda_runtime", "internal_test"),
+        ("torch_version", "2.12.1+cu130 build"),
+        ("cuda_runtime", "13.0+host-build"),
+    ),
+)
+def test_rejects_host_or_sensitive_runtime_version_pollution(
+    field: str, value: str
+) -> None:
+    provenance = _provenance()
+    provenance[field] = value
+
+    with pytest.raises(ValueError, match="version"):
+        validate_calibration_model_identity(provenance)
+
+    cached = validate_calibration_model_identity(_provenance()).as_dict()
+    cached[field] = value
+    with pytest.raises(ValueError, match="frozen contract"):
+        validate_cached_calibration_model_identity(cached)
+
+
 def test_as_dict_returns_fresh_json_native_values() -> None:
     identity = validate_calibration_model_identity(_provenance())
     first = identity.as_dict()
