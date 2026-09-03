@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 import torch
@@ -24,6 +25,7 @@ from trustsr.evaluation.calibration_maps import (
 )
 from trustsr.evaluation.calibration_predictions import SEEDS
 from trustsr.evaluation.phase2b3b_evidence import INPUT_AUDIT_SHA256, PRODUCER_REVISION
+from trustsr.jsonio import canonical_json
 
 
 def _map(
@@ -190,7 +192,22 @@ def test_result_is_deterministic_frozen_and_json_safe_with_fresh_dict() -> None:
         "coverage",
         "phase_decision",
         "sample_ids",
+        "map_evidence_sha256",
     }
+    expected_map_evidence_sha256 = hashlib.sha256(
+        canonical_json(
+            [
+                {
+                    "sample_id": value.sample_id,
+                    "score_sha256": value.score.score_sha256,
+                    "risk_sha256": value.risk_sha256,
+                }
+                for value in maps
+            ]
+        )
+    ).hexdigest()
+    assert first.map_evidence_sha256 == expected_map_evidence_sha256
+    assert payload["map_evidence_sha256"] == expected_map_evidence_sha256
     assert all(
         type(value) in (str, int, float, bool, type(None), list) for value in payload.values()
     )
@@ -199,3 +216,10 @@ def test_result_is_deterministic_frozen_and_json_safe_with_fresh_dict() -> None:
     with pytest.raises(FrozenInstanceError):
         first.threshold = None  # type: ignore[misc]
     assert not math.isinf(first.risk_bound)
+
+
+def test_rejects_malformed_map_evidence_digest() -> None:
+    result = fit_calibration_maps(_maps(), alpha=0.02, minimum_coverage=0.1)
+
+    with pytest.raises(ValueError, match="map_evidence_sha256"):
+        replace(result, map_evidence_sha256="A" * 64)

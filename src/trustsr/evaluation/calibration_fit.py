@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from trustsr.calibration.conformal import calibrate_fidelity_mask
 from trustsr.evaluation.calibration_maps import CalibrationMaps
+from trustsr.jsonio import canonical_json
 
 CALIBRATION_SIZE = 120
 RISK_UPPER_BOUND = 1.0
 FREEZE_CALIBRATION = "freeze_calibration"
 STOP_INSUFFICIENT_COVERAGE = "stop_insufficient_coverage"
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _validate_real(
@@ -57,6 +61,7 @@ class CalibrationFit:
     coverage: float
     phase_decision: str
     sample_ids: tuple[str, ...]
+    map_evidence_sha256: str
 
     def __post_init__(self) -> None:
         _validate_alpha(self.alpha)
@@ -76,6 +81,13 @@ class CalibrationFit:
             or len(set(self.sample_ids)) != CALIBRATION_SIZE
         ):
             raise ValueError("calibration fit sample IDs must be unique non-empty strings")
+        if (
+            type(self.map_evidence_sha256) is not str
+            or _SHA256.fullmatch(self.map_evidence_sha256) is None
+        ):
+            raise ValueError(
+                "calibration fit map_evidence_sha256 must be lowercase SHA-256"
+            )
         for name, value, allow_zero in (
             ("trusted_pixels", self.trusted_pixels, True),
             ("total_pixels", self.total_pixels, False),
@@ -129,6 +141,7 @@ class CalibrationFit:
             "coverage": self.coverage,
             "phase_decision": self.phase_decision,
             "sample_ids": list(self.sample_ids),
+            "map_evidence_sha256": self.map_evidence_sha256,
         }
 
 
@@ -151,6 +164,18 @@ def _validated_maps(maps: Sequence[CalibrationMaps]) -> tuple[CalibrationMaps, .
     if len(set(sample_ids)) != CALIBRATION_SIZE:
         raise ValueError("calibration map sample IDs must be unique")
     return values
+
+
+def _map_evidence_sha256(maps: Sequence[CalibrationMaps]) -> str:
+    evidence = [
+        {
+            "sample_id": value.sample_id,
+            "score_sha256": value.score.score_sha256,
+            "risk_sha256": value.risk_sha256,
+        }
+        for value in maps
+    ]
+    return hashlib.sha256(canonical_json(evidence)).hexdigest()
 
 
 def fit_calibration_maps(
@@ -192,4 +217,5 @@ def fit_calibration_maps(
         coverage=coverage,
         phase_decision=decision,
         sample_ids=tuple(value.sample_id for value in values),
+        map_evidence_sha256=_map_evidence_sha256(values),
     )

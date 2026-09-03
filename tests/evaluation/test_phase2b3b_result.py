@@ -226,6 +226,18 @@ def _radiometry(sample_ids: Sequence[str]) -> dict[str, object]:
 
 
 def _fit(sample_ids: tuple[str, ...], *, all_abstain: bool = False) -> CalibrationFit:
+    map_evidence_sha256 = hashlib.sha256(
+        canonical_json(
+            [
+                {
+                    "sample_id": sample_id,
+                    "score_sha256": _sha(f"score:{sample_id}"),
+                    "risk_sha256": _sha(f"risk:{sample_id}"),
+                }
+                for sample_id in sample_ids
+            ]
+        )
+    ).hexdigest()
     return CalibrationFit(
         alpha=0.02,
         minimum_coverage=0.10,
@@ -241,6 +253,7 @@ def _fit(sample_ids: tuple[str, ...], *, all_abstain: bool = False) -> Calibrati
             STOP_INSUFFICIENT_COVERAGE if all_abstain else FREEZE_CALIBRATION
         ),
         sample_ids=sample_ids,
+        map_evidence_sha256=map_evidence_sha256,
     )
 
 
@@ -274,6 +287,7 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
         "radiometry",
         "samples",
         "cache_audit_sha256",
+        "map_evidence_sha256",
         "phase_decision",
     }
     assert first["schema"] == "trustsr.phase2b3b-calibration.v1"
@@ -281,6 +295,7 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert first["cache_audit_sha256"] == hashlib.sha256(
         canonical_json(inputs[2])
     ).hexdigest()
+    assert first["map_evidence_sha256"] == inputs[1].map_evidence_sha256
     assert first["upstream"]["phase2b3a_publication_commit"] == PUBLICATION_COMMIT
     assert first["frozen"]["risk"] == {
         "name": "local_l1_risk",
@@ -495,6 +510,39 @@ def test_rejects_forged_fit_after_a_valid_independent_cache_verification() -> No
     object.__setattr__(fit, "coverage", 0.5)
 
     with pytest.raises(ValueError, match="fit public contract"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            fit,
+            _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+@pytest.mark.parametrize("map_kind", ("score", "risk"))
+def test_rejects_audit_map_digest_change_with_identical_sample_ids(
+    map_kind: str,
+) -> None:
+    sample_ids = _sample_ids()
+    audit = _audit(sample_ids)
+    digest_key = f"{map_kind}_sha256"
+    audit["samples"][0][map_kind][digest_key] = "f" * 64
+
+    with pytest.raises(ValueError, match="map evidence"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            _fit(sample_ids),
+            audit,
+            _radiometry(sample_ids),
+            _revision(),
+        )
+
+
+def test_rejects_forged_fit_map_evidence_digest() -> None:
+    sample_ids = _sample_ids()
+    fit = replace(_fit(sample_ids), map_evidence_sha256="f" * 64)
+
+    with pytest.raises(ValueError, match="map evidence"):
         phase2b3b_result.build_phase2b3b_result(
             _preflight(),
             fit,

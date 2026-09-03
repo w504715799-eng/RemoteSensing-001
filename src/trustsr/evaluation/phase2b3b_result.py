@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -354,6 +355,18 @@ def _validate_revision(revision: Phase2B3BRevision) -> str:
     return revision.head_revision
 
 
+def _audit_map_evidence_sha256(samples: Sequence[object]) -> str:
+    evidence = [
+        {
+            "sample_id": sample["sample_id"],
+            "score_sha256": sample["score"]["score_sha256"],
+            "risk_sha256": sample["risk"]["risk_sha256"],
+        }
+        for sample in samples
+    ]
+    return hashlib.sha256(canonical_json(evidence)).hexdigest()
+
+
 def build_phase2b3b_result(
     preflight: Mapping[str, object],
     fit: CalibrationFit,
@@ -379,6 +392,9 @@ def build_phase2b3b_result(
         and validated_fit.calibration_size == normalized_audit["sample_count"] == 120
     ):
         raise ValueError("fit, cache audit, and radiometry ordered samples differ")
+    audit_map_evidence_sha256 = _audit_map_evidence_sha256(audit_samples)
+    if validated_fit.map_evidence_sha256 != audit_map_evidence_sha256:
+        raise ValueError("calibration fit map evidence differs from verified cache audit")
 
     samples = []
     for audit_sample, radiometry_sample in zip(
@@ -431,6 +447,7 @@ def build_phase2b3b_result(
         "radiometry": radiometry_summary,
         "samples": samples,
         "cache_audit_sha256": cache_audit_sha256,
+        "map_evidence_sha256": validated_fit.map_evidence_sha256,
         "phase_decision": validated_fit.phase_decision,
     }
     canonical_json(result)
