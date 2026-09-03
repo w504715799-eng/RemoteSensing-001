@@ -809,6 +809,109 @@ def test_a2_replay_rejects_runtime_normalization_policy_mismatch(
         phase2b3a.run_development_replay(argparse.Namespace())
 
 
+def _run_a2_replay_with_runtime_radiometric_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_radiometric_policy: dict[str, object],
+) -> dict[str, object]:
+    context = phase2b3a._StageContext(
+        root=tmp_path,
+        records=(),
+        project_root=tmp_path,
+        code_revision="a" * 40,
+        persistent_free_bytes=10 * 1024**3,
+        hardware=None,
+    )
+    result_radiometric_policy = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 120,
+        "affected_sample_count": 0,
+        "affected_asset_count": 0,
+        "lr_clipped_high_count": 0,
+        "hr_clipped_high_count": 0,
+        "raw_crop_maximum": 5500,
+    }
+    runtime = {
+        "schema": "trustsr.phase2b3a-a2-runtime.v1",
+        "git_commit": "a" * 40,
+        "a1_producer_commit": "9" * 40,
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": runtime_radiometric_policy,
+    }
+    _, runtime_sha = phase2b3a._write_runtime(tmp_path, phase2b3a._A2_RUNTIME, runtime)
+    scientific = {
+        "schema": "trustsr.phase2b3a-development-score-audit.v1",
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "radiometric_policy": result_radiometric_policy,
+    }
+    audit = {
+        "schema": "trustsr.phase2b3a-development-score-cache-audit.v1",
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+    }
+    phase2b3a._commit_pair(
+        tmp_path,
+        (phase2b3a._A2_RESULT, {**scientific, "runtime_manifest_sha256": runtime_sha}),
+        (phase2b3a._A2_AUDIT, audit),
+    )
+    monkeypatch.setattr(phase2b3a, "_preflight_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(phase2b3a, "_ordered_development_sample_ids", lambda records: ())
+    monkeypatch.setattr(phase2b3a, "_load_a2_pairs", lambda context, args: ())
+    monkeypatch.setattr(phase2b3a, "_require_git_ancestor", lambda *args: "9" * 40)
+    monkeypatch.setattr(
+        phase2b3a,
+        "replay_a2_development",
+        lambda *args, **kwargs: (scientific, audit),
+    )
+    return phase2b3a.run_development_replay(argparse.Namespace())
+
+
+def test_a2_replay_rejects_runtime_radiometric_aggregate_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_policy = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 120,
+        "affected_sample_count": 0,
+        "affected_asset_count": 1,
+        "lr_clipped_high_count": 0,
+        "hr_clipped_high_count": 0,
+        "raw_crop_maximum": 5500,
+    }
+
+    with pytest.raises(ValueError, match="radiometric policy"):
+        _run_a2_replay_with_runtime_radiometric_policy(
+            tmp_path, monkeypatch, runtime_policy
+        )
+
+
+def test_a2_replay_rejects_bool_substituted_for_zero_runtime_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_policy = {
+        "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
+        "raw_radiometric_max": 32767,
+        "saturation_threshold": 10000,
+        "bands": ["B04", "B03", "B02", "B08"],
+        "sample_count": 120,
+        "affected_sample_count": False,
+        "affected_asset_count": 0,
+        "lr_clipped_high_count": 0,
+        "hr_clipped_high_count": 0,
+        "raw_crop_maximum": 5500,
+    }
+
+    with pytest.raises(ValueError, match="radiometric policy"):
+        _run_a2_replay_with_runtime_radiometric_policy(
+            tmp_path, monkeypatch, runtime_policy
+        )
+
+
 def test_preflight_validates_everything_before_constructing_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -790,6 +790,12 @@ def _small_a2_pair(day: int, bin_index: int, round_index: int) -> LoadedCrosssen
     slope = 0.12 + 0.0005 * ((day + 1) * 40 + bin_index * 10 + round_index)
     row = torch.linspace(0.0, 1.0, 12, dtype=torch.float32)
     hr = (0.35 + slope * row).view(1, 1, 12).expand(4, 12, 12).contiguous()
+    if (day, bin_index, round_index) == (-1, 0, 1):
+        lr_saturation = RadiometricSaturation(208, 11968, 8, (4, 0, 0, 4))
+        hr_saturation = RadiometricSaturation(208, 11968, 117, (56, 0, 0, 61))
+    else:
+        lr_saturation = RadiometricSaturation(4000, 4000, 0, (0, 0, 0, 0))
+        hr_saturation = RadiometricSaturation(3500, 5500, 0, (0, 0, 0, 0))
     return LoadedCrosssensorPair(
         pair=SRPair(
             source=pair.pair.source,
@@ -813,8 +819,8 @@ def _small_a2_pair(day: int, bin_index: int, round_index: int) -> LoadedCrosssen
             crop_bounds=pair.metadata.crop_bounds,
             crop_policy=CROP_POLICY,
             normalization_policy=PHASE2B3A_NORMALIZATION_POLICY,
-            lr_saturation=RadiometricSaturation(4000, 4000, 0, (0, 0, 0, 0)),
-            hr_saturation=RadiometricSaturation(3500, 5500, 0, (0, 0, 0, 0)),
+            lr_saturation=lr_saturation,
+            hr_saturation=hr_saturation,
         ),
     )
 
@@ -888,17 +894,31 @@ def test_a2_freezes_only_from_exact_complete_development_set(committed_a2) -> No
     assert A2_CACHE_AUDIT_SCHEMA == "trustsr.phase2b3a-development-score-cache-audit.v1"
     assert result["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
     assert audit["normalization_policy"] == PHASE2B3A_NORMALIZATION_POLICY
+    assert result["samples"][0]["radiometric_saturation"] == {
+        "lr": {
+            "raw_crop_minimum": 208,
+            "raw_crop_maximum": 11968,
+            "clipped_high_count": 8,
+            "clipped_high_by_band": [4, 0, 0, 4],
+        },
+        "hr": {
+            "raw_crop_minimum": 208,
+            "raw_crop_maximum": 11968,
+            "clipped_high_count": 117,
+            "clipped_high_by_band": [56, 0, 0, 61],
+        },
+    }
     assert result["radiometric_policy"] == {
         "normalization_policy": PHASE2B3A_NORMALIZATION_POLICY,
         "raw_radiometric_max": 32767,
         "saturation_threshold": 10000,
         "bands": ["B04", "B03", "B02", "B08"],
         "sample_count": 120,
-        "affected_sample_count": 0,
-        "affected_asset_count": 0,
-        "lr_clipped_high_count": 0,
-        "hr_clipped_high_count": 0,
-        "raw_crop_maximum": 5500,
+        "affected_sample_count": 1,
+        "affected_asset_count": 2,
+        "lr_clipped_high_count": 8,
+        "hr_clipped_high_count": 117,
+        "raw_crop_maximum": 11968,
     }
     assert result["sample_count"] == 120
     assert result["statistical_unit"] == "roi"
