@@ -169,3 +169,60 @@ def verify_phase2b3b_revision(project_root: Path) -> Phase2B3BRevision:
         calculation_revision=PHASE2B3A_CALCULATION_REVISION,
         evidence_publication=PHASE2B3A_EVIDENCE_PUBLICATION,
     )
+
+
+def verify_recorded_phase2b3b_revision(
+    project_root: Path, recorded_revision: str
+) -> str:
+    """Revalidate a recorded producer commit inside a trusted local checkout.
+
+    The producer commit may precede the verifier checkout, but it must exist as
+    the exact recorded object, descend from both frozen Phase 2B3-A commits,
+    and be an ancestor of the clean attached verifier HEAD.
+    """
+
+    if (
+        type(recorded_revision) is not str
+        or _REVISION_PATTERN.fullmatch(recorded_revision) is None
+    ):
+        raise ValueError("recorded producer revision is not canonical")
+
+    checkout = verify_phase2b3b_revision(project_root)
+    resolved_revision = _canonical_revision(
+        _run_git(
+            project_root,
+            "rev-parse",
+            "--verify",
+            f"{recorded_revision}^{{commit}}",
+            failure="recorded producer revision does not exist",
+        ),
+        "recorded producer revision does not exist",
+    )
+    if resolved_revision != recorded_revision:
+        raise ValueError("recorded producer revision is not exact")
+
+    _run_git(
+        project_root,
+        "merge-base",
+        "--is-ancestor",
+        PHASE2B3A_CALCULATION_REVISION,
+        recorded_revision,
+        failure="recorded producer revision must descend from the frozen calculation revision",
+    )
+    _run_git(
+        project_root,
+        "merge-base",
+        "--is-ancestor",
+        PHASE2B3A_EVIDENCE_PUBLICATION,
+        recorded_revision,
+        failure="recorded producer revision must descend from the frozen evidence publication",
+    )
+    _run_git(
+        project_root,
+        "merge-base",
+        "--is-ancestor",
+        recorded_revision,
+        checkout.head_revision,
+        failure="recorded producer revision must be an ancestor of Git HEAD",
+    )
+    return resolved_revision

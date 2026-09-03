@@ -188,3 +188,59 @@ def test_uses_explicit_local_git_argv_without_shell_or_network_command(
     assert not {"fetch", "pull", "push", "ls-remote"}.intersection(
         argument for argv, _ in calls for argument in argv
     )
+
+
+def test_revalidates_recorded_producer_revision_in_trusted_checkout(
+    repository: _Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _pin_required_ancestors(monkeypatch, repository)
+
+    result = module.verify_recorded_phase2b3b_revision(
+        repository.root, repository.publication
+    )
+
+    assert result == repository.publication
+
+
+@pytest.mark.parametrize(
+    "recorded_revision",
+    (
+        "c" * 40,
+        "HEAD",
+        "A" * 40,
+        "0" * 39,
+    ),
+)
+def test_rejects_fabricated_or_noncanonical_recorded_revision(
+    repository: _Repository,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_revision: str,
+) -> None:
+    module = _pin_required_ancestors(monkeypatch, repository)
+
+    with pytest.raises(ValueError, match="recorded producer revision"):
+        module.verify_recorded_phase2b3b_revision(repository.root, recorded_revision)
+
+
+def test_rejects_recorded_revision_that_does_not_descend_from_frozen_commits(
+    repository: _Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _pin_required_ancestors(monkeypatch, repository)
+    root_revision = _git(repository.root, "rev-list", "--max-parents=0", "HEAD")
+    _git(repository.root, "switch", "-q", "-c", "unrelated-producer", root_revision)
+    unrelated = _commit(repository.root, "unrelated producer")
+    _git(repository.root, "switch", "-q", "phase2b3b-test")
+
+    with pytest.raises(ValueError, match="calculation revision"):
+        module.verify_recorded_phase2b3b_revision(repository.root, unrelated)
+
+
+def test_rejects_recorded_revision_that_is_not_ancestor_of_verifier_head(
+    repository: _Repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _pin_required_ancestors(monkeypatch, repository)
+    future = _commit(repository.root, "future producer")
+    _git(repository.root, "switch", "-q", "-c", "verifier", repository.head)
+
+    with pytest.raises(ValueError, match="ancestor of Git HEAD"):
+        module.verify_recorded_phase2b3b_revision(repository.root, future)
