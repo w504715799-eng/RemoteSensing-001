@@ -37,6 +37,37 @@ from trustsr.evaluation.calibration_predictions import (
     load_or_generate_calibration_bundle,
 )
 from trustsr.evaluation.phase2b3b_evidence import INPUT_AUDIT_SHA256, PRODUCER_REVISION
+from trustsr.models.ldsr_assets import (
+    CHECKPOINT_NAME,
+    CHECKPOINT_SHA256,
+    CHECKPOINT_SIZE,
+    CHECKPOINT_URL,
+    CONFIG_SHA256,
+)
+from trustsr.models.versions import OPENSR_MODEL_VERSION
+
+
+def _raw_model_provenance(seed: int) -> dict[str, object]:
+    return {
+        "name": MODEL_NAME,
+        "scale": 4,
+        "implementation_schema_version": 1,
+        "opensr_model_version": OPENSR_MODEL_VERSION,
+        "torch_version": "2.12.1+cu130",
+        "cuda_runtime": "13.0",
+        "checkpoint_name": CHECKPOINT_NAME,
+        "checkpoint_url": CHECKPOINT_URL,
+        "checkpoint_size": CHECKPOINT_SIZE,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "config_sha256": CONFIG_SHA256,
+        "device": "cuda",
+        "seed": seed,
+        "sampling_steps": 100,
+        "sampling_eta": 0.95,
+        "sampling_temperature": 1.0,
+        "histogram_matching": True,
+        "output_policy": "clip_to_[0,1]",
+    }
 
 
 def _pair(*, sample_id: str = "calibration-0") -> LoadedCrosssensorPair:
@@ -78,7 +109,7 @@ class _SeedModel:
         self.seed = seed
 
     def provenance(self) -> dict[str, object]:
-        return {"name": self.name, "scale": self.scale, "seed": self.seed, "backend": "cpu-test"}
+        return _raw_model_provenance(self.seed)
 
     def predict(self, lr: torch.Tensor) -> torch.Tensor:
         value = 0.1 * (self.seed - SEEDS[0] + 1)
@@ -90,7 +121,7 @@ class _LDSR:
     scale = 4
 
     def provenance(self) -> dict[str, object]:
-        return {"name": self.name, "scale": self.scale, "seed": SEEDS[0], "backend": "cpu-test"}
+        return _raw_model_provenance(SEEDS[0])
 
     def for_seed(self, seed: int) -> _SeedModel:
         return _SeedModel(seed)
