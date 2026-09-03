@@ -8,10 +8,13 @@ Date: 2026-09-03 (Asia/Shanghai)
 - Resume handoff checkpoint: `fcaf135749c934426f86ed2629cfb26ad6c53502`.
 - Previously reviewed and pushed cross-commit repair:
   `68e13d99553a94ea0f875f0fdd03dcc352e854ec`.
-- The final saturation-v2 reviewed integration commit is pending local integration. Do not invent or
-  deploy a replacement SHA before the integration gates pass.
-- The GPU rerun is paused. Ask the user to restart the GPU only after local integration, focused
-  validation, final review, and push of the exact deployment commit are complete.
+- The reviewed saturation-v2 deployment commit was
+  `58694420c3c0e11d495953a1963c71b997261601`.
+- The six accepted A1-v2/A2-v1 evidence files were published at
+  `b386d4b38c9f3725107eed178829955d442f5601`.
+- Post-publication GPU worker support was integrated at
+  `b444c2d64bb4bc512a2b3bc06e04e16af07df612`; its measured result is recorded in the cloud
+  runbook. The GPU rerun and benchmark are complete, so no GPU remains required for this phase.
 
 ## Objective and scope
 
@@ -142,9 +145,9 @@ prerequisites for A2.
 ## Local integration status and gates
 
 The versioned loader, online provenance, offline verifier, checkpoint boundary, guarded reset,
-phase-aware pull, artifact allowlist, tests, and documentation were inspected and cherry-picked into
-local `main` through `ab91134e9d3e2234b9d74337a491ed219f424107`. The implementation commits were
-reviewed independently; all Critical and Important findings were fixed and scoped re-reviews passed.
+phase-aware pull, artifact allowlist, tests, documentation, accepted evidence, and optional GPU
+worker support are integrated and pushed on `main`. The implementation commits were reviewed
+independently; all Critical and Important findings were fixed and scoped re-reviews passed.
 
 One integrated full pytest run reached 100%. Its only failures were five script-wrapper fixtures
 that still emitted legacy/placeholder checkpoint evidence; production validation correctly rejected
@@ -154,20 +157,24 @@ check, CLI help checks, `git diff --check`, and the clean integration status bef
 update. The active connection-token scan had no repository matches after removing those literals
 from the tracked plan command.
 
-Do not deploy until the final whole-branch read-only review has passed and the resulting exact local
-commit has been pushed. That final documentation-only commit will descend from the implementation
-checkpoint above; use the actual pushed SHA, never this prose, as the deployment identity.
+The exact A1-v2 and A2-v1 bundles were verified offline before publication. A2 completed all 120
+frozen development ROIs, and both the formal run and the four-worker benchmark produced
+`byte_identical=true` replay records. The benchmark retained all `840` prediction and `360` score
+identities from the published baseline. Focused integrated tests and static gates passed after the
+worker implementation; use the actual pushed `main` SHA, never this prose, for future work.
 
 ## Stop conditions and remaining risks
 
-- The GPU is paused until the user restarts it; connectivity failure before that is expected.
+- Phase 2B3-A compute is complete; the GPU server may remain off unless a new phase explicitly
+  requires it.
 - Never bypass exact commit ancestry, canonical JSON, digest, model inventory, mount, inode,
   capacity, GPU-idleness, lock, path, or output-collision checks.
 - Never broaden the guarded reset target or alter the immutable accepted A1 checkpoint pair.
 - Model copy mode consumes disposable capacity; recheck bytes and inodes before restore and compute.
 - Values above `32767`, malformed or inconsistent radiometric evidence, a legacy current runtime,
   or any policy mismatch are hard failures.
-- Do not start A2 unless fresh v2 A1 replay, checkpoint verification, and offline bundle verification
-  have all succeeded.
+- Preserve the published A1-v2 and A2-v1 evidence as immutable baseline artifacts.
+- Four workers used `22687 MiB` and reached `100%` utilization without changing prediction
+  identities, but did not improve end-to-end elapsed time; the operational default remains one.
 - Do not inspect or evaluate `internal_test` data in Phase 2B3-A.
 - Do not commit cloud payloads or operator connection details.
