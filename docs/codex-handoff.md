@@ -107,10 +107,36 @@ trustsr-phase2b3b preflight \
   --project-root PROJECT_ROOT \
   --evidence-dir EVIDENCE_DIR \
   --storage-root STORAGE_ROOT \
-  --manifest MANIFEST
+  --manifest MANIFEST \
+  --confirm-persistent-storage
 ```
 
-Candidate bundle verification is also implemented:
+Formal calibration and inference-free replay are implemented with the same fixed path arguments,
+explicit `--confirm-persistent-storage`, and no scientific override flags:
+
+```text
+trustsr-phase2b3b calibration \
+  --project-root PROJECT_ROOT \
+  --evidence-dir EVIDENCE_DIR \
+  --storage-root STORAGE_ROOT \
+  --manifest MANIFEST \
+  --confirm-persistent-storage \
+  --ldsr-model-dir LDSR_MODEL_DIR
+
+trustsr-phase2b3b calibration-replay \
+  --project-root PROJECT_ROOT \
+  --evidence-dir EVIDENCE_DIR \
+  --storage-root STORAGE_ROOT \
+  --manifest MANIFEST \
+  --confirm-persistent-storage
+```
+
+`calibration` is the only surface that can construct LDSR or generate missing predictions. Before
+atomic bundle publication it immediately performs an inference-free reconstruction. The explicit
+replay surface does not accept a model path, recomputes ensemble-variance score and R9 risk from
+verified caches, and requires byte-identical result/audit/replay/bundle evidence.
+
+The verifier is now the acceptance-authorizing independent computation and publication surface:
 
 ```text
 trustsr-phase2b3b-verify \
@@ -118,13 +144,18 @@ trustsr-phase2b3b-verify \
   --project-root PROJECT_ROOT \
   --evidence-dir EVIDENCE_DIR \
   --storage-root STORAGE_ROOT \
-  --manifest MANIFEST
+  --manifest MANIFEST \
+  --confirm-persistent-storage
 ```
 
-This verifier reports metadata consistency only and always emits
-`acceptance_authorized=false`. There is still no formal `calibration` or
-`calibration-replay` command and no acceptance/publication command. Library functions exercised
-with synthetic inputs do not authorize a real run.
+It retains the metadata-only candidate verifier as its first gate, then loads only authoritative
+calibration inputs, independently replays cache-derived computations without model inference, and
+atomically publishes the exact result, cache-audit, and acceptance JSON files under
+`artifacts/phase2b3b`. Only this complete path may emit `acceptance_authorized=true`.
+
+The exact operator sequence and stop conditions are in
+[the Phase 2B3-B calibration runbook](phase2b3b-calibration-runbook.md). Implementation and
+synthetic local tests do not authorize a real run by themselves.
 
 ## Approved scientific parameters and interpretation
 
@@ -159,8 +190,8 @@ Method and context sources:
   https://doi.org/10.1038/s41597-024-04214-y
 
 Approval removes the scientific-parameter hard stop only. Before real calibration pixel loading or
-GPU inference, the fixed formal command, replay, acceptance, and independent-verification surfaces
-must still be implemented and locally verified. Continue to enforce:
+GPU inference, the implemented formal command, replay, acceptance, and independent-verification
+surfaces must pass the final local readiness gate. Continue to enforce:
 
 - do not expose `alpha` or minimum coverage as runtime override flags;
 - do not read calibration pixels until the formal local surfaces are ready;
@@ -185,12 +216,9 @@ Git or become a merge source.
 
 ## Next local work
 
-1. Freeze `alpha=0.05` and minimum coverage `0.10` in the formal production, replay, result,
-   acceptance, and independent-verification paths; reject any other values.
-2. Finish and verify the fixed formal calibration, inference-free replay,
-   acceptance, and publication command surfaces without scientific override flags.
-3. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
-4. Run calibration once, replay without inference, independently verify the copied bundle, review
+1. Run the final scoped local CPU readiness gate at the clean reviewed implementation commit.
+2. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
+3. Run calibration once, replay without inference, independently verify the copied bundle, review
    the Git-safe publication files, and publish either `freeze_calibration` or
    `stop_insufficient_coverage` without relaxing preregistered gates.
 
@@ -207,7 +235,10 @@ uv run pytest -q \
   tests/cli/test_phase2b3b.py \
   tests/cli/test_phase2b3b_verify.py \
   tests/evaluation/test_phase2b3b_*.py \
-  tests/evaluation/test_calibration_*.py
+  tests/evaluation/test_calibration_*.py \
+  tests/data/test_calibration_subset.py \
+  tests/data/test_calibration_pairs.py \
+  tests/calibration/test_conformal.py
 uv run ruff check \
   src/trustsr/cli/phase2b3b.py \
   src/trustsr/cli/phase2b3b_verify.py \
@@ -217,6 +248,8 @@ uv run ruff check \
   tests/evaluation
 uv run trustsr-phase2b3b --help >/dev/null
 uv run trustsr-phase2b3b preflight --help >/dev/null
+uv run trustsr-phase2b3b calibration --help >/dev/null
+uv run trustsr-phase2b3b calibration-replay --help >/dev/null
 uv run trustsr-phase2b3b-verify --help >/dev/null
 git diff --check
 git status --short --branch
@@ -229,12 +262,15 @@ Final integrated/full-suite status on the code plus handoff tree:
   deprecation warning in `torch/jit/_script.py`;
 - `uv run ruff check .`: passed;
 - `uv run python -m compileall -q src`: passed;
-- all three CLI help checks above: passed;
+- all CLI help checks listed above passed;
 - `uv build`: produced both the `trustsr-0.1.0` sdist and wheel successfully;
 - `git diff --check`: passed and the integration worktree was clean before this result update.
 
-Do not claim Phase 2B3-B complete from targeted workstream tests, metadata-only receipts, or this
-handoff draft.
+The full-suite result above predates the formal workflow and acceptance implementation. Run the
+scoped Phase 2B3-B readiness commands in the runbook at the final clean implementation commit.
+Do not claim Phase 2B3-B scientifically complete from synthetic tests, metadata-only receipts, or
+this handoff: scientific completion still requires the real 120-ROI calibration, explicit replay,
+independent copied-bundle verification, review, and three-file publication.
 
 ## Persistent stop conditions
 
