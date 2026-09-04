@@ -293,18 +293,20 @@ def _validated_rois(rois: object) -> tuple[ROIEvaluation, ...]:
     sample_ids = tuple(value.sample_id for value in values)
     if len(set(sample_ids)) != PHASE2B3C_EVALUATION_SIZE:
         raise ValueError("Phase 2B3-C ROI sample IDs must be unique")
-    expected_order = tuple(
-        (selection_round, days_between, correlation_bin)
-        for selection_round in range(1, _ROIS_PER_STRATUM + 1)
+    expected_positions = {
+        (days_between, correlation_bin, selection_round)
         for days_between in _DAYS_BETWEEN
         for correlation_bin in _CORRELATION_BINS
-    )
-    actual_order = tuple(
-        (value.selection_round, value.days_between, value.correlation_bin)
+        for selection_round in range(1, _ROIS_PER_STRATUM + 1)
+    }
+    actual_positions = tuple(
+        (value.days_between, value.correlation_bin, value.selection_round)
         for value in values
     )
-    if actual_order != expected_order:
-        raise ValueError("Phase 2B3-C ROI evaluations must use canonical manifest order")
+    if len(set(actual_positions)) != len(actual_positions) or set(
+        actual_positions
+    ) != expected_positions:
+        raise ValueError("Phase 2B3-C ROI evaluations must cover all balanced design positions")
     return values
 
 

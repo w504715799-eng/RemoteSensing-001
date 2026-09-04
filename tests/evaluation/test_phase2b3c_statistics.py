@@ -182,6 +182,17 @@ def test_grid_kelly_is_permutation_invariant_and_nondecreasing_in_candidate_mean
     )
 
 
+def test_statistics_accept_frozen_manifest_order_without_round_major_reordering() -> None:
+    statistics = _statistics()
+    manifest_order = tuple(reversed(_rois(loss=0.01)))
+
+    observed = statistics.build_phase2b3c_statistics(manifest_order)
+
+    assert observed.evaluation_size == 120
+    assert observed.mean_loss == pytest.approx(0.01)
+    assert len(observed.strata) == 12
+
+
 def test_grid_kelly_upper_bound_has_hand_checked_endpoint_behavior() -> None:
     statistics = _statistics()
 
@@ -267,15 +278,17 @@ def test_statistics_reject_any_roi_count_other_than_120(count: int) -> None:
         statistics.build_phase2b3c_statistics(values)
 
 
-def test_statistics_reject_noncanonical_or_duplicate_membership() -> None:
+def test_statistics_reject_duplicate_design_position_or_sample_membership() -> None:
     statistics = _statistics()
-    reordered = list(_rois())
-    reordered[0], reordered[1] = reordered[1], reordered[0]
+    bad_design = list(_rois())
+    bad_design[-1] = replace(
+        bad_design[-1], days_between=-1, correlation_bin=0, selection_round=1
+    )
     duplicated = list(_rois())
     duplicated[-1] = duplicated[0]
 
-    with pytest.raises(ValueError, match="canonical"):
-        statistics.build_phase2b3c_statistics(reordered)
+    with pytest.raises(ValueError, match="balanced design"):
+        statistics.build_phase2b3c_statistics(bad_design)
     with pytest.raises(ValueError, match="unique"):
         statistics.build_phase2b3c_statistics(duplicated)
 
