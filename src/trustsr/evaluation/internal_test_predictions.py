@@ -512,13 +512,14 @@ def _read_bounded_regular(
         os.close(descriptor)
 
 
-def load_complete_cached_internal_test_bundles(
+def _scan_cached_internal_test_groups(
     pairs: tuple[LoadedCrosssensorPair, ...],
     *,
     cache: PredictionCache,
-) -> tuple[InternalTestPredictionBundle, ...] | None:
-    """Return one coherent verified K5 cache set, or ``None`` when it is incomplete."""
-
+) -> tuple[
+    tuple[LoadedCrosssensorPair, ...],
+    dict[bytes, dict[tuple[str, int], CachedInternalTestPrediction]],
+]:
     if type(pairs) is not tuple:
         raise TypeError("cache completeness requires an exact pair tuple")
     if len(pairs) != 120:
@@ -546,6 +547,17 @@ def load_complete_cached_internal_test_bundles(
         if slot in group:
             raise ValueError("internal_test cache contains a duplicate K5 slot")
         group[slot] = candidate
+    return loaded_pairs, groups
+
+
+def load_complete_cached_internal_test_bundles(
+    pairs: tuple[LoadedCrosssensorPair, ...],
+    *,
+    cache: PredictionCache,
+) -> tuple[InternalTestPredictionBundle, ...] | None:
+    """Return one coherent verified K5 cache set, or ``None`` when it is incomplete."""
+
+    loaded_pairs, groups = _scan_cached_internal_test_groups(pairs, cache=cache)
 
     required_slots = {
         (pair.pair.sample_id, seed) for pair in loaded_pairs for seed in SEEDS
@@ -563,6 +575,54 @@ def load_complete_cached_internal_test_bundles(
         )
         for pair in loaded_pairs
     )
+
+
+@dataclass(frozen=True)
+class InternalTestPredictionCacheProbe:
+    """Exact completeness count for the best coherent fixed-model cache identity."""
+
+    bundles: tuple[InternalTestPredictionBundle, ...] | None
+    present_count: int
+    missing_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.present_count) is not int
+            or type(self.missing_count) is not int
+            or self.present_count < 0
+            or self.missing_count < 0
+            or self.present_count + self.missing_count != 120 * len(SEEDS)
+            or (self.bundles is None) != (self.missing_count != 0)
+        ):
+            raise ValueError("internal_test cache probe counts are invalid")
+
+
+def probe_cached_internal_test_bundles(
+    pairs: tuple[LoadedCrosssensorPair, ...],
+    *,
+    cache: PredictionCache,
+) -> InternalTestPredictionCacheProbe:
+    """Count exact coherent cache slots without importing or constructing a model."""
+
+    loaded_pairs, groups = _scan_cached_internal_test_groups(pairs, cache=cache)
+    required_slots = {
+        (pair.pair.sample_id, seed) for pair in loaded_pairs for seed in SEEDS
+    }
+    complete = tuple(group for group in groups.values() if set(group) == required_slots)
+    if len(complete) > 1:
+        raise ValueError("internal_test cache contains multiple complete model identities")
+    if complete:
+        selected = complete[0]
+        bundles = tuple(
+            InternalTestPredictionBundle(
+                sample_id=pair.pair.sample_id,
+                items=tuple(selected[(pair.pair.sample_id, seed)] for seed in SEEDS),
+            )
+            for pair in loaded_pairs
+        )
+        return InternalTestPredictionCacheProbe(bundles, 600, 0)
+    present_count = max((len(set(group) & required_slots) for group in groups.values()), default=0)
+    return InternalTestPredictionCacheProbe(None, present_count, 600 - present_count)
 
 
 class IncompleteInternalTestPredictionCache(RuntimeError):

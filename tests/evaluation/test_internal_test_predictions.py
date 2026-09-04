@@ -24,6 +24,7 @@ from trustsr.evaluation.internal_test_predictions import (
     IncompleteInternalTestPredictionCache,
     load_complete_cached_internal_test_bundles,
     load_or_generate_internal_test_bundle,
+    probe_cached_internal_test_bundles,
     require_complete_cached_internal_test_bundles,
 )
 from trustsr.evaluation.phase2b3c_evidence import (
@@ -193,11 +194,19 @@ def test_complete_120_by_5_probe_and_typed_missing_cache_stop(tmp_path: Path) ->
     loaded = load_complete_cached_internal_test_bundles(pairs, cache=cache)
 
     assert loaded == expected
+    complete_probe = probe_cached_internal_test_bundles(pairs, cache=cache)
+    assert complete_probe.present_count == 600
+    assert complete_probe.missing_count == 0
+    assert complete_probe.bundles == expected
     assert model.predictions == 600
     missing_tensor = next(tmp_path.glob("*.safetensors"))
     missing_tensor.with_suffix(".json").unlink()
     missing_tensor.unlink()
     assert load_complete_cached_internal_test_bundles(pairs, cache=cache) is None
+    incomplete_probe = probe_cached_internal_test_bundles(pairs, cache=cache)
+    assert incomplete_probe.present_count == 599
+    assert incomplete_probe.missing_count == 1
+    assert incomplete_probe.bundles is None
     with pytest.raises(IncompleteInternalTestPredictionCache, match="incomplete"):
         require_complete_cached_internal_test_bundles(pairs, cache=cache)
 
