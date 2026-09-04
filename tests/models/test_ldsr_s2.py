@@ -314,6 +314,20 @@ def test_provenance_is_complete_scalar_and_normalizes_cuda_device() -> None:
     )
 
 
+def test_provenance_normalizes_torch_version_string_subclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TorchVersionLike(str):
+        pass
+
+    monkeypatch.setattr(ldsr_s2.torch, "__version__", TorchVersionLike("2.12.1+cu130"))
+
+    torch_version = LDSRS2X4(FakeBackend(), device="cpu").provenance()["torch_version"]
+
+    assert type(torch_version) is str
+    assert torch_version == "2.12.1+cu130"
+
+
 @pytest.mark.parametrize(
     "field",
     [

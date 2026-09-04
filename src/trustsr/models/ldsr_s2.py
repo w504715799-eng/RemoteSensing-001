@@ -138,7 +138,7 @@ class LDSRS2X4:
             "scale": self.scale,
             "implementation_schema_version": 1,
             "opensr_model_version": OPENSR_MODEL_VERSION,
-            "torch_version": torch.__version__,
+            "torch_version": str(torch.__version__),
             "cuda_runtime": torch.version.cuda,
             "checkpoint_name": CHECKPOINT_NAME,
             "checkpoint_url": CHECKPOINT_URL,
