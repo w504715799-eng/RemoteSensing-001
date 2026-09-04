@@ -41,6 +41,18 @@ def test_ignore_rules_keep_pinned_metadata_addable() -> None:
     assert _is_ignored(repo_root, "artifacts/cache/predictions/result.json")
     assert _is_ignored(repo_root, "artifacts/phase1/result.json")
     assert _is_ignored(repo_root, "artifacts/remote-phase1b/result.json")
+    assert not _is_ignored(
+        repo_root, "artifacts/phase2b3b/sen2naipv2-calibration-conformal-v1.json"
+    )
+    assert not _is_ignored(
+        repo_root,
+        "artifacts/phase2b3b/sen2naipv2-calibration-conformal-cache-audit-v1.json",
+    )
+    assert not _is_ignored(
+        repo_root,
+        "artifacts/phase2b3b/sen2naipv2-calibration-conformal-acceptance-v1.json",
+    )
+    assert _is_ignored(repo_root, "artifacts/phase2b3b/prediction-cache.bin")
 
 
 def test_policy_rejects_a_tracked_taco_file(tmp_path: Path) -> None:

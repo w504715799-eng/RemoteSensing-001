@@ -23,6 +23,11 @@ __pycache__/
 !/artifacts/phase2b3a/sen2naipv2-development-score-audit-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json
 !/artifacts/phase2b3a/sen2naipv2-development-score-acceptance-v1.json
+!/artifacts/phase2b3b/
+/artifacts/phase2b3b/*
+!/artifacts/phase2b3b/sen2naipv2-calibration-conformal-v1.json
+!/artifacts/phase2b3b/sen2naipv2-calibration-conformal-cache-audit-v1.json
+!/artifacts/phase2b3b/sen2naipv2-calibration-conformal-acceptance-v1.json
 /models/
 /checkpoints/
 *.ckpt
