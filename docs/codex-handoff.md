@@ -1,4 +1,4 @@
-# Codex handoff: Phase 2B3-B completed calibration
+# Codex handoff: Phase 2B3-C local implementation paused during Task 9
 
 Date: 2026-09-04 (Asia/Shanghai)
 
@@ -6,13 +6,143 @@ Date: 2026-09-04 (Asia/Shanghai)
 
 - Integration branch: `main`; local Git is authoritative. Cloud code is disposable and must never
   be merged back.
+- Last complete Phase 2B3-C implementation checkpoint:
+  `abffa93` (`feat: add phase2b3c evaluation workflow`).
+- The working tree is intentionally dirty because the user paused the session during Task 9.
+  Do not discard, reset, or overwrite the six uncommitted Task 9 source/test files listed below.
 - Phase 2B3-B Git-safe evidence publication commit:
   `f8f49a820d22b7dea2e003736ee465f9d7788f7d`.
-- The completion-handoff commit is necessarily a child of that publication. The next terminal must
-  use the clean attached `main` containing this document and treat its own `git rev-parse HEAD` as
-  the active checkpoint.
-- Do not infer readiness from a branch name or this document. Resume only from a clean, attached
-  commit and rerun the scoped gates below.
+- Work directly in the current attached `main`. Do not create a branch or worktree. This repository
+  must have only one code-writing session; close the old session before a new terminal writes.
+- Do not infer readiness from a branch name or this document. On resume, first confirm
+  `git status --short`, `git branch --show-current`, and `git log -1 --oneline`; preserve the dirty
+  Task 9 files and continue from their actual bytes.
+
+## Active Phase 2B3-C state at pause
+
+The governing documents are:
+
+- [Phase 2B3-C one-time internal-test design](superpowers/specs/2026-09-04-phase2b3c-one-time-internal-test-design.md);
+- [Phase 2B3-C implementation plan](superpowers/plans/2026-09-04-phase2b3c-one-time-internal-test.md).
+
+The design and plan are committed at `1ae7bd5` and `1c73c2d`. The approved scientific parameters
+remain frozen at `alpha=0.05` and `minimum_coverage=0.10`; the accepted Phase 2B3-B threshold is
+`7.970395366024563e-06`. No scientific or execution override may be introduced.
+
+Completed local CPU checkpoints, in order:
+
+| Commit | Scope |
+|---|---|
+| `c2d2f0b` | Phase 2B3-C evaluation statistics |
+| `ca9b54a` | frozen Phase 2B3-B evidence verification |
+| `c542c7d` | strict `internal_test` metadata and pixel boundary |
+| `1d11160` | reviewed permit and append-only one-time access ledger |
+| `906ee21` | frozen manifest-order statistics correction |
+| `213d686` | K5 prediction, score/risk, metrics, and cache audit computation |
+| `7657c39` | result/runtime/replay and atomic six-file external bundle |
+| `4b578e9` | metadata-only preflight and independent cache-computation replay |
+| `739cb94` | exact 600-entry cache completeness probe |
+| `abffa93` | formal evaluate/replay workflow and `trustsr-phase2b3c` CLI |
+
+Task 8 is complete. Its focused test run passed all 26 tests:
+
+```bash
+uv run pytest -q tests/evaluation/test_phase2b3c_workflow.py \
+  tests/cli/test_phase2b3c.py
+```
+
+Ruff, `compileall`, all four `trustsr-phase2b3c` help surfaces, and `git diff --check` also passed
+before commit `abffa93`. The workflow now has explicit regression coverage for complete-cache CPU
+operation, exact missing-cache counts before model construction, separately authorized generation,
+`caches_complete` resume, storage confirmation, optional-permit metadata preflight, interruptions
+on both sides of pixel access, no partial metrics, and inference-free replay.
+
+No real `internal_test` image, prediction cache, score, risk, metric, or aggregate has been read.
+No real Phase 2B3-C preflight/evaluate/replay command has run. No model was constructed and no GPU
+or remote server was accessed during Phase 2B3-C implementation.
+
+## Dirty Task 9 work that must be preserved
+
+The user paused after the initial implementation and partial testing of Task 9. These paths are
+intentionally uncommitted:
+
+```text
+M  pyproject.toml
+?? src/trustsr/cli/phase2b3c_verify.py
+?? src/trustsr/evaluation/phase2b3c_acceptance.py
+?? src/trustsr/evaluation/phase2b3c_bundle_verify.py
+?? tests/cli/test_phase2b3c_verify.py
+?? tests/evaluation/test_phase2b3c_acceptance.py
+?? tests/evaluation/test_phase2b3c_bundle_verify.py
+```
+
+The current draft provides:
+
+- a metadata-only candidate-bundle receipt and verifier intended to bind all six bundle files to
+  the reviewed permit, `bundle_complete` ledger, frozen evidence, exact membership, local runtime,
+  model identity, and producer revision;
+- an opaque acceptance capability requiring exact metadata and independent computation receipts;
+- preservation of all three preregistered decisions: `confirmed`,
+  `empirically_met_but_inconclusive`, and `failed`;
+- a three-result-file publication transaction inside the preexisting `artifacts/phase2b3c`
+  permit directory, plus an independent verifier orchestration and terminal `accepted` ledger
+  transition; and
+- a narrow `trustsr-phase2b3c-verify` CLI entry in `pyproject.toml` with no model, scientific,
+  sample, seed, device, or worker override.
+
+Testing status at the exact pause:
+
+- the first minimal Task 9 run passed 12 tests after the three modules were created;
+- `tests/evaluation/test_phase2b3c_acceptance.py` then passed 12 substantive tests;
+- the combined substantive bundle/acceptance run reached 21 passes and one test-only `NameError`;
+  that variable name was corrected immediately afterward, but the command was **not rerun**;
+- Ruff initially reported four line-length findings in the new acceptance module; those lines were
+  reformatted, but Ruff was **not rerun** after the substantive test additions;
+- no Task 9 `compileall`, CLI help, `git diff --check`, or commit has been completed.
+
+Treat all Task 9 code as an in-progress draft, not as verified or accepted. On resume, begin with:
+
+```bash
+uv run pytest -q \
+  tests/evaluation/test_phase2b3c_bundle_verify.py \
+  tests/evaluation/test_phase2b3c_acceptance.py \
+  tests/cli/test_phase2b3c_verify.py
+uv run ruff check \
+  src/trustsr/evaluation/phase2b3c_bundle_verify.py \
+  src/trustsr/evaluation/phase2b3c_acceptance.py \
+  src/trustsr/cli/phase2b3c_verify.py \
+  tests/evaluation/test_phase2b3c_bundle_verify.py \
+  tests/evaluation/test_phase2b3c_acceptance.py \
+  tests/cli/test_phase2b3c_verify.py
+```
+
+Before committing Task 9, review and close these known gaps:
+
+- add injected orchestration tests proving the verifier reacquires the formal lock, rejects the
+  producer bundle before authority/pixel reads, requires `bundle_complete`, never constructs a
+  model, uses a complete exact K5 cache, publishes before advancing to `accepted`, and does not
+  advance the ledger if publication fails;
+- add or strengthen collision, preexisting-partial, symlink, concurrent-race, and rollback tests.
+  The permit must never be removed, replaced, rewritten, or included in rollback;
+- review the publication algorithm carefully. Because the reviewed permit already occupies the
+  final directory, the draft links three staged files and rolls back on failure; this gives an
+  all-or-clean transaction under its lock but not a single POSIX directory-rename visibility
+  point. Reconcile that limitation explicitly with the design before claiming atomic publication;
+- harden rollback against adversarial replacement by comparing descriptor/inode identity rather
+  than deleting a same-byte destination, and avoid any unsafe path-following race;
+- decide whether the private `_metadata_authority` shared by bundle verification and acceptance
+  should become a reviewed public capability, and review its preliminary permit read before the
+  authoritative descriptor-hardened permit verifier;
+- make publication revalidation independently check every acceptance field and cross-binding,
+  including target, decision, implementation revisions, permit, ledger, and all bundle digests;
+- add explicit tests for forged receipt instances and byte-identical replay, plus a real synthetic
+  independent computation receipt rather than relying only on private test constructors; and
+- inspect type assumptions around nested JSON mappings before static checks.
+
+After Task 9 passes and is committed, complete plan Tasks 10 and 11: Phase 2B3-C artifact/leak
+policy, local-data policy and `.gitignore`, full synthetic end-to-end coverage, runbook/handoff
+updates, scoped integrated tests, Ruff, `compileall`, every CLI help surface, `git diff --check`,
+and a clean attached `main`. Only then reach the dedicated real-data authorization gate in Task 12.
 
 ## Frozen Phase 2B3-A baseline
 
@@ -232,23 +362,34 @@ Continue to enforce:
 
 ## GPU and cloud status
 
-No GPU or cloud server is needed for completed Phase 2B3-B or for the next local design step. The
-server was verified idle after publication and may remain off. Do not restart it merely to repeat a
-successful formal run.
+No GPU or cloud server is needed for the remaining local Phase 2B3-C Tasks 9-11. The server may
+remain off. Do not connect merely to inspect caches: the exact K5 cache probe is itself protected
+`internal_test` access and may run only after the dedicated Task 12 authorization and reviewed
+permit exist.
+
+If an authorized real evaluation later reports any of the exact 600 prediction entries missing,
+stop before model construction and tell the user GPU is required. Remote execution must use the
+server's existing base interpreter (`/opt/conda/bin/python`), never `uv`, `.venv`, environment
+creation, or dependency mutation. If all 600 entries verify, complete evaluate/replay/verification
+on CPU and do not start LDSR or request GPU.
 
 Cloud-side code, logs, tensors, caches, models, paths, endpoints, and credentials must never enter
 Git or become a merge source.
 
 ## Next local work
 
-Phase 2B3-C remains out of scope. Its design may consume only the frozen calibration payload in the
-accepted Phase 2B3-B publication. Write and review a separate Phase 2B3-C specification, then obtain
-explicit approval before any one-time `internal_test` access. Do not use the observed B result to
-retune alpha, minimum coverage, score, seeds, risk window, or threshold.
+Resume the dirty Task 9 draft exactly as described above. Do not start Task 10 until independent
+acceptance/publication and verifier CLI tests pass and Task 9 is committed. Do not start Task 12 or
+run real preflight/evaluate/replay/verify commands until Tasks 9-11 and all local gates are complete.
+
+The user's standing instruction to proceed with recommended local steps is not a substitute for the
+design's dedicated, one-time Phase 2B3-C real-data authorization. At Task 12, stop and request that
+specific authorization before creating the reviewed permit or accessing any real `internal_test`
+pixel or cache. Parameter changes remain forbidden after observing any holdout information.
 
 ## Verification at handoff
 
-The final local integrated run covered:
+The historical completed Phase 2B3-B integrated run covered:
 
 ```bash
 uv run pytest -q \
@@ -281,18 +422,30 @@ git status --short --branch
 git rev-parse HEAD
 ```
 
-The scoped pytest run passed at 100%. Ruff, `compileall`, all five CLI help checks, tracked-data
+That scoped pytest run passed at 100%. Ruff, `compileall`, all five CLI help checks, tracked-data
 policy, canonical publication/digest checks, and `git diff --check` also passed. The formal command,
 explicit replay, independent copied-bundle verifier, local publication review, and post-commit
 three-file digest checks all passed before this handoff update.
 
+For Phase 2B3-C, only Tasks 1-8 have completed their local checkpoints. Task 8's latest verified
+focused gate was 26 passing tests plus Ruff, compile, CLI help, and diff checks. Task 9 is dirty and
+partially tested as recorded above. Do not describe the Phase 2B3-C verifier, acceptance,
+publication, policy, integrated suite, or real evaluation as complete.
+
 ## Persistent stop conditions
 
-- Accept only the exact 120 frozen `calibration` records in canonical manifest order.
+- Preserve the completed Phase 2B3-B evidence and accept only the exact 120 frozen
+  `internal_test` records in their canonical post-manifest order for Phase 2B3-C.
 - Fail closed on any evidence, revision, membership, asset, tensor, model, policy, cache, replay,
-  runtime, canonical JSON, path, or digest mismatch.
-- Never use development or `internal_test` observations to tune Phase 2B3-B.
+  runtime, permit, ledger, canonical JSON, path, or digest mismatch.
+- Before dedicated authorization, do not open any `internal_test` image or cache, run a real C
+  command, construct LDSR, inspect CUDA for this phase, or write/advance the C access ledger.
+- After authorization, write `pixels_opened` before the first pixel or test-cache access and never
+  reset, delete, or replace ledger history. A crash after that event counts as consumed access.
+- Never use development, calibration, or `internal_test` observations to tune Phase 2B3-C.
 - Never lower alpha or minimum coverage to rescue an unfavorable result.
 - Never treat a structurally self-consistent receipt or transport-valid bundle as scientific
   authority without independent manifest, Git ancestry, and semantic verification.
 - Preserve the six published Phase 2B3-A evidence files as the immutable upstream baseline.
+- Publish whichever preregistered C decision is observed; only `confirmed` supports a confirmation
+  claim, while all three decisions permanently complete the one-time phase after acceptance.
