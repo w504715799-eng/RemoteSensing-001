@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 from torch.nn import functional as F
@@ -66,6 +66,7 @@ _CONTEXT_KEYS = {
     "phase2b3b_publication_commit",
     "phase2b3b_acceptance_sha256",
 }
+_COMPUTATION_VERIFIER_AUTHORITY = object()
 
 
 def _digest(value: object, label: str) -> str:
@@ -93,23 +94,29 @@ class VerifiedPhase2B3CComputation:
     runtime_sha256: str
     map_evidence_sha256: str
     phase_decision: str
+    _authority: object = field(repr=False, compare=False)
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         raise TypeError("computation receipts are created only by the verifier")
 
     @classmethod
     def _from_verified(cls, **values: object) -> VerifiedPhase2B3CComputation:
-        if set(values) != set(cls.__dataclass_fields__):
+        public_fields = set(cls.__dataclass_fields__) - {"_authority"}
+        if set(values) != public_fields:
             raise TypeError("computation receipt fields are invalid")
         receipt = object.__new__(cls)
-        for name in cls.__dataclass_fields__:
+        for name in public_fields:
             object.__setattr__(receipt, name, values[name])
+        object.__setattr__(
+            receipt, "_authority", _COMPUTATION_VERIFIER_AUTHORITY
+        )
         receipt.__post_init__()
         return receipt
 
     def __post_init__(self) -> None:
         if (
-            self.schema != SCHEMA
+            getattr(self, "_authority", None) is not _COMPUTATION_VERIFIER_AUTHORITY
+            or self.schema != SCHEMA
             or self.verification_scope != VERIFICATION_SCOPE
             or self.cache_computation_verified is not True
             or self.prediction_inference_verified is not False

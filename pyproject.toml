@@ -35,6 +35,7 @@ trustsr-phase2b3a-verify = "trustsr.cli.phase2b3a_verify:main"
 trustsr-phase2b3b = "trustsr.cli.phase2b3b:main"
 trustsr-phase2b3b-verify = "trustsr.cli.phase2b3b_verify:main"
 trustsr-phase2b3c = "trustsr.cli.phase2b3c:main"
+trustsr-phase2b3c-verify = "trustsr.cli.phase2b3c_verify:main"
 
 [dependency-groups]
 dev = [
