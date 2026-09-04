@@ -1,4 +1,4 @@
-"""Run the metadata-only Phase 2B3-B preflight gate."""
+"""Run fixed Phase 2B3-B preflight, calibration, and cache-only replay stages."""
 
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ from trustsr.evaluation.phase2b3b_revision import (
     Phase2B3BRevision,
     verify_phase2b3b_revision,
 )
+from trustsr.evaluation.phase2b3b_workflow import (
+    run_formal_calibration,
+    run_formal_calibration_replay,
+    validate_phase2b3b_storage,
+)
 from trustsr.jsonio import canonical_json
 
 
@@ -21,12 +26,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="stage", required=True)
-    preflight = subparsers.add_parser("preflight")
-    preflight.add_argument("--project-root", type=Path, required=True)
-    preflight.add_argument("--evidence-dir", type=Path, required=True)
-    preflight.add_argument("--storage-root", type=Path, required=True)
-    preflight.add_argument("--manifest", type=Path, required=True)
-    preflight.set_defaults(handler=run_preflight)
+    for name, handler in (
+        ("preflight", run_preflight),
+        ("calibration", run_calibration),
+        ("calibration-replay", run_calibration_replay),
+    ):
+        child = subparsers.add_parser(name)
+        child.add_argument("--project-root", type=Path, required=True)
+        child.add_argument("--evidence-dir", type=Path, required=True)
+        child.add_argument("--storage-root", type=Path, required=True)
+        child.add_argument("--manifest", type=Path, required=True)
+        child.add_argument("--confirm-persistent-storage", action="store_true")
+        if name == "calibration":
+            child.add_argument("--ldsr-model-dir", type=Path, required=True)
+        child.set_defaults(handler=handler)
     return parser
 
 
@@ -48,9 +61,12 @@ def run_preflight(args: argparse.Namespace) -> dict[str, object]:
     revision = verify_phase2b3b_revision(args.project_root)
     if not isinstance(revision, Phase2B3BRevision):
         raise TypeError("Phase 2B3-B revision gate returned an invalid identity")
+    storage = validate_phase2b3b_storage(
+        args.storage_root, args.confirm_persistent_storage
+    )
     preflight = load_phase2b3b_preflight(
         args.evidence_dir,
-        args.storage_root,
+        storage.root,
         args.manifest,
     )
     if not isinstance(preflight, Mapping):
@@ -70,6 +86,31 @@ def run_preflight(args: argparse.Namespace) -> dict[str, object]:
     if type(result) is not dict:
         raise AssertionError("Phase 2B3-B CLI output must be a JSON object")
     return result
+
+
+def run_calibration(args: argparse.Namespace) -> dict[str, object]:
+    """Run formal calibration with the preregistered operating point."""
+
+    return run_formal_calibration(
+        project_root=args.project_root,
+        evidence_dir=args.evidence_dir,
+        storage_root=args.storage_root,
+        manifest_path=args.manifest,
+        ldsr_model_dir=args.ldsr_model_dir,
+        confirmed_persistent_storage=args.confirm_persistent_storage,
+    ).as_dict()
+
+
+def run_calibration_replay(args: argparse.Namespace) -> dict[str, object]:
+    """Run formal cache-only replay without importing or constructing LDSR."""
+
+    return run_formal_calibration_replay(
+        project_root=args.project_root,
+        evidence_dir=args.evidence_dir,
+        storage_root=args.storage_root,
+        manifest_path=args.manifest,
+        confirmed_persistent_storage=args.confirm_persistent_storage,
+    ).as_dict()
 
 
 def main(argv: list[str] | None = None) -> int:

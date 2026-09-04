@@ -20,6 +20,7 @@ def _module() -> ModuleType:
 
 
 def _argv(tmp_path: Path) -> list[str]:
+    (tmp_path / "storage").mkdir(exist_ok=True)
     return [
         "preflight",
         "--project-root",
@@ -30,6 +31,7 @@ def _argv(tmp_path: Path) -> list[str]:
         str(tmp_path / "storage"),
         "--manifest",
         str(tmp_path / "manifest.jsonl"),
+        "--confirm-persistent-storage",
     ]
 
 
@@ -174,6 +176,7 @@ def test_parser_has_only_required_preflight_paths(tmp_path: Path) -> None:
         "evidence_dir",
         "storage_root",
         "manifest",
+        "confirm_persistent_storage",
         "handler",
     }
 
@@ -181,8 +184,7 @@ def test_parser_has_only_required_preflight_paths(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "arguments",
     (
-        ["calibration"],
-        ["replay"],
+        ["unknown-stage"],
         ["--alpha", "0.05"],
         ["--coverage", "0.10"],
         ["--score", "ldsr_variance_k5"],
@@ -196,7 +198,7 @@ def test_parser_rejects_other_stages_and_scientific_parameters(
     module = _module()
     argv = (
         arguments
-        if arguments[0] in {"calibration", "replay"}
+        if arguments[0] == "unknown-stage"
         else [*_argv(tmp_path), *arguments]
     )
 
@@ -227,8 +229,8 @@ def test_cli_help_exposes_only_preflight_and_path_arguments(
     assert top_help.value.code == 0
     top = capsys.readouterr().out
     assert "preflight" in top
-    assert "calibration" not in top
-    assert "replay" not in top
+    assert "calibration" in top
+    assert "calibration-replay" in top
 
     with pytest.raises(SystemExit) as child_help:
         module.main(["preflight", "--help"])
@@ -236,6 +238,7 @@ def test_cli_help_exposes_only_preflight_and_path_arguments(
     child = capsys.readouterr().out
     for option in ("--project-root", "--evidence-dir", "--storage-root", "--manifest"):
         assert option in child
+    assert "--confirm-persistent-storage" in child
     for forbidden in ("--alpha", "--coverage", "--score", "--seed", "--sample"):
         assert forbidden not in child
 
@@ -245,3 +248,22 @@ def test_pyproject_registers_only_the_phase2b3b_preflight_entrypoint() -> None:
 
     scripts = project["project"]["scripts"]
     assert scripts["trustsr-phase2b3b"] == "trustsr.cli.phase2b3b:main"
+
+
+def test_formal_parsers_have_fixed_operational_arguments(tmp_path: Path) -> None:
+    module = _module()
+    common = _argv(tmp_path)[1:]
+    model_dir = tmp_path / "model"
+
+    calibration = module.build_parser().parse_args(
+        ["calibration", *common, "--ldsr-model-dir", str(model_dir)]
+    )
+    replay = module.build_parser().parse_args(["calibration-replay", *common])
+
+    assert calibration.stage == "calibration"
+    assert calibration.ldsr_model_dir == model_dir
+    assert replay.stage == "calibration-replay"
+    assert "ldsr_model_dir" not in vars(replay)
+    for forbidden in ("alpha", "coverage", "minimum_coverage", "seed", "score", "sample"):
+        assert forbidden not in vars(calibration)
+        assert forbidden not in vars(replay)
