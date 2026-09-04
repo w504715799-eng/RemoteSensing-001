@@ -188,7 +188,7 @@ def _ensure_output_parents(paths: Phase2B3BStoragePaths) -> None:
 
 
 @contextmanager
-def _formal_lock(paths: Phase2B3BStoragePaths) -> Iterable[None]:
+def phase2b3b_formal_lock(paths: Phase2B3BStoragePaths) -> Iterable[None]:
     _safe_derived_path(paths.root, paths.lock_path)
     paths.lock_path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
@@ -308,7 +308,7 @@ def run_formal_calibration(
     """Run the sole formal K5 calibration and immediate inference-free replay."""
 
     paths = validate_phase2b3b_storage(storage_root, confirmed_persistent_storage)
-    with _formal_lock(paths):
+    with phase2b3b_formal_lock(paths):
         _ensure_output_parents(paths)
         revision, preflight, records, pairs = _load_authoritative_inputs(
             project_root=project_root,
@@ -390,7 +390,7 @@ def run_formal_calibration_replay(
     """Rebuild committed calibration evidence from caches without constructing LDSR."""
 
     paths = validate_phase2b3b_storage(storage_root, confirmed_persistent_storage)
-    with _formal_lock(paths):
+    with phase2b3b_formal_lock(paths):
         _ensure_output_parents(paths)
         current_revision, preflight, records, pairs = _load_authoritative_inputs(
             project_root=project_root,
