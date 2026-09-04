@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import torch
+from safetensors import SafetensorError
+from safetensors.torch import load as load_safetensors
 
 from trustsr.artifacts.predictions import (
     PredictionCache,
@@ -53,6 +57,7 @@ _CONTEXT_KEYS = (
 )
 _CACHE_KEY = re.compile(r"[0-9a-f]{64}")
 _MAX_CACHE_METADATA_BYTES = 128 * 1024
+_MAX_SAFETENSORS_OVERHEAD_BYTES = 1024 * 1024
 
 
 def build_cache_provenance(
@@ -337,15 +342,13 @@ def _cached_candidate(
     pairs_by_id: Mapping[str, LoadedCrosssensorPair],
     cache: PredictionCache,
 ) -> CachedCalibrationPrediction | None:
-    if (
-        metadata_path.is_symlink()
-        or not metadata_path.is_file()
-        or _CACHE_KEY.fullmatch(metadata_path.stem) is None
-    ):
+    if _CACHE_KEY.fullmatch(metadata_path.stem) is None:
         raise ValueError("calibration cache metadata path is unsafe")
-    payload = metadata_path.read_bytes()
-    if len(payload) > _MAX_CACHE_METADATA_BYTES:
-        raise ValueError("calibration cache metadata exceeds the size limit")
+    payload = _read_bounded_regular(
+        metadata_path,
+        maximum_bytes=_MAX_CACHE_METADATA_BYTES,
+        label="calibration cache metadata",
+    )
     try:
         metadata = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -409,9 +412,31 @@ def _cached_candidate(
     )
     if identity != expected_identity:
         return None
-    prediction = cache.get(identity)
-    if prediction is None:
-        raise ValueError("calibration cache metadata has no committed prediction")
+    expected_tensor_bytes = (
+        4 * identity.lr_shape[1] * SCALE * identity.lr_shape[2] * SCALE * 4
+    )
+    tensor_path = metadata_path.with_suffix(".safetensors")
+    tensor_payload = _read_bounded_regular(
+        tensor_path,
+        maximum_bytes=expected_tensor_bytes + _MAX_SAFETENSORS_OVERHEAD_BYTES,
+        label="calibration cache tensor",
+    )
+    try:
+        tensors = load_safetensors(tensor_payload)
+        if set(tensors) != {"prediction"}:
+            raise ValueError("calibration cache tensor keys are invalid")
+        prediction = PredictionCache._validate_prediction(
+            tensors["prediction"], identity.lr_shape
+        )
+    except (RuntimeError, SafetensorError, ValueError) as exc:
+        raise ValueError("calibration cache tensor is invalid") from exc
+    expected_prediction = {
+        "shape": list(prediction.shape),
+        "dtype": str(prediction.dtype),
+        "sha256": tensor_sha256(prediction),
+    }
+    if metadata["prediction"] != expected_prediction:
+        raise ValueError("calibration cache tensor metadata differs from its bytes")
     return CachedCalibrationPrediction(
         model_name=MODEL_NAME,
         seed=seed,
@@ -419,6 +444,64 @@ def _cached_candidate(
         prediction_sha256=tensor_sha256(prediction),
         tensor=prediction,
     )
+
+
+def _read_bounded_regular(
+    path: Path, *, maximum_bytes: int, label: str
+) -> bytes:
+    if (
+        not isinstance(path, Path)
+        or type(maximum_bytes) is not int
+        or maximum_bytes < 0
+        or type(label) is not str
+        or not label
+    ):
+        raise TypeError("bounded cache read arguments are invalid")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"{label} is missing or unsafe") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > maximum_bytes:
+            raise ValueError(f"{label} is not a bounded regular file")
+        chunks: list[bytes] = []
+        remaining = maximum_bytes + 1
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if (
+            before_identity != after_identity
+            or len(payload) != before.st_size
+            or len(payload) > maximum_bytes
+        ):
+            raise ValueError(f"{label} changed during read or exceeds the size limit")
+        return payload
+    finally:
+        os.close(descriptor)
 
 
 def load_complete_cached_calibration_bundles(

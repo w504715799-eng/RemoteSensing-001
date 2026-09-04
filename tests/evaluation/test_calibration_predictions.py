@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from trustsr.data.crosssensor_pairs import (
     LoadedCrosssensorPair,
     RadiometricSaturation,
 )
+from trustsr.evaluation import calibration_predictions
 from trustsr.evaluation.calibration_predictions import (
     A2_RESULT_SHA256,
     EXPERIMENT_SCHEMA,
@@ -143,6 +145,87 @@ def _generate(
     return load_or_generate_calibration_bundle(
         pair or _pair(), ldsr=ldsr or _FakeLDSR(), cache=cache or PredictionCache(tmp_path)
     )
+
+
+def test_bounded_cache_reader_rejects_oversized_file_before_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / f"{'a' * 64}.json"
+    path.write_bytes(b"x" * 17)
+    reads: list[int] = []
+    real_read = os.read
+
+    def tracked_read(descriptor: int, count: int) -> bytes:
+        reads.append(count)
+        return real_read(descriptor, count)
+
+    monkeypatch.setattr(calibration_predictions.os, "read", tracked_read)
+
+    with pytest.raises(ValueError, match="bounded regular file"):
+        calibration_predictions._read_bounded_regular(
+            path, maximum_bytes=16, label="cache metadata"
+        )
+
+    assert reads == []
+
+
+def test_bounded_cache_reader_rejects_fifo_without_blocking(tmp_path: Path) -> None:
+    path = tmp_path / f"{'b' * 64}.json"
+    os.mkfifo(path)
+
+    with pytest.raises(ValueError, match="bounded regular file"):
+        calibration_predictions._read_bounded_regular(
+            path, maximum_bytes=128, label="cache metadata"
+        )
+
+
+def test_bounded_cache_reader_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "outside.json"
+    target.write_bytes(b"{}")
+    path = tmp_path / f"{'c' * 64}.json"
+    path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="missing or unsafe"):
+        calibration_predictions._read_bounded_regular(
+            path, maximum_bytes=128, label="cache metadata"
+        )
+
+
+def test_bounded_cache_reader_rejects_file_changed_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / f"{'d' * 64}.json"
+    path.write_bytes(b"original")
+    real_read = os.read
+    changed = False
+
+    def changing_read(descriptor: int, count: int) -> bytes:
+        nonlocal changed
+        if not changed:
+            changed = True
+            path.write_bytes(b"")
+        return real_read(descriptor, count)
+
+    monkeypatch.setattr(calibration_predictions.os, "read", changing_read)
+
+    with pytest.raises(ValueError, match="changed during read"):
+        calibration_predictions._read_bounded_regular(
+            path, maximum_bytes=128, label="cache metadata"
+        )
+
+
+def test_complete_cache_probe_wraps_malformed_safetensors(
+    tmp_path: Path,
+) -> None:
+    pair = _pair()
+    cache = PredictionCache(tmp_path)
+    _generate(tmp_path, pair=pair, cache=cache)
+    next(tmp_path.glob("*.safetensors")).write_bytes(b"not-safetensors")
+
+    with pytest.raises(ValueError, match="cache tensor is invalid"):
+        calibration_predictions.load_complete_cached_calibration_bundles(
+            (pair,), cache=cache
+        )
 
 
 def test_fixed_k5_bundle_populates_then_reuses_real_cache_without_inference(
