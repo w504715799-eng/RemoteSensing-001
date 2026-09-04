@@ -350,7 +350,7 @@ def _fit(sample_ids: tuple[str, ...], *, all_abstain: bool = False) -> Calibrati
         )
     ).hexdigest()
     return CalibrationFit(
-        alpha=0.02,
+        alpha=0.05,
         minimum_coverage=0.10,
         threshold=None if all_abstain else 0.1,
         all_abstain=all_abstain,
@@ -430,7 +430,7 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
         "window": 9,
         "upper_bound": 1.0,
     }
-    assert first["target"] == {"alpha": 0.02, "minimum_coverage": 0.10}
+    assert first["target"] == {"alpha": 0.05, "minimum_coverage": 0.10}
     assert first["threshold"] == 0.1
     assert first["phase_decision"] == "freeze_calibration"
     assert first["counts"] == {
@@ -477,6 +477,21 @@ def test_composes_minimal_canonical_result_with_cross_layer_sample_binding() -> 
     assert first is not second
     first["samples"][0]["radiometric_saturation"]["lr"]["clipped_high_by_band"][0] = 99
     assert second["samples"][0]["radiometric_saturation"]["lr"]["clipped_high_by_band"][0] == 0
+
+
+def test_result_composer_rejects_a_nonapproved_operating_point() -> None:
+    sample_ids = _sample_ids()
+    fit = replace(_fit(sample_ids), alpha=0.03)
+
+    with pytest.raises(ValueError, match="approved Phase 2B3-B"):
+        phase2b3b_result.build_phase2b3b_result(
+            _preflight(),
+            _input_receipt(sample_ids),
+            fit,
+            _audit(sample_ids),
+            _radiometry(sample_ids),
+            _revision(),
+        )
 
 
 def test_all_abstain_result_keeps_null_threshold_and_single_stop_decision() -> None:

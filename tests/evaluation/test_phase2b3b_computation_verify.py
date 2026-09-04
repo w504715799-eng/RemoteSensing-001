@@ -98,7 +98,7 @@ def valid_case(tmp_path_factory: pytest.TempPathFactory) -> _Case:
     radiometry = build_calibration_radiometry(pairs)
     revision = result_fixtures._revision()
     replayed = replay_calibration_caches(audit, pairs, prediction_cache, score_cache)
-    fit = fit_calibration_maps(replayed.maps, alpha=0.5, minimum_coverage=0.1)
+    fit = fit_calibration_maps(replayed.maps, alpha=0.05, minimum_coverage=0.1)
     result = build_phase2b3b_result(
         preflight,
         input_receipt,
@@ -208,7 +208,7 @@ def test_rejects_self_consistent_forged_score_cache_and_audit(
             forged_maps[index] = dataclass_replace(maps, score=forged_score)
     forged_audit = build_calibration_cache_audit(replayed.bundles, tuple(forged_maps))
     forged_fit = fit_calibration_maps(
-        tuple(forged_maps), alpha=0.5, minimum_coverage=0.1
+        tuple(forged_maps), alpha=0.05, minimum_coverage=0.1
     )
     forged_result = build_phase2b3b_result(
         valid_case.preflight,
@@ -249,7 +249,8 @@ def test_rejects_tampered_result_calculation_fields(valid_case: _Case, fault: st
     else:
         result["coverage"] = 0.5
 
-    with pytest.raises(ValueError, match="recomputed.*result"):
+    message = "approved Phase 2B3-B" if fault == "alpha" else "recomputed.*result"
+    with pytest.raises(ValueError, match=message):
         _verify(valid_case, result_bytes=canonical_json(result))
 
 

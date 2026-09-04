@@ -32,6 +32,7 @@ from trustsr.evaluation.calibration_input_receipt import (
 from trustsr.evaluation.calibration_radiometry_verify import (
     verify_calibration_radiometry,
 )
+from trustsr.evaluation.phase2b3b_policy import require_approved_operating_point
 from trustsr.evaluation.phase2b3b_preflight import (
     load_phase2b3b_preflight,
     ordered_sample_ids_sha256,
@@ -312,6 +313,7 @@ def _validate_summary(result: dict[str, object]) -> None:
     minimum_coverage = _number(
         target["minimum_coverage"], "minimum coverage", lower=0.0, lower_open=False
     )
+    alpha, minimum_coverage = require_approved_operating_point(alpha, minimum_coverage)
     counts = _dict(
         result["counts"],
         {"calibration", "predictions", "scores", "trusted_pixels", "total_pixels"},

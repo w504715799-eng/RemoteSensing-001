@@ -20,6 +20,7 @@ from trustsr.evaluation.calibration_input_receipt import (
     verify_calibration_input_receipt,
 )
 from trustsr.evaluation.calibration_radiometry import build_calibration_radiometry
+from trustsr.evaluation.phase2b3b_policy import require_approved_operating_point
 from trustsr.evaluation.phase2b3b_result import build_phase2b3b_result
 from trustsr.evaluation.phase2b3b_revision import Phase2B3BRevision
 from trustsr.jsonio import canonical_json
@@ -183,7 +184,7 @@ def _target(result: dict[str, object]) -> tuple[float, float]:
     minimum_coverage = target["minimum_coverage"]
     if type(alpha) is not float or type(minimum_coverage) is not float:
         raise TypeError("committed result target parameters must be exact floats")
-    return alpha, minimum_coverage
+    return require_approved_operating_point(alpha, minimum_coverage)
 
 
 def verify_phase2b3b_computation(

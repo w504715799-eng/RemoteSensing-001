@@ -197,6 +197,16 @@ def test_rejects_single_layer_result_attacks(
         _verify(monkeypatch, tmp_path, valid_case, result=result)
 
 
+def test_rejects_an_otherwise_consistent_nonapproved_target(
+    valid_case: _Case, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = deepcopy(valid_case.result)
+    result["target"]["alpha"] = 0.03
+
+    with pytest.raises(ValueError, match="approved Phase 2B3-B"):
+        _verify(monkeypatch, tmp_path, valid_case, result=result)
+
+
 def test_rejects_fully_self_consistent_internal_test_result_against_authority(
     valid_case: _Case, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -28,6 +28,7 @@ from trustsr.evaluation.phase2b3b_evidence import (
     PUBLICATION_COMMIT,
     PUBLISHED_EVIDENCE_SHA256S,
 )
+from trustsr.evaluation.phase2b3b_policy import require_approved_operating_point
 from trustsr.evaluation.phase2b3b_preflight import ordered_sample_ids_sha256
 from trustsr.evaluation.phase2b3b_revision import Phase2B3BRevision
 from trustsr.jsonio import canonical_json
@@ -402,6 +403,7 @@ def _validate_fit(fit: CalibrationFit) -> CalibrationFit:
         CalibrationFit.__post_init__(fit)
     except (AttributeError, TypeError, ValueError) as exc:
         raise ValueError("calibration fit public contract is invalid") from exc
+    require_approved_operating_point(fit.alpha, fit.minimum_coverage)
     return fit
 
 
