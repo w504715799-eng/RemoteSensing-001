@@ -200,9 +200,21 @@ def _reject_non_json_or_leaks(value: object, *, key: str = "result") -> None:
         raise TypeError(f"{key} must contain exact JSON built-in values")
 
 
+def _json_native(value: object) -> object:
+    if isinstance(value, Mapping):
+        if any(type(key) is not str for key in value):
+            raise TypeError("trusted JSON mapping keys must be built-in strings")
+        return {key: _json_native(item) for key, item in value.items()}
+    if type(value) in (list, tuple):
+        return [_json_native(item) for item in value]
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    raise TypeError("trusted JSON data contains a non-JSON value")
+
+
 def _loaded_json(value: object, label: str) -> dict[str, object]:
     try:
-        normalized = json.loads(canonical_json(value))
+        normalized = json.loads(canonical_json(_json_native(value)))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"trusted {label} is not canonical JSON data") from exc
     if type(normalized) is not dict:

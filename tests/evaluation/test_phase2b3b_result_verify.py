@@ -5,11 +5,30 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import test_phase2b3b_result as result_fixtures
 
 from trustsr.evaluation import phase2b3b_result, phase2b3b_result_verify
+
+
+def test_loaded_json_normalizes_frozen_preflight_data() -> None:
+    frozen = MappingProxyType(
+        {
+            "schema": "trustsr.phase2b3b-preflight.v1",
+            "nested": MappingProxyType({"seeds": (3407, 3408, 3409, 3410, 3411)}),
+        }
+    )
+
+    normalized = phase2b3b_result_verify._loaded_json(frozen, "preflight")
+
+    assert normalized == {
+        "schema": "trustsr.phase2b3b-preflight.v1",
+        "nested": {"seeds": [3407, 3408, 3409, 3410, 3411]},
+    }
+    assert type(normalized) is dict
+    assert type(normalized["nested"]) is dict
 
 
 @dataclass(frozen=True)
