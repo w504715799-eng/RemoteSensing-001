@@ -1,16 +1,16 @@
 # Codex handoff: Phase 2B3-B local CPU engineering
 
-Date: 2026-09-03 (Asia/Shanghai)
+Date: 2026-09-04 (Asia/Shanghai)
 
 ## Repository checkpoint
 
 - Integration branch: `main`; local Git is authoritative. Cloud code is disposable and must never
   be merged back.
-- Code checkpoint immediately before this handoff-document update:
-  `a7ff6a044245c7ab35e290b364c77fcd460573a1`.
-- The handoff commit is necessarily a child of that code checkpoint. Runtime wiring was subsequently
-  integrated as `d8b3cac`; the main coordinator must record the final integrated `main` SHA in the
-  final report. This document does not identify its own commit as a code checkpoint.
+- Latest verified local checkpoint before recording scientific-parameter approval:
+  `0b60f506a4b979974819f60162064206beec3781`.
+- The approval-handoff commit is necessarily a child of that checkpoint. The next terminal must use
+  the clean attached `main` containing this document and treat its own `git rev-parse HEAD` as the
+  active checkpoint.
 - Do not infer readiness from a branch name or this document. Resume only from a clean, attached
   commit and rerun the scoped gates below.
 
@@ -54,7 +54,8 @@ and reproduction procedure remains in [the Phase 2B3-A cloud runbook](phase2b3a-
 
 The active design is
 [Phase 2B3-B: Calibration-only conformal threshold design](superpowers/specs/2026-09-03-phase2b3b-calibration-design.md).
-It remains a draft pending scientific-parameter approval.
+Its two scientific parameters were explicitly approved by the user on 2026-09-04, before any
+Phase 2B3-B calibration or `internal_test` pixel was read.
 
 At the code checkpoint, local CPU engineering and synthetic tests cover:
 
@@ -125,23 +126,46 @@ This verifier reports metadata consistency only and always emits
 `calibration-replay` command and no acceptance/publication command. Library functions exercised
 with synthetic inputs do not authorize a real run.
 
-## Unapproved scientific parameters and hard stop
+## Approved scientific parameters and interpretation
 
-The design recommends, but the user has not approved:
+The user explicitly approved the following preregistered primary operating point on 2026-09-04:
 
 - `alpha = 0.05`;
 - minimum calibration pixel coverage `0.10` for permission to design Phase 2B3-C.
 
-The synthetic Phase 2A default `0.27` is prohibited. Neither value may be selected after observing
-calibration pixels, scores, risks, coverage, or the fitted threshold.
+The approval followed a read-only scientific review. `alpha=0.05` is an application-defined target
+for the expected ROI-level maximum local mean absolute RGBN reflectance risk under the conformal
+exchangeability assumptions. It is not a significance level, a 95% pixel guarantee, a data-driven
+optimum, or a Sentinel-2 radiometric-compliance claim. With 120 calibration ROIs and risk upper
+bound 1, the implemented finite-sample rule requires
+`(sum(worst_i) + 1) / 121 <= 0.05`, so the empirical mean of the 120 ROI worst risks must be at most
+approximately `0.04208` for a finite threshold.
 
-Until the user explicitly approves or replaces both values:
+The `0.10` value is a preregistered non-degeneracy and minimum-utility gate over aggregate trusted
+calibration pixels. It is not a conformal coverage guarantee, a per-ROI guarantee, a geographic
+representativeness guarantee, or a universal remote-sensing standard. A finite threshold below this
+coverage must produce `stop_insufficient_coverage`; neither value may be relaxed after observing the
+result. The synthetic Phase 2A default `0.27` remains prohibited for the formal run.
 
-- do not open real calibration pixel files;
-- do not construct or run the model;
-- do not use the GPU or cloud server;
-- do not generate real K5 calibration predictions or scores;
-- do not fit or publish a formal threshold, runtime bundle, replay, result, or acceptance record;
+Method and context sources:
+
+- Angelopoulos et al., *Conformal Risk Control*, ICLR 2024:
+  https://research.google/pubs/conformal-risk-control/
+- Adame et al., *Image Super-Resolution with Guarantees via Conformalized Generative Models*,
+  NeurIPS 2025: https://arxiv.org/abs/2502.09664
+- ESA/Copernicus Sentinel-2 radiometric requirements, used only as order-of-magnitude context:
+  https://sentiwiki.copernicus.eu/web/s2-mission
+- Aybar et al., *SEN2NAIP*, documenting cross-sensor harmonization and reference limitations:
+  https://doi.org/10.1038/s41597-024-04214-y
+
+Approval removes the scientific-parameter hard stop only. Before real calibration pixel loading or
+GPU inference, the fixed formal command, replay, acceptance, and independent-verification surfaces
+must still be implemented and locally verified. Continue to enforce:
+
+- do not expose `alpha` or minimum coverage as runtime override flags;
+- do not read calibration pixels until the formal local surfaces are ready;
+- do not start GPU/cloud work until the local readiness gates below pass and the user separately
+  authorizes starting the server;
 - do not inspect any `internal_test` pixels, caches, predictions, scores, risks, or metrics.
 
 ## GPU and cloud status
@@ -150,7 +174,7 @@ No GPU or cloud server is needed for the remaining local CPU implementation and 
 Keep the server off. Request the user's permission before starting it, and only when all of the
 following are true:
 
-1. `alpha` and minimum coverage have been explicitly approved;
+1. `alpha=0.05` and minimum coverage `0.10` remain fixed exactly as approved;
 2. the formal calibration, replay, acceptance, and independent verification surfaces are integrated
    and locally verified;
 3. the exact clean reviewed commit is ready for a disposable cloud checkout; and
@@ -161,9 +185,9 @@ Git or become a merge source.
 
 ## Next local work
 
-1. Obtain explicit approval or replacement of `alpha` and minimum coverage before opening real
-   calibration data or exposing any executable scientific path.
-2. Only after approval, finish and verify the fixed formal calibration, inference-free replay,
+1. Freeze `alpha=0.05` and minimum coverage `0.10` in the formal production, replay, result,
+   acceptance, and independent-verification paths; reject any other values.
+2. Finish and verify the fixed formal calibration, inference-free replay,
    acceptance, and publication command surfaces without scientific override flags.
 3. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
 4. Run calibration once, replay without inference, independently verify the copied bundle, review

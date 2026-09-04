@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03
 
-**Status:** Draft for scientific-parameter approval; engineering boundaries are frozen
+**Status:** Approved on 2026-09-04; scientific parameters and engineering boundaries are frozen
 
 **Upstream:**
 `docs/superpowers/specs/2026-09-01-phase2b3a-development-score-audit-design.md`
@@ -115,27 +115,31 @@ shown equivalent to the original definition on hand-calculated cases, ties, non-
 cross-ROI risk events, all-abstain inputs, and deterministic randomized small examples. It must not
 flatten pixels and treat them as independent calibration samples.
 
-## 5. Numerical decisions requiring approval
+## 5. Approved numerical decisions
 
 The approved roadmap and Phase 2B3-A specification intentionally did not choose a formal target
 `alpha` or a minimum useful coverage. These are scientific parameters, so the synthetic Phase 2A
 CLI default `0.27` is prohibited as a formal value.
 
-The recommended preregistration is:
+The preregistered primary operating point, explicitly approved by the user on 2026-09-04 before
+any calibration or `internal_test` pixel was read, is:
 
 - `alpha = 0.05`, interpreted as a five-percentage-point reflectance local-L1 ROI risk target;
 - minimum calibration pixel coverage `0.10` for permission to design Phase 2B3-C.
 
-This recommendation is intentionally simple, application-interpretable, and selected before any
+This operating point is intentionally simple, application-interpretable, and selected before any
 calibration pixel or score is read. Alternatives considered were `alpha=0.10` (more permissive but
 weaker hallucination control) and a grid of alphas (more descriptive but creates a calibration-set
 selection degree of freedom). A formal grid may be reported only in a later exploratory artifact;
 it cannot select the Phase 2B3-C threshold.
 
-Until both recommended values are explicitly approved or replaced, implementation may cover
-evidence validation, metadata isolation, exact conformal mathematics, schemas, synthetic tests,
-and command dry-runs. It must stop before real calibration pixel loading, GPU prediction, threshold
-fitting, or B acceptance publication.
+The approved values are author-defined scientific operating parameters, not a significance level,
+a 95% pixel guarantee, a data-driven optimum, a universal remote-sensing standard, or proof of
+Sentinel-2 radiometric compliance. They must be fixed in the formal production, replay, acceptance,
+and independent-verification paths without override flags. Approval removes only the numerical
+hard stop: real calibration pixel loading and GPU prediction still wait for complete locally
+verified command, replay, acceptance, and independent-verification surfaces plus separate cloud
+authorization.
 
 All-abstain is a statistically valid calibration result and must be published honestly, but it
 fails the minimum-coverage gate and stops before Phase 2B3-C. Any finite threshold with calibration
