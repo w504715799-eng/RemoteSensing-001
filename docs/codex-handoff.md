@@ -1,4 +1,4 @@
-# Codex handoff: Phase 2B3-B local CPU engineering
+# Codex handoff: Phase 2B3-B completed calibration
 
 Date: 2026-09-04 (Asia/Shanghai)
 
@@ -6,11 +6,11 @@ Date: 2026-09-04 (Asia/Shanghai)
 
 - Integration branch: `main`; local Git is authoritative. Cloud code is disposable and must never
   be merged back.
-- Latest verified local checkpoint before recording scientific-parameter approval:
-  `0b60f506a4b979974819f60162064206beec3781`.
-- The approval-handoff commit is necessarily a child of that checkpoint. The next terminal must use
-  the clean attached `main` containing this document and treat its own `git rev-parse HEAD` as the
-  active checkpoint.
+- Phase 2B3-B Git-safe evidence publication commit:
+  `f8f49a820d22b7dea2e003736ee465f9d7788f7d`.
+- The completion-handoff commit is necessarily a child of that publication. The next terminal must
+  use the clean attached `main` containing this document and treat its own `git rev-parse HEAD` as
+  the active checkpoint.
 - Do not infer readiness from a branch name or this document. Resume only from a clean, attached
   commit and rerun the scoped gates below.
 
@@ -50,14 +50,14 @@ The six immutable Git-safe evidence files are:
 Do not overwrite, relabel, or recompute these artifacts. The completed recovery, rerun, benchmark,
 and reproduction procedure remains in [the Phase 2B3-A cloud runbook](phase2b3a-cloud-runbook.md).
 
-## Current Phase 2B3-B boundary
+## Implemented Phase 2B3-B boundary
 
 The active design is
 [Phase 2B3-B: Calibration-only conformal threshold design](superpowers/specs/2026-09-03-phase2b3b-calibration-design.md).
 Its two scientific parameters were explicitly approved by the user on 2026-09-04, before any
 Phase 2B3-B calibration or `internal_test` pixel was read.
 
-At the code checkpoint, local CPU engineering and synthetic tests cover:
+Local CPU engineering, synthetic tests, and the completed formal workflow cover:
 
 - frozen Phase 2B3-A evidence validation and clean Git revision/ancestry gates;
 - complete-manifest validation, exact 120-member calibration selection, strict pair loading, and
@@ -157,8 +157,40 @@ atomically publishes the exact result, cache-audit, and acceptance JSON files un
 `artifacts/phase2b3b`. Only this complete path may emit `acceptance_authorized=true`.
 
 The exact operator sequence and stop conditions are in
-[the Phase 2B3-B calibration runbook](phase2b3b-calibration-runbook.md). Implementation and
-synthetic local tests do not authorize a real run by themselves.
+[the Phase 2B3-B calibration runbook](phase2b3b-calibration-runbook.md).
+
+## Completed formal calibration and publication
+
+The authorized formal calibration, explicit inference-free replay, copied-bundle independent
+verification, acceptance, and three-file publication completed on 2026-09-04. Only the 120 frozen
+`calibration` records were loaded. No `internal_test` pixel, cache, prediction, score, risk, or
+metric was accessed.
+
+Formal identities and results:
+
+- formal result producer revision: `2d17c141174c1062f8a056b491326487202a6deb`;
+- independent verifier revision: `aad2b7e1ea4ec6599db40015d1745c40312dd0af`;
+- result SHA-256: `5fe01daaaa27443d5289cc366eacbe1fb628492c25bab16fadd164d3a8eb3174`;
+- cache-audit SHA-256: `40aff8aaccb27719d958d42026d68d8efc0c7f79479e3bd99777053ee1d6399f`;
+- runtime-manifest SHA-256: `33ce35ba1065afa27f633a703c2e3c7bb4ce6438a1a4688e937b9ba76cad1a04`;
+- replay SHA-256: `203c3da04882c5dc538af799c38f24110341e792768edde51eaca413df028bf4`;
+- bundle-manifest SHA-256: `2b08366c1109bfa119eb205360a9127f9b3aeb8ce44ba5940dec76ee035ae31d`;
+- acceptance SHA-256: `ce7f1a91e9954235e289dfc6eececb67261ff57110caaf15fe6640a0fb3b69ab`;
+- three-file publication SHA-256: `f59d8589425e41d7a0bf3f9913c4db8f7d413a82c97305c882388f522389960f`.
+
+The observed result is `freeze_calibration`: threshold
+`7.970395366024563e-06`, aggregate calibration coverage `0.5832304954528809`, and risk bound
+`0.04999883134510526`. The explicit replay was byte-identical. The independent verifier emitted
+`acceptance_authorized=true` and `cache_computation_verified=true`; as designed, it did not claim
+to rerun LDSR inference.
+
+The only published Git artifacts are:
+
+| File | SHA-256 |
+|---|---|
+| `sen2naipv2-calibration-conformal-v1.json` | `5fe01daaaa27443d5289cc366eacbe1fb628492c25bab16fadd164d3a8eb3174` |
+| `sen2naipv2-calibration-conformal-cache-audit-v1.json` | `40aff8aaccb27719d958d42026d68d8efc0c7f79479e3bd99777053ee1d6399f` |
+| `sen2naipv2-calibration-conformal-acceptance-v1.json` | `ce7f1a91e9954235e289dfc6eececb67261ff57110caaf15fe6640a0fb3b69ab` |
 
 ## Approved scientific parameters and interpretation
 
@@ -192,49 +224,31 @@ Method and context sources:
 - Aybar et al., *SEN2NAIP*, documenting cross-sensor harmonization and reference limitations:
   https://doi.org/10.1038/s41597-024-04214-y
 
-Approval removes the scientific-parameter hard stop only. Before real calibration pixel loading or
-GPU inference, the implemented formal command, replay, acceptance, and independent-verification
-surfaces must pass the final local readiness gate. Continue to enforce:
+The approval and completed workflow do not authorize parameter changes or later-split access.
+Continue to enforce:
 
 - do not expose `alpha` or minimum coverage as runtime override flags;
-- do not read calibration pixels until the formal local surfaces are ready;
-- do not start GPU/cloud work until the local readiness gates below pass and the user separately
-  authorizes starting the server;
 - do not inspect any `internal_test` pixels, caches, predictions, scores, risks, or metrics.
 
 ## GPU and cloud status
 
-No GPU or cloud server is needed for the remaining local CPU implementation and verification work.
-Keep the server off. Request the user's permission before starting it, and only when all of the
-following are true:
-
-1. `alpha=0.05` and minimum coverage `0.10` remain fixed exactly as approved;
-2. the formal calibration, replay, acceptance, and independent verification surfaces are integrated
-   and locally verified;
-3. the exact clean reviewed commit is ready for a disposable cloud checkout; and
-4. verified calibration K5 cache entries are missing and must be generated.
+No GPU or cloud server is needed for completed Phase 2B3-B or for the next local design step. The
+server was verified idle after publication and may remain off. Do not restart it merely to repeat a
+successful formal run.
 
 Cloud-side code, logs, tensors, caches, models, paths, endpoints, and credentials must never enter
 Git or become a merge source.
 
 ## Next local work
 
-1. Run the final scoped local CPU readiness gate at the clean reviewed implementation commit.
-2. Run `calibration` once without `--ldsr-model-dir` to verify whether all 600 K5 cache entries are
-   already complete; this loads only the frozen calibration inputs and never constructs LDSR.
-3. Request separate GPU/cloud permission only if that probe reports missing K5 cache entries, then
-   rerun `calibration` with the verified model directory.
-4. Replay without inference, independently verify the copied bundle, review
-   the Git-safe publication files, and publish either `freeze_calibration` or
-   `stop_insufficient_coverage` without relaxing preregistered gates.
-
-Phase 2B3-C remains out of scope. It requires a separate written and approved specification before
-any one-time `internal_test` access.
+Phase 2B3-C remains out of scope. Its design may consume only the frozen calibration payload in the
+accepted Phase 2B3-B publication. Write and review a separate Phase 2B3-C specification, then obtain
+explicit approval before any one-time `internal_test` access. Do not use the observed B result to
+retune alpha, minimum coverage, score, seeds, risk window, or threshold.
 
 ## Verification at handoff
 
-Individual workstreams ran targeted tests, Ruff, and `git diff --check` before their commits. The
-main coordinator owns the final integrated run:
+The final local integrated run covered:
 
 ```bash
 uv run pytest -q \
@@ -244,6 +258,8 @@ uv run pytest -q \
   tests/evaluation/test_calibration_*.py \
   tests/data/test_calibration_subset.py \
   tests/data/test_calibration_pairs.py \
+  tests/data/test_local_data_policy.py \
+  tests/models/test_ldsr_s2.py \
   tests/calibration/test_conformal.py
 uv run ruff check \
   src/trustsr/cli/phase2b3b.py \
@@ -251,7 +267,10 @@ uv run ruff check \
   src/trustsr/evaluation \
   tests/cli/test_phase2b3b.py \
   tests/cli/test_phase2b3b_verify.py \
-  tests/evaluation
+  tests/evaluation \
+  tests/data/test_local_data_policy.py \
+  tests/models/test_ldsr_s2.py
+uv run python -m compileall -q src
 uv run trustsr-phase2b3b --help >/dev/null
 uv run trustsr-phase2b3b preflight --help >/dev/null
 uv run trustsr-phase2b3b calibration --help >/dev/null
@@ -262,21 +281,10 @@ git status --short --branch
 git rev-parse HEAD
 ```
 
-Final integrated/full-suite status on the code plus handoff tree:
-
-- `uv run pytest -q`: passed at 100%; 43 warnings, all from the third-party TorchScript
-  deprecation warning in `torch/jit/_script.py`;
-- `uv run ruff check .`: passed;
-- `uv run python -m compileall -q src`: passed;
-- all CLI help checks listed above passed;
-- `uv build`: produced both the `trustsr-0.1.0` sdist and wheel successfully;
-- `git diff --check`: passed and the integration worktree was clean before this result update.
-
-The full-suite result above predates the formal workflow and acceptance implementation. Run the
-scoped Phase 2B3-B readiness commands in the runbook at the final clean implementation commit.
-Do not claim Phase 2B3-B scientifically complete from synthetic tests, metadata-only receipts, or
-this handoff: scientific completion still requires the real 120-ROI calibration, explicit replay,
-independent copied-bundle verification, review, and three-file publication.
+The scoped pytest run passed at 100%. Ruff, `compileall`, all five CLI help checks, tracked-data
+policy, canonical publication/digest checks, and `git diff --check` also passed. The formal command,
+explicit replay, independent copied-bundle verifier, local publication review, and post-commit
+three-file digest checks all passed before this handoff update.
 
 ## Persistent stop conditions
 

@@ -57,7 +57,10 @@ Define task-specific variables on the machine holding the persistent SEN2NAIPv2 
 ```bash
 PHASE2B3B_PROJECT_ROOT=/absolute/path/to/clean/RemoteSensing001
 PHASE2B3B_STORAGE_ROOT=/absolute/path/to/persistent/storage
-PHASE2B3B_EVIDENCE_DIR="$PHASE2B3B_PROJECT_ROOT/artifacts/phase2b3a"
+PHASE2B3B_PYTHON=/opt/conda/bin/python
+PHASE2B3B_EVIDENCE_SOURCE="$PHASE2B3B_PROJECT_ROOT/artifacts/phase2b3a"
+PHASE2B3B_EVIDENCE_PUBLICATION=b386d4b38c9f3725107eed178829955d442f5601
+PHASE2B3B_EVIDENCE_DIR="$PHASE2B3B_STORAGE_ROOT/trustsr/phase2b3b/evidence/$PHASE2B3B_EVIDENCE_PUBLICATION"
 PHASE2B3B_POST_MANIFEST_SHA256=c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a
 PHASE2B3B_MANIFEST="$PHASE2B3B_STORAGE_ROOT/trustsr/phase2b1b/selections/$PHASE2B3B_POST_MANIFEST_SHA256/samples.jsonl"
 PHASE2B3B_BUNDLE="$PHASE2B3B_STORAGE_ROOT/trustsr/phase2b3b/bundles/$PHASE2B3B_POST_MANIFEST_SHA256"
@@ -69,6 +72,36 @@ PHASE2B3B_COMMON_ARGS=(
   --confirm-persistent-storage
 )
 ```
+
+Use the already provisioned base interpreter on the server. Do not invoke `uv`, create a virtual
+environment, or install packages during a formal run. Before preflight, create the external
+evidence snapshot once by copying exactly the six frozen files below; do not point
+`--evidence-dir` at the repository's historical Phase 2B3-A directory because it contains other
+valid publications that the exact-six verifier must reject:
+
+```bash
+PHASE2B3B_EVIDENCE_NAMES=(
+  sen2naipv2-development-smoke-v2.json
+  sen2naipv2-development-smoke-cache-audit-v2.json
+  sen2naipv2-development-smoke-acceptance-v2.json
+  sen2naipv2-development-score-audit-v1.json
+  sen2naipv2-development-score-cache-audit-v1.json
+  sen2naipv2-development-score-acceptance-v1.json
+)
+test -x "$PHASE2B3B_PYTHON"
+test ! -e "$PHASE2B3B_EVIDENCE_DIR"
+mkdir -p "$(dirname "$PHASE2B3B_EVIDENCE_DIR")"
+mkdir "$PHASE2B3B_EVIDENCE_DIR"
+for PHASE2B3B_EVIDENCE_NAME in "${PHASE2B3B_EVIDENCE_NAMES[@]}"; do
+  cp -- \
+    "$PHASE2B3B_EVIDENCE_SOURCE/$PHASE2B3B_EVIDENCE_NAME" \
+    "$PHASE2B3B_EVIDENCE_DIR/$PHASE2B3B_EVIDENCE_NAME"
+done
+test "$(find "$PHASE2B3B_EVIDENCE_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 6
+```
+
+If the immutable snapshot already exists, do not overwrite it; let preflight verify its exact
+membership and digests.
 
 The storage root must be an absolute canonical non-symlink directory, must not be `/` or the user
 home, and must have more than 10 GiB free. The commands derive these paths and accept no alternate
@@ -91,7 +124,8 @@ construct a model:
 
 ```bash
 cd "$PHASE2B3B_PROJECT_ROOT"
-uv run trustsr-phase2b3b preflight "${PHASE2B3B_COMMON_ARGS[@]}"
+PYTHONPATH=src "$PHASE2B3B_PYTHON" -m trustsr.cli.phase2b3b \
+  preflight "${PHASE2B3B_COMMON_ARGS[@]}"
 ```
 
 Stop on any nonzero exit, revision mismatch, evidence mismatch, manifest mismatch, path rejection,
@@ -104,7 +138,8 @@ omits the model path. It loads only the 120 frozen calibration inputs, verifies 
 set of all 600 fixed K5 prediction-cache entries exists, and never imports or constructs LDSR:
 
 ```bash
-uv run trustsr-phase2b3b calibration "${PHASE2B3B_COMMON_ARGS[@]}"
+PYTHONPATH=src "$PHASE2B3B_PYTHON" -m trustsr.cli.phase2b3b \
+  calibration "${PHASE2B3B_COMMON_ARGS[@]}"
 ```
 
 If the complete cache exists, this CPU-only command computes the fixed K5 variance score and R9
@@ -117,7 +152,7 @@ GPU-server authorization. Only after that authorization define the verified mode
 
 ```bash
 PHASE2B3B_LDSR_MODEL_DIR=/absolute/path/to/verified/ldsr/model
-uv run trustsr-phase2b3b calibration \
+PYTHONPATH=src "$PHASE2B3B_PYTHON" -m trustsr.cli.phase2b3b calibration \
   "${PHASE2B3B_COMMON_ARGS[@]}" \
   --ldsr-model-dir "$PHASE2B3B_LDSR_MODEL_DIR"
 ```
@@ -136,7 +171,8 @@ Run replay with no model path. This is a deliberate interface guarantee: the rep
 not import or construct LDSR and cannot call prediction.
 
 ```bash
-uv run trustsr-phase2b3b calibration-replay "${PHASE2B3B_COMMON_ARGS[@]}"
+PYTHONPATH=src "$PHASE2B3B_PYTHON" -m trustsr.cli.phase2b3b \
+  calibration-replay "${PHASE2B3B_COMMON_ARGS[@]}"
 ```
 
 Replay reloads the authoritative calibration pairs and verified prediction/score caches, recomputes
@@ -154,7 +190,7 @@ PHASE2B3B_COPIED_BUNDLE="$PHASE2B3B_VERIFY_PARENT/phase2b3b-bundle"
 mkdir -p "$PHASE2B3B_VERIFY_PARENT"
 test ! -e "$PHASE2B3B_COPIED_BUNDLE"
 cp -a -- "$PHASE2B3B_BUNDLE" "$PHASE2B3B_COPIED_BUNDLE"
-uv run trustsr-phase2b3b-verify \
+PYTHONPATH=src "$PHASE2B3B_PYTHON" -m trustsr.cli.phase2b3b_verify \
   --bundle "$PHASE2B3B_COPIED_BUNDLE" \
   "${PHASE2B3B_COMMON_ARGS[@]}"
 ```
