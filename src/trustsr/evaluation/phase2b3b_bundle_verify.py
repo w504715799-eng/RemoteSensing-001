@@ -27,6 +27,7 @@ _AUDIT_NAME = "phase2b3b-calibration-cache-audit.json"
 _RUNTIME_NAME = "phase2b3b-calibration-runtime.json"
 _REPLAY_NAME = "phase2b3b-calibration-replay.json"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_REVISION = re.compile(r"[0-9a-f]{40}")
 _REPLAY_KEYS = {
     "schema",
     "byte_identical",
@@ -36,7 +37,7 @@ _REPLAY_KEYS = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class VerifiedPhase2B3BBundle:
     """Candidate metadata-consistency receipt for transport and cross-document checks.
 
@@ -60,6 +61,48 @@ class VerifiedPhase2B3BBundle:
     map_evidence_sha256: str
     radiometry_aggregate_sha256: str
     phase_decision: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("bundle verification receipts are created only by the verifier")
+
+    @classmethod
+    def _from_verified(cls, **values: object) -> VerifiedPhase2B3BBundle:
+        if set(values) != set(cls.__dataclass_fields__):
+            raise TypeError("bundle verification receipt fields are invalid")
+        receipt = object.__new__(cls)
+        for name in cls.__dataclass_fields__:
+            object.__setattr__(receipt, name, values[name])
+        receipt.__post_init__()
+        return receipt
+
+    def __post_init__(self) -> None:
+        if (
+            self.schema != SCHEMA
+            or self.verification_scope != "metadata_consistency_only"
+            or self.cache_computation_verified is not False
+            or self.phase_decision
+            not in {"freeze_calibration", "stop_insufficient_coverage"}
+        ):
+            raise ValueError("bundle verification receipt scope is invalid")
+        for name in (
+            "manifest_sha256",
+            "result_sha256",
+            "cache_audit_sha256",
+            "runtime_manifest_sha256",
+            "replay_sha256",
+            "ordered_sample_ids_sha256",
+            "ordered_membership_sha256",
+            "input_receipt_sha256",
+            "ordered_inputs_sha256",
+            "map_evidence_sha256",
+            "radiometry_aggregate_sha256",
+        ):
+            _digest(getattr(self, name), f"bundle verification {name}")
+        if (
+            type(self.producer_revision) is not str
+            or _REVISION.fullmatch(self.producer_revision) is None
+        ):
+            raise ValueError("bundle verification producer revision is invalid")
 
 
 def _sha256(payload: bytes) -> str:
@@ -171,7 +214,7 @@ def verify_phase2b3b_bundle(
     ):
         raise ValueError("runtime verification receipt differs from actual bundle bytes")
 
-    return VerifiedPhase2B3BBundle(
+    return VerifiedPhase2B3BBundle._from_verified(
         schema=SCHEMA,
         verification_scope="metadata_consistency_only",
         cache_computation_verified=False,

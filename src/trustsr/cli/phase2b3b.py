@@ -14,6 +14,7 @@ from trustsr.evaluation.phase2b3b_revision import (
     verify_phase2b3b_revision,
 )
 from trustsr.evaluation.phase2b3b_workflow import (
+    phase2b3b_formal_lock,
     run_formal_calibration,
     run_formal_calibration_replay,
     validate_phase2b3b_storage,
@@ -38,7 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         child.add_argument("--manifest", type=Path, required=True)
         child.add_argument("--confirm-persistent-storage", action="store_true")
         if name == "calibration":
-            child.add_argument("--ldsr-model-dir", type=Path, required=True)
+            child.add_argument(
+                "--ldsr-model-dir",
+                type=Path,
+                help="supply only after GPU authorization when verified K5 caches are missing",
+            )
         child.set_defaults(handler=handler)
     return parser
 
@@ -64,11 +69,12 @@ def run_preflight(args: argparse.Namespace) -> dict[str, object]:
     storage = validate_phase2b3b_storage(
         args.storage_root, args.confirm_persistent_storage
     )
-    preflight = load_phase2b3b_preflight(
-        args.evidence_dir,
-        storage.root,
-        args.manifest,
-    )
+    with phase2b3b_formal_lock(storage):
+        preflight = load_phase2b3b_preflight(
+            args.evidence_dir,
+            storage.root,
+            args.manifest,
+        )
     if not isinstance(preflight, Mapping):
         raise TypeError("Phase 2B3-B preflight returned an invalid receipt")
     result = _json_native(

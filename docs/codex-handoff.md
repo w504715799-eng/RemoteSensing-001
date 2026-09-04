@@ -121,7 +121,7 @@ trustsr-phase2b3b calibration \
   --storage-root STORAGE_ROOT \
   --manifest MANIFEST \
   --confirm-persistent-storage \
-  --ldsr-model-dir LDSR_MODEL_DIR
+  [--ldsr-model-dir LDSR_MODEL_DIR]
 
 trustsr-phase2b3b calibration-replay \
   --project-root PROJECT_ROOT \
@@ -131,10 +131,13 @@ trustsr-phase2b3b calibration-replay \
   --confirm-persistent-storage
 ```
 
-`calibration` is the only surface that can construct LDSR or generate missing predictions. Before
-atomic bundle publication it immediately performs an inference-free reconstruction. The explicit
-replay surface does not accept a model path, recomputes ensemble-variance score and R9 risk from
-verified caches, and requires byte-identical result/audit/replay/bundle evidence.
+`calibration` first probes the complete fixed K5 cache identity without constructing LDSR. A fully
+verified 600-entry cache completes on CPU with no model path. If an entry is missing it stops before
+model loading; only a separately authorized rerun with `--ldsr-model-dir` may construct LDSR or
+generate predictions. Before atomic bundle publication it immediately performs an inference-free
+reconstruction. The explicit replay surface does not accept a model path, recomputes
+ensemble-variance score and R9 risk from verified caches, and requires byte-identical
+result/audit/replay/bundle evidence.
 
 The verifier is now the acceptance-authorizing independent computation and publication surface:
 
@@ -217,8 +220,11 @@ Git or become a merge source.
 ## Next local work
 
 1. Run the final scoped local CPU readiness gate at the clean reviewed implementation commit.
-2. Request separate GPU/cloud permission only if verified K5 calibration cache entries are missing.
-3. Run calibration once, replay without inference, independently verify the copied bundle, review
+2. Run `calibration` once without `--ldsr-model-dir` to verify whether all 600 K5 cache entries are
+   already complete; this loads only the frozen calibration inputs and never constructs LDSR.
+3. Request separate GPU/cloud permission only if that probe reports missing K5 cache entries, then
+   rerun `calibration` with the verified model directory.
+4. Replay without inference, independently verify the copied bundle, review
    the Git-safe publication files, and publish either `freeze_calibration` or
    `stop_insufficient_coverage` without relaxing preregistered gates.
 

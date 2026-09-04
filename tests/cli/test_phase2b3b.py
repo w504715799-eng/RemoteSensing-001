@@ -11,6 +11,7 @@ from types import MappingProxyType, ModuleType
 
 import pytest
 
+from trustsr.evaluation import phase2b3b_workflow
 from trustsr.evaluation.phase2b3b_revision import Phase2B3BRevision
 from trustsr.jsonio import canonical_json
 
@@ -160,6 +161,29 @@ def test_boundary_error_fails_closed_without_scientific_stdout(
     assert events == (["revision"] if failing_boundary == "revision" else ["revision", "preflight"])
 
 
+def test_preflight_shares_formal_lock_and_never_reads_metadata_under_contention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    monkeypatch.setattr(phase2b3b_workflow, "_MINIMUM_FREE_BYTES", 0)
+    monkeypatch.setattr(module, "verify_phase2b3b_revision", lambda _: _revision())
+    monkeypatch.setattr(
+        module,
+        "load_phase2b3b_preflight",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("metadata read crossed a held formal lock")
+        ),
+    )
+    args = module.build_parser().parse_args(_argv(tmp_path))
+    paths = phase2b3b_workflow.validate_phase2b3b_storage(
+        tmp_path / "storage", True
+    )
+
+    with phase2b3b_workflow.phase2b3b_formal_lock(paths):
+        with pytest.raises(RuntimeError, match="holds the lock"):
+            module.run_preflight(args)
+
+
 def test_parser_has_only_required_preflight_paths(tmp_path: Path) -> None:
     module = _module()
 
@@ -258,10 +282,12 @@ def test_formal_parsers_have_fixed_operational_arguments(tmp_path: Path) -> None
     calibration = module.build_parser().parse_args(
         ["calibration", *common, "--ldsr-model-dir", str(model_dir)]
     )
+    cached_calibration = module.build_parser().parse_args(["calibration", *common])
     replay = module.build_parser().parse_args(["calibration-replay", *common])
 
     assert calibration.stage == "calibration"
     assert calibration.ldsr_model_dir == model_dir
+    assert cached_calibration.ldsr_model_dir is None
     assert replay.stage == "calibration-replay"
     assert "ldsr_model_dir" not in vars(replay)
     for forbidden in ("alpha", "coverage", "minimum_coverage", "seed", "score", "sample"):

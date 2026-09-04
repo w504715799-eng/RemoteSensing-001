@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -58,6 +59,30 @@ _PUBLICATION_NAMES = (
     AUDIT_PUBLICATION_NAME,
     ACCEPTANCE_PUBLICATION_NAME,
 )
+_ACCEPTANCE_KEYS = {
+    "schema",
+    "verification_scope",
+    "acceptance_authorized",
+    "checks",
+    "target",
+    "phase_decision",
+    "digests",
+    "frozen_calibration",
+}
+_ACCEPTANCE_CHECKS = {
+    "bundle_integrity_pass": True,
+    "metadata_authority_pass": True,
+    "cache_computation_replay_pass": True,
+    "byte_identical_replay_pass": True,
+    "calibration_only_pass": True,
+}
+_ACCEPTANCE_DIGEST_KEYS = {
+    "bundle_manifest_sha256",
+    "result_sha256",
+    "cache_audit_sha256",
+    "runtime_manifest_sha256",
+    "replay_sha256",
+}
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
 _LIBC = ctypes.CDLL(None, use_errno=True)
@@ -89,6 +114,7 @@ def _validate_metadata_receipt(
 ) -> None:
     if type(receipt) is not VerifiedPhase2B3BBundle:
         raise TypeError("acceptance requires the exact metadata verification receipt")
+    receipt.__post_init__()
     expected = {
         "manifest_sha256": loaded.manifest_sha256,
         "result_sha256": _sha256(payloads[_RESULT_NAME]),
@@ -195,7 +221,7 @@ def build_phase2b3b_acceptance(
     loaded_bundle: LoadedPhase2B3BBundle,
     metadata_verification: VerifiedPhase2B3BBundle,
     computation_verification: VerifiedPhase2B3BComputation,
-) -> dict[str, object]:
+) -> VerifiedPhase2B3BAcceptance:
     """Authorize the observed B decision only after both independent verifiers pass."""
 
     if type(loaded_bundle) is not LoadedPhase2B3BBundle:
@@ -249,8 +275,57 @@ def build_phase2b3b_acceptance(
         },
         "frozen_calibration": frozen_calibration,
     }
-    canonical_json(acceptance)
-    return acceptance
+    return VerifiedPhase2B3BAcceptance._from_verified(acceptance)
+
+
+@dataclass(frozen=True, init=False)
+class VerifiedPhase2B3BAcceptance:
+    """Opaque acceptance capability created only after both verifiers pass."""
+
+    payload: bytes
+    phase_decision: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("acceptance receipts are created only by both verifiers")
+
+    @classmethod
+    def _from_verified(
+        cls, document: Mapping[str, object]
+    ) -> VerifiedPhase2B3BAcceptance:
+        if type(document) is not dict:
+            raise TypeError("verified acceptance must be an exact JSON object")
+        payload = canonical_json(document)
+        decision = document.get("phase_decision")
+        if decision not in {"freeze_calibration", "stop_insufficient_coverage"}:
+            raise ValueError("verified acceptance phase decision is invalid")
+        receipt = object.__new__(cls)
+        object.__setattr__(receipt, "payload", payload)
+        object.__setattr__(receipt, "phase_decision", decision)
+        receipt.__post_init__()
+        return receipt
+
+    def __post_init__(self) -> None:
+        if type(self.payload) is not bytes:
+            raise TypeError("verified acceptance payload must be immutable bytes")
+        try:
+            document = json.loads(self.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("verified acceptance payload is not JSON") from exc
+        if (
+            type(document) is not dict
+            or canonical_json(document) != self.payload
+            or document.get("phase_decision") != self.phase_decision
+        ):
+            raise ValueError("verified acceptance payload is invalid")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a fresh JSON-native projection of the verified document."""
+
+        self.__post_init__()
+        document = json.loads(self.payload.decode("utf-8"))
+        if type(document) is not dict:
+            raise AssertionError("verified acceptance must decode to an object")
+        return document
 
 
 @dataclass(frozen=True)
@@ -299,22 +374,102 @@ def _canonical_project_root(project_root: Path) -> Path:
 
 
 def _publication_payloads(
-    loaded_bundle: LoadedPhase2B3BBundle, acceptance: Mapping[str, object]
+    loaded_bundle: LoadedPhase2B3BBundle,
+    acceptance: VerifiedPhase2B3BAcceptance,
 ) -> dict[str, bytes]:
     if type(loaded_bundle) is not LoadedPhase2B3BBundle:
         raise TypeError("publication requires an exact loaded bundle")
     loaded_bundle.__post_init__()
-    if type(acceptance) is not dict or acceptance.get("schema") != ACCEPTANCE_SCHEMA:
-        raise ValueError("publication acceptance record is invalid")
+    if type(acceptance) is not VerifiedPhase2B3BAcceptance:
+        raise TypeError("publication requires a verified acceptance capability")
+    acceptance.__post_init__()
+    acceptance_document = acceptance.as_dict()
+    _validate_acceptance_for_publication(loaded_bundle, acceptance_document)
     payloads = dict(loaded_bundle.payloads)
     result = payloads[_RESULT_NAME]
     audit = payloads[_AUDIT_NAME]
-    acceptance_payload = canonical_json(acceptance)
     return {
         RESULT_PUBLICATION_NAME: result,
         AUDIT_PUBLICATION_NAME: audit,
-        ACCEPTANCE_PUBLICATION_NAME: acceptance_payload,
+        ACCEPTANCE_PUBLICATION_NAME: acceptance.payload,
     }
+
+
+def _validate_acceptance_for_publication(
+    loaded_bundle: LoadedPhase2B3BBundle,
+    acceptance: dict[str, object],
+) -> None:
+    if set(acceptance) != _ACCEPTANCE_KEYS:
+        raise ValueError("publication acceptance keys are invalid")
+    if (
+        acceptance["schema"] != ACCEPTANCE_SCHEMA
+        or acceptance["verification_scope"] != VERIFICATION_SCOPE
+        or acceptance["acceptance_authorized"] is not True
+    ):
+        raise ValueError("publication acceptance authority is invalid")
+    checks = _mapping(acceptance["checks"], "acceptance checks")
+    if checks != _ACCEPTANCE_CHECKS or canonical_json(checks) != canonical_json(
+        _ACCEPTANCE_CHECKS
+    ):
+        raise ValueError("publication acceptance checks are invalid")
+    target = _mapping(acceptance["target"], "acceptance target")
+    if set(target) != {"alpha", "minimum_coverage"}:
+        raise ValueError("publication acceptance target keys are invalid")
+    require_approved_operating_point(target["alpha"], target["minimum_coverage"])
+
+    documents = loaded_bundle.documents()
+    payloads = dict(loaded_bundle.payloads)
+    result = _mapping(documents[_RESULT_NAME], "publication result")
+    runtime = _mapping(documents[_RUNTIME_NAME], "publication runtime")
+    replay = _mapping(documents[_REPLAY_NAME], "publication replay")
+    decision = acceptance["phase_decision"]
+    if (
+        decision not in {"freeze_calibration", "stop_insufficient_coverage"}
+        or decision != result.get("phase_decision")
+    ):
+        raise ValueError("publication acceptance decision differs from the bundle")
+    result_target = _mapping(result.get("target"), "publication result target")
+    if canonical_json(result_target) != canonical_json(target):
+        raise ValueError("publication acceptance target differs from the bundle")
+
+    digests = _mapping(acceptance["digests"], "acceptance digests")
+    if set(digests) != _ACCEPTANCE_DIGEST_KEYS:
+        raise ValueError("publication acceptance digest keys are invalid")
+    expected_digests = {
+        "bundle_manifest_sha256": loaded_bundle.manifest_sha256,
+        "result_sha256": _sha256(payloads[_RESULT_NAME]),
+        "cache_audit_sha256": _sha256(payloads[_AUDIT_NAME]),
+        "runtime_manifest_sha256": _sha256(payloads[_RUNTIME_NAME]),
+        "replay_sha256": _sha256(payloads[_REPLAY_NAME]),
+    }
+    if canonical_json(digests) != canonical_json(expected_digests):
+        raise ValueError("publication acceptance digests differ from the bundle")
+
+    if set(replay) != {
+        "schema",
+        "byte_identical",
+        "result_sha256",
+        "cache_audit_sha256",
+        "runtime_manifest_sha256",
+    } or (
+        replay["schema"] != "trustsr.phase2b3b-calibration-replay.v1"
+        or replay["byte_identical"] is not True
+        or replay["result_sha256"] != expected_digests["result_sha256"]
+        or replay["cache_audit_sha256"] != expected_digests["cache_audit_sha256"]
+        or replay["runtime_manifest_sha256"]
+        != expected_digests["runtime_manifest_sha256"]
+    ):
+        raise ValueError("publication acceptance replay differs from the bundle")
+
+    expected_frozen = (
+        _frozen_payload(result, runtime, expected_digests["result_sha256"])
+        if decision == "freeze_calibration"
+        else None
+    )
+    if canonical_json(acceptance["frozen_calibration"]) != canonical_json(
+        expected_frozen
+    ):
+        raise ValueError("publication acceptance payload differs from the bundle")
 
 
 def _publication_digest(payloads: Mapping[str, bytes]) -> str:
@@ -395,7 +550,7 @@ def _rename_noreplace(source: Path, target: Path) -> None:
 def publish_phase2b3b_evidence(
     project_root: Path,
     loaded_bundle: LoadedPhase2B3BBundle,
-    acceptance: Mapping[str, object],
+    acceptance: VerifiedPhase2B3BAcceptance,
 ) -> Phase2B3BPublicationReceipt:
     """Publish the exact three Git-safe files as one directory transaction."""
 
@@ -407,9 +562,7 @@ def publish_phase2b3b_evidence(
         raise ValueError("repository artifacts directory is not canonical")
     target = artifacts / "phase2b3b"
     payloads = _publication_payloads(loaded_bundle, acceptance)
-    decision = acceptance.get("phase_decision")
-    if type(decision) is not str:
-        raise ValueError("acceptance phase decision is invalid")
+    decision = acceptance.phase_decision
     if target.exists() or target.is_symlink():
         _validate_existing_publication(target, payloads)
         return _publication_receipt(payloads, phase_decision=decision, reused=True)
@@ -463,6 +616,21 @@ class IndependentPhase2B3BVerification:
 def _require_existing_cache_directory(path: Path) -> None:
     if path.is_symlink() or not path.is_dir() or path.resolve(strict=True) != path.absolute():
         raise ValueError("independent verification cache directory is missing or unsafe")
+
+
+def _require_copied_bundle(bundle_dir: Path, producer_bundle_dir: Path) -> None:
+    if not isinstance(bundle_dir, Path) or not bundle_dir.is_absolute():
+        raise ValueError("independent verification requires an absolute copied bundle")
+    try:
+        if bundle_dir.is_symlink() or bundle_dir.resolve(strict=True) != bundle_dir.absolute():
+            raise ValueError("independent verification requires a canonical copied bundle")
+    except OSError as exc:
+        raise ValueError(
+            "independent verification requires a canonical copied bundle"
+        ) from exc
+    producer = producer_bundle_dir.absolute()
+    if bundle_dir == producer or producer in bundle_dir.parents:
+        raise ValueError("independent verification requires a separate copied bundle")
 
 
 def _run_locked_independent_verification(
@@ -524,6 +692,7 @@ def run_independent_phase2b3b_verification(
 
     paths = validate_phase2b3b_storage(storage_root, confirmed_persistent_storage)
     with phase2b3b_formal_lock(paths):
+        _require_copied_bundle(bundle_dir, paths.bundle_dir)
         return _run_locked_independent_verification(
             paths=paths,
             bundle_dir=bundle_dir,

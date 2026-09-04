@@ -113,7 +113,7 @@ revision -> preflight metadata -> exact calibration records -> pixel loader
 -> audit/result/runtime -> inference-free reconstruction -> atomic bundle
 ```
 
-The replay test must install a prediction function that raises if called, reconstruct result and audit from existing caches, require byte identity, and reuse the existing bundle. Parser tests must expose exactly `preflight`, `calibration`, and `calibration-replay`, require explicit persistent-storage confirmation for formal stages, require an LDSR model directory only for calibration, and reject `--alpha`, `--coverage`, `--seed`, `--score`, `--sample`, and worker overrides.
+The replay test must install a prediction function that raises if called, reconstruct result and audit from existing caches, require byte identity, and reuse the existing bundle. Parser tests must expose exactly `preflight`, `calibration`, and `calibration-replay`, require explicit persistent-storage confirmation for formal stages, accept an optional LDSR model directory only for calibration, and reject `--alpha`, `--coverage`, `--seed`, `--score`, `--sample`, and worker overrides.
 
 - [ ] **Step 2: Run workflow and CLI tests and verify RED**
 
@@ -135,7 +135,7 @@ trustsr/phase2b3b/scores/<post-manifest-sha256>/
 trustsr/phase2b3b/bundles/<post-manifest-sha256>/
 ```
 
-Require more than 10 GiB free space, reject symlink components and unsafe roots, and take one advisory phase lock before pixel loading. Calibration may construct `LDSRS2X4` and call prediction only after revision, metadata, path, capacity, and lock gates pass. It must immediately rebuild score/risk/fit/result from committed caches without inference, create the replay receipt, and atomically publish the complete five-file bundle. Replay must never import or construct the model and must fail unless the rebuilt result, cache audit, replay receipt, and existing bundle are byte-identical.
+Require more than 10 GiB free space, reject symlink components and unsafe roots, and take one advisory phase lock before pixel loading. Calibration first verifies whether one coherent complete K5 cache set exists; it may construct `LDSRS2X4` and call prediction only after a cache miss and after revision, metadata, path, capacity, and lock gates pass. A missing cache with no model path stops before model construction so GPU permission can be requested. It must immediately rebuild score/risk/fit/result from committed caches without inference, create the replay receipt, and atomically publish the complete five-file bundle. Replay must never import or construct the model and must fail unless the rebuilt result, cache audit, replay receipt, and existing bundle are byte-identical.
 
 - [ ] **Step 4: Wire the two formal CLI stages**
 
@@ -162,7 +162,7 @@ git commit -m "feat: add phase2b3b calibration replay workflow"
 
 **Interfaces:**
 - Consumes: the copied bundle reader, metadata bundle verifier, cache-computation verifier, authoritative preflight/input/radiometry reconstruction, frozen operating point, and fixed storage cache paths.
-- Produces: `build_phase2b3b_acceptance(...) -> dict[str, object]`, `publish_phase2b3b_evidence(...) -> Phase2B3BPublicationReceipt`, and an acceptance-authorizing `trustsr-phase2b3b-verify` command.
+- Produces: `build_phase2b3b_acceptance(...) -> VerifiedPhase2B3BAcceptance`, `publish_phase2b3b_evidence(...) -> Phase2B3BPublicationReceipt`, and an acceptance-authorizing `trustsr-phase2b3b-verify` command.
 
 - [ ] **Step 1: Write failing acceptance and verifier CLI tests**
 

@@ -96,6 +96,80 @@ def test_calibration_then_replay_is_byte_identical_and_replay_never_predicts(
     assert ldsr.calls_by_seed == calls_after_calibration
 
 
+def test_complete_verified_prediction_caches_skip_model_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    storage_root = tmp_path / "storage"
+    project_root = tmp_path / "project"
+    evidence_dir = tmp_path / "evidence"
+    model_dir = tmp_path / "model"
+    for path in (storage_root, project_root, evidence_dir, model_dir):
+        path.mkdir()
+    pairs = tuple(replay_fixtures._pair(index) for index in range(120))
+    _install_authority(module, monkeypatch, pairs)
+    ldsr = prediction_fixtures._FakeLDSR()
+    monkeypatch.setattr(module, "_load_ldsr", lambda path: ldsr)
+    first = module.run_formal_calibration(
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=tmp_path / "manifest.jsonl",
+        ldsr_model_dir=model_dir,
+        confirmed_persistent_storage=True,
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_ldsr",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("complete caches constructed LDSR")
+        ),
+    )
+
+    cached = module.run_formal_calibration(
+        project_root=project_root,
+        evidence_dir=evidence_dir,
+        storage_root=storage_root,
+        manifest_path=tmp_path / "manifest.jsonl",
+        ldsr_model_dir=None,
+        confirmed_persistent_storage=True,
+    )
+
+    assert cached.manifest_sha256 == first.manifest_sha256
+    assert cached.result_sha256 == first.result_sha256
+    assert sum(ldsr.calls_by_seed.values()) == 600
+
+
+def test_missing_prediction_cache_requires_gpu_authorization_before_model_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    storage_root = tmp_path / "storage"
+    project_root = tmp_path / "project"
+    evidence_dir = tmp_path / "evidence"
+    for path in (storage_root, project_root, evidence_dir):
+        path.mkdir()
+    pairs = tuple(replay_fixtures._pair(index) for index in range(120))
+    _install_authority(module, monkeypatch, pairs)
+    monkeypatch.setattr(
+        module,
+        "_load_ldsr",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("missing model path still constructed LDSR")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="K5 prediction caches are missing.*GPU"):
+        module.run_formal_calibration(
+            project_root=project_root,
+            evidence_dir=evidence_dir,
+            storage_root=storage_root,
+            manifest_path=tmp_path / "manifest.jsonl",
+            ldsr_model_dir=None,
+            confirmed_persistent_storage=True,
+        )
+
+
 def test_rejects_missing_storage_confirmation_before_pixel_loading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

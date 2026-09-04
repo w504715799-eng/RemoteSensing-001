@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -25,6 +28,7 @@ from trustsr.evaluation.calibration_model_identity import (
     validate_cached_calibration_model_identity,
     validate_calibration_model_identity,
 )
+from trustsr.jsonio import canonical_json
 from trustsr.models.protocols import JsonScalar, SRModel
 
 EXPERIMENT_SCHEMA = "trustsr.phase2b3b-predictions.v1"
@@ -47,6 +51,8 @@ _CONTEXT_KEYS = (
     "phase2b3a_publication_commit",
     "phase2b3a_a2_result_sha256",
 )
+_CACHE_KEY = re.compile(r"[0-9a-f]{64}")
+_MAX_CACHE_METADATA_BYTES = 128 * 1024
 
 
 def build_cache_provenance(
@@ -323,3 +329,144 @@ def load_or_generate_calibration_bundle(
     except AttributeError as exc:
         raise TypeError("calibration LDSR model must provide for_seed") from exc
     return CalibrationPredictionBundle(sample_id=loaded.pair.sample_id, items=items)
+
+
+def _cached_candidate(
+    metadata_path: Path,
+    *,
+    pairs_by_id: Mapping[str, LoadedCrosssensorPair],
+    cache: PredictionCache,
+) -> CachedCalibrationPrediction | None:
+    if (
+        metadata_path.is_symlink()
+        or not metadata_path.is_file()
+        or _CACHE_KEY.fullmatch(metadata_path.stem) is None
+    ):
+        raise ValueError("calibration cache metadata path is unsafe")
+    payload = metadata_path.read_bytes()
+    if len(payload) > _MAX_CACHE_METADATA_BYTES:
+        raise ValueError("calibration cache metadata exceeds the size limit")
+    try:
+        metadata = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("calibration cache metadata is not valid JSON") from exc
+    if (
+        type(metadata) is not dict
+        or canonical_json(metadata) != payload
+        or set(metadata)
+        != {"schema_version", "cache_key", "identity", "prediction", "tensor_filename"}
+        or metadata["schema_version"] != 1
+        or metadata["cache_key"] != metadata_path.stem
+        or metadata["tensor_filename"] != f"{metadata_path.stem}.safetensors"
+    ):
+        raise ValueError("calibration cache metadata schema is invalid")
+    identity_value = metadata["identity"]
+    if type(identity_value) is not dict or set(identity_value) != {
+        "model_provenance",
+        "source",
+        "sample_id",
+        "lr",
+    }:
+        raise ValueError("calibration cache identity schema is invalid")
+    lr_value = identity_value["lr"]
+    provenance = identity_value["model_provenance"]
+    if (
+        type(lr_value) is not dict
+        or set(lr_value) != {"shape", "dtype", "sha256"}
+        or type(provenance) is not dict
+    ):
+        raise ValueError("calibration cache input identity is invalid")
+    seed = provenance.get("seed")
+    if type(seed) is not int or seed not in SEEDS:
+        raise ValueError("calibration cache seed is outside the fixed K5 set")
+    validated_provenance = validate_cached_calibration_prediction_provenance(
+        provenance, seed=seed
+    )
+    shape = lr_value["shape"]
+    if type(shape) is not list or len(shape) != 3:
+        raise ValueError("calibration cache LR shape is invalid")
+    try:
+        identity = PredictionIdentity(
+            model_provenance=validated_provenance,
+            source=identity_value["source"],
+            sample_id=identity_value["sample_id"],
+            lr_shape=tuple(shape),
+            lr_dtype=lr_value["dtype"],
+            lr_sha256=lr_value["sha256"],
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("calibration cache prediction identity is invalid") from exc
+    if identity.key != metadata_path.stem:
+        raise ValueError("calibration cache filename differs from its identity")
+    loaded = pairs_by_id.get(identity.sample_id)
+    if loaded is None:
+        return None
+    expected_identity = build_identity(
+        validated_provenance,
+        loaded.pair.source,
+        loaded.pair.sample_id,
+        loaded.pair.lr,
+    )
+    if identity != expected_identity:
+        return None
+    prediction = cache.get(identity)
+    if prediction is None:
+        raise ValueError("calibration cache metadata has no committed prediction")
+    return CachedCalibrationPrediction(
+        model_name=MODEL_NAME,
+        seed=seed,
+        identity=identity,
+        prediction_sha256=tensor_sha256(prediction),
+        tensor=prediction,
+    )
+
+
+def load_complete_cached_calibration_bundles(
+    pairs: tuple[LoadedCrosssensorPair, ...],
+    *,
+    cache: PredictionCache,
+) -> tuple[CalibrationPredictionBundle, ...] | None:
+    """Return one coherent verified K5 cache set, or ``None`` when it is incomplete."""
+
+    if type(pairs) is not tuple or not pairs:
+        raise TypeError("cache completeness requires a non-empty exact pair tuple")
+    if not isinstance(cache, PredictionCache):
+        raise TypeError("calibration prediction cache must be a PredictionCache")
+    loaded_pairs = tuple(_validate_pair(pair) for pair in pairs)
+    pairs_by_id = {pair.pair.sample_id: pair for pair in loaded_pairs}
+    if len(pairs_by_id) != len(loaded_pairs):
+        raise ValueError("calibration cache completeness requires unique sample IDs")
+    if cache.root.is_symlink() or not cache.root.is_dir():
+        raise ValueError("calibration prediction cache directory is unsafe")
+
+    groups: dict[bytes, dict[tuple[str, int], CachedCalibrationPrediction]] = {}
+    for metadata_path in sorted(cache.root.glob("*.json")):
+        candidate = _cached_candidate(
+            metadata_path, pairs_by_id=pairs_by_id, cache=cache
+        )
+        if candidate is None:
+            continue
+        projection = dict(candidate.identity.model_provenance)
+        projection.pop("seed")
+        group = groups.setdefault(canonical_json(projection), {})
+        slot = (candidate.identity.sample_id, candidate.seed)
+        if slot in group:
+            raise ValueError("calibration cache contains a duplicate K5 slot")
+        group[slot] = candidate
+
+    required_slots = {
+        (pair.pair.sample_id, seed) for pair in loaded_pairs for seed in SEEDS
+    }
+    complete = tuple(group for group in groups.values() if set(group) == required_slots)
+    if not complete:
+        return None
+    if len(complete) != 1:
+        raise ValueError("calibration cache contains multiple complete model identities")
+    selected = complete[0]
+    return tuple(
+        CalibrationPredictionBundle(
+            sample_id=pair.pair.sample_id,
+            items=tuple(selected[(pair.pair.sample_id, seed)] for seed in SEEDS),
+        )
+        for pair in loaded_pairs
+    )

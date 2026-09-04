@@ -43,7 +43,7 @@ def _digest(value: object, label: str) -> str:
     return value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class VerifiedPhase2B3BComputation:
     """Host-free computation receipt over caller-supplied loaded inputs.
 
@@ -63,6 +63,19 @@ class VerifiedPhase2B3BComputation:
     result_sha256: str
     cache_audit_sha256: str
     map_evidence_sha256: str
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("computation verification receipts are created only by the verifier")
+
+    @classmethod
+    def _from_verified(cls, **values: object) -> VerifiedPhase2B3BComputation:
+        if set(values) != set(cls.__dataclass_fields__):
+            raise TypeError("computation verification receipt fields are invalid")
+        receipt = object.__new__(cls)
+        for name in cls.__dataclass_fields__:
+            object.__setattr__(receipt, name, values[name])
+        receipt.__post_init__()
+        return receipt
 
     def __post_init__(self) -> None:
         if (
@@ -248,7 +261,7 @@ def verify_phase2b3b_computation(
     if canonical_json(rebuilt_result) != committed_result:
         raise ValueError("recomputed Phase 2B3-B result is not byte-identical")
 
-    return VerifiedPhase2B3BComputation(
+    return VerifiedPhase2B3BComputation._from_verified(
         schema=SCHEMA,
         verification_scope=VERIFICATION_SCOPE,
         cache_computation_verified=True,

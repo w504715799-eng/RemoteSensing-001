@@ -70,7 +70,7 @@ def _case(
     )
     loaded = read_phase2b3b_bundle(bundle_dir)
     payloads = dict(loaded.payloads)
-    metadata = VerifiedPhase2B3BBundle(
+    metadata = VerifiedPhase2B3BBundle._from_verified(
         schema="trustsr.phase2b3b-candidate-bundle-metadata-verification.v1",
         verification_scope="metadata_consistency_only",
         cache_computation_verified=False,
@@ -88,7 +88,7 @@ def _case(
         radiometry_aggregate_sha256="a" * 64,
         phase_decision=result["phase_decision"],
     )
-    computation = VerifiedPhase2B3BComputation(
+    computation = VerifiedPhase2B3BComputation._from_verified(
         schema="trustsr.phase2b3b-calibration-computation-verification.v1",
         verification_scope="cache_computation_replay",
         cache_computation_verified=True,
@@ -118,7 +118,10 @@ def test_acceptance_requires_both_verifiers_and_preserves_the_observed_decision(
     module = _module()
     loaded, metadata, computation = _case(tmp_path, all_abstain=all_abstain)
 
-    acceptance = module.build_phase2b3b_acceptance(loaded, metadata, computation)
+    verified_acceptance = module.build_phase2b3b_acceptance(
+        loaded, metadata, computation
+    )
+    acceptance = verified_acceptance.as_dict()
 
     assert acceptance["schema"] == "trustsr.phase2b3b-calibration-acceptance.v1"
     assert acceptance["verification_scope"] == "independent_calibration_acceptance"
@@ -173,6 +176,17 @@ def test_rejects_forged_verification_receipt_types(
         )
 
 
+def test_verification_and_acceptance_receipts_cannot_be_directly_constructed() -> None:
+    module = _module()
+
+    with pytest.raises(TypeError, match="created only by"):
+        VerifiedPhase2B3BBundle()
+    with pytest.raises(TypeError, match="created only by"):
+        VerifiedPhase2B3BComputation()
+    with pytest.raises(TypeError, match="created only by"):
+        module.VerifiedPhase2B3BAcceptance()
+
+
 def test_publication_is_exact_atomic_and_idempotent(tmp_path: Path) -> None:
     module = _module()
     loaded, metadata, computation = _case(tmp_path)
@@ -192,7 +206,7 @@ def test_publication_is_exact_atomic_and_idempotent(tmp_path: Path) -> None:
     assert first.publication_sha256 == second.publication_sha256
     assert first.reused is False
     assert second.reused is True
-    assert canonical_json(acceptance) == (
+    assert canonical_json(acceptance.as_dict()) == (
         publication / "sen2naipv2-calibration-conformal-acceptance-v1.json"
     ).read_bytes()
 
@@ -232,11 +246,59 @@ def test_existing_publication_with_different_bytes_fails_closed(tmp_path: Path) 
     project_root = tmp_path / "project"
     (project_root / "artifacts").mkdir(parents=True)
     module.publish_phase2b3b_evidence(project_root, loaded, acceptance)
-    changed = deepcopy(acceptance)
-    changed["unexpected"] = True
+    changed_document = acceptance.as_dict()
+    changed_document["unexpected"] = True
+    changed = object.__new__(module.VerifiedPhase2B3BAcceptance)
+    object.__setattr__(changed, "payload", canonical_json(changed_document))
+    object.__setattr__(changed, "phase_decision", changed_document["phase_decision"])
 
-    with pytest.raises(ValueError, match="different bytes"):
+    with pytest.raises(ValueError, match="acceptance.*keys"):
         module.publish_phase2b3b_evidence(project_root, loaded, changed)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda value: value.update({"acceptance_authorized": False}),
+        lambda value: value["checks"].update({"metadata_authority_pass": False}),
+        lambda value: value["target"].update({"alpha": 0.051}),
+        lambda value: value["digests"].update({"result_sha256": "f" * 64}),
+        lambda value: value.update({"phase_decision": "stop_insufficient_coverage"}),
+    ),
+)
+def test_publication_revalidates_acceptance_authority_and_bundle_binding(
+    tmp_path: Path, mutation
+) -> None:
+    module = _module()
+    loaded, metadata, computation = _case(tmp_path)
+    document = module.build_phase2b3b_acceptance(
+        loaded, metadata, computation
+    ).as_dict()
+    mutation(document)
+    forged = object.__new__(module.VerifiedPhase2B3BAcceptance)
+    object.__setattr__(forged, "payload", canonical_json(document))
+    object.__setattr__(forged, "phase_decision", document["phase_decision"])
+    project_root = tmp_path / "project"
+    (project_root / "artifacts").mkdir(parents=True)
+
+    with pytest.raises(ValueError):
+        module.publish_phase2b3b_evidence(project_root, loaded, forged)
+
+    assert not (project_root / "artifacts" / "phase2b3b").exists()
+
+
+def test_publication_rejects_acceptance_built_for_a_different_bundle(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    loaded, metadata, computation = _case(tmp_path)
+    acceptance = module.build_phase2b3b_acceptance(loaded, metadata, computation)
+    other_loaded, _, _ = _case(tmp_path, all_abstain=True)
+    project_root = tmp_path / "project"
+    (project_root / "artifacts").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="acceptance.*bundle"):
+        module.publish_phase2b3b_evidence(project_root, other_loaded, acceptance)
 
 
 def test_concurrent_identical_publication_commits_one_exact_directory(
@@ -298,3 +360,33 @@ def test_independent_verifier_shares_the_formal_exclusive_lock(
                 manifest_path=tmp_path / "manifest.jsonl",
                 confirmed_persistent_storage=True,
             )
+
+
+def test_independent_verifier_rejects_the_producer_bundle_before_authority_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    storage_root = tmp_path / "storage"
+    project_root = tmp_path / "project"
+    storage_root.mkdir()
+    project_root.mkdir()
+    monkeypatch.setattr(phase2b3b_workflow, "_MINIMUM_FREE_BYTES", 0)
+    paths = phase2b3b_workflow.validate_phase2b3b_storage(storage_root, True)
+    paths.bundle_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        module,
+        "verify_phase2b3b_revision",
+        lambda _: (_ for _ in ()).throw(
+            AssertionError("authority read crossed the copied-bundle gate")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="copied bundle"):
+        module.run_independent_phase2b3b_verification(
+            bundle_dir=paths.bundle_dir,
+            project_root=project_root,
+            evidence_dir=tmp_path / "evidence",
+            storage_root=storage_root,
+            manifest_path=tmp_path / "manifest.jsonl",
+            confirmed_persistent_storage=True,
+        )

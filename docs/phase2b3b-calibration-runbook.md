@@ -60,7 +60,6 @@ PHASE2B3B_STORAGE_ROOT=/absolute/path/to/persistent/storage
 PHASE2B3B_EVIDENCE_DIR="$PHASE2B3B_PROJECT_ROOT/artifacts/phase2b3a"
 PHASE2B3B_POST_MANIFEST_SHA256=c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a
 PHASE2B3B_MANIFEST="$PHASE2B3B_STORAGE_ROOT/trustsr/phase2b1b/selections/$PHASE2B3B_POST_MANIFEST_SHA256/samples.jsonl"
-PHASE2B3B_LDSR_MODEL_DIR=/absolute/path/to/verified/ldsr/model
 PHASE2B3B_BUNDLE="$PHASE2B3B_STORAGE_ROOT/trustsr/phase2b3b/bundles/$PHASE2B3B_POST_MANIFEST_SHA256"
 PHASE2B3B_COMMON_ARGS=(
   --project-root "$PHASE2B3B_PROJECT_ROOT"
@@ -81,8 +80,8 @@ trustsr/phase2b3b/scores/<post-manifest-sha256>/
 trustsr/phase2b3b/bundles/<post-manifest-sha256>/
 ```
 
-All formal stages share one non-blocking exclusive lock. A concurrent calibration, replay, or
-independent verification attempt fails closed.
+All formal stages share one non-blocking exclusive lock. A concurrent preflight, calibration,
+replay, or independent verification attempt fails closed.
 
 ## 3. Metadata-only preflight
 
@@ -98,23 +97,35 @@ uv run trustsr-phase2b3b preflight "${PHASE2B3B_COMMON_ARGS[@]}"
 Stop on any nonzero exit, revision mismatch, evidence mismatch, manifest mismatch, path rejection,
 or capacity rejection.
 
-## 4. GPU authorization boundary and formal calibration
+## 4. CPU cache probe and formal calibration
 
-Do not run this section until the local readiness gate has passed and the user has separately
-authorized starting the GPU server. `calibration` is the only command that imports and constructs
-LDSR or may call prediction. The default is one worker; no worker override exists.
+Do not run this section until the local readiness gate has passed. The first invocation deliberately
+omits the model path. It loads only the 120 frozen calibration inputs, verifies whether one coherent
+set of all 600 fixed K5 prediction-cache entries exists, and never imports or constructs LDSR:
 
 ```bash
+uv run trustsr-phase2b3b calibration "${PHASE2B3B_COMMON_ARGS[@]}"
+```
+
+If the complete cache exists, this CPU-only command computes the fixed K5 variance score and R9
+risk, fits `alpha=0.05`, immediately reconstructs score, risk, fit, result, and cache audit without
+inference, and atomically publishes the bundle after byte identity succeeds. Continue to replay;
+do not start a GPU.
+
+If it stops with `verified K5 prediction caches are missing`, stop and request the user's separate
+GPU-server authorization. Only after that authorization define the verified model path and rerun:
+
+```bash
+PHASE2B3B_LDSR_MODEL_DIR=/absolute/path/to/verified/ldsr/model
 uv run trustsr-phase2b3b calibration \
   "${PHASE2B3B_COMMON_ARGS[@]}" \
   --ldsr-model-dir "$PHASE2B3B_LDSR_MODEL_DIR"
 ```
 
-The command validates all metadata gates before calibration pixel loading and model construction.
-It generates only missing exact K5 prediction caches, computes the fixed K5 variance score and R9
-risk, fits `alpha=0.05`, then immediately reconstructs score, risk, fit, result, and cache audit
-from cache without inference. Only after that byte comparison succeeds does it atomically publish
-the complete four-document bundle plus manifest.
+Supplying `--ldsr-model-dir` is the only path that imports and constructs LDSR or may call
+prediction. It happens only after metadata, storage, lock, calibration-input, and cache-integrity
+gates pass, and it generates only missing exact K5 entries. The default is one worker; no worker
+override exists.
 
 An interruption may leave individually verified cache entries, but it must not leave an accepted
 bundle. Cache entries are reusable only through their full identities.

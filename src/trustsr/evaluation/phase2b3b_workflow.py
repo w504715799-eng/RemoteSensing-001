@@ -26,7 +26,10 @@ from trustsr.evaluation.calibration_cache_replay import replay_calibration_cache
 from trustsr.evaluation.calibration_fit import fit_calibration_maps
 from trustsr.evaluation.calibration_input_receipt import build_calibration_input_receipt
 from trustsr.evaluation.calibration_maps import load_or_compute_calibration_maps
-from trustsr.evaluation.calibration_predictions import load_or_generate_calibration_bundle
+from trustsr.evaluation.calibration_predictions import (
+    load_complete_cached_calibration_bundles,
+    load_or_generate_calibration_bundle,
+)
 from trustsr.evaluation.calibration_radiometry import build_calibration_radiometry
 from trustsr.evaluation.calibration_replay_receipt import build_calibration_replay_receipt
 from trustsr.evaluation.phase2b3b_bundle import (
@@ -302,7 +305,7 @@ def run_formal_calibration(
     evidence_dir: Path,
     storage_root: Path,
     manifest_path: Path,
-    ldsr_model_dir: Path,
+    ldsr_model_dir: Path | None,
     confirmed_persistent_storage: bool,
 ) -> Phase2B3BWorkflowReceipt:
     """Run the sole formal K5 calibration and immediate inference-free replay."""
@@ -318,13 +321,24 @@ def run_formal_calibration(
         )
         input_receipt = build_calibration_input_receipt(records, pairs, preflight)
         radiometry = build_calibration_radiometry(pairs)
-        ldsr = _load_ldsr(ldsr_model_dir)
         prediction_cache = PredictionCache(paths.prediction_cache_dir)
         score_cache = ScoreCache(paths.score_cache_dir)
-        bundles = tuple(
-            load_or_generate_calibration_bundle(pair, ldsr=ldsr, cache=prediction_cache)
-            for pair in pairs
+        bundles = load_complete_cached_calibration_bundles(
+            tuple(pairs), cache=prediction_cache
         )
+        if bundles is None:
+            if ldsr_model_dir is None:
+                raise RuntimeError(
+                    "verified K5 prediction caches are missing; obtain GPU authorization "
+                    "before supplying --ldsr-model-dir"
+                )
+            ldsr = _load_ldsr(ldsr_model_dir)
+            bundles = tuple(
+                load_or_generate_calibration_bundle(
+                    pair, ldsr=ldsr, cache=prediction_cache
+                )
+                for pair in pairs
+            )
         maps = tuple(
             load_or_compute_calibration_maps(pair, bundle, score_cache)
             for pair, bundle in zip(pairs, bundles, strict=True)
