@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, dataclass
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import test_calibration_cache_replay as replay_fixtures
@@ -125,13 +127,14 @@ def _verify(
     *,
     result_bytes: bytes | None = None,
     audit_bytes: bytes | None = None,
+    preflight: Mapping[str, object] | None = None,
     pairs: tuple[LoadedCrosssensorPair, ...] | None = None,
     score_cache: ScoreCache | None = None,
 ) -> VerifiedPhase2B3BComputation:
     return verify_phase2b3b_computation(
         case.result_bytes if result_bytes is None else result_bytes,
         case.audit_bytes if audit_bytes is None else audit_bytes,
-        preflight=case.preflight,
+        preflight=case.preflight if preflight is None else preflight,
         input_receipt=case.input_receipt,
         radiometry=case.radiometry,
         revision=case.revision,
@@ -139,6 +142,14 @@ def _verify(
         prediction_cache=case.prediction_cache,
         score_cache=case.score_cache if score_cache is None else score_cache,
     )
+
+
+def _freeze(value: object) -> object:
+    if type(value) is dict:
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if type(value) is list:
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 def test_recomputes_caches_fit_and_canonical_result_into_a_non_authorizing_receipt(
@@ -158,6 +169,15 @@ def test_recomputes_caches_fit_and_canonical_result_into_a_non_authorizing_recei
     assert "internal_test" not in canonical_json(receipt.as_dict()).decode()
     with pytest.raises(FrozenInstanceError):
         receipt.acceptance_authorized = True  # type: ignore[misc]
+
+
+def test_recomputes_with_frozen_preflight_authority(valid_case: _Case) -> None:
+    preflight = _freeze(valid_case.preflight)
+    assert isinstance(preflight, Mapping)
+
+    receipt = _verify(valid_case, preflight=preflight)
+
+    assert receipt.result_sha256 == hashlib.sha256(valid_case.result_bytes).hexdigest()
 
 
 @pytest.mark.parametrize("fault", ("missing_metadata", "tensor_bytes"))

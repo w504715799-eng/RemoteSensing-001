@@ -126,11 +126,23 @@ def _canonical_document(payload: object, *, schema: str, label: str) -> dict[str
     return value
 
 
+def _json_native(value: object) -> object:
+    if isinstance(value, Mapping):
+        if any(type(key) is not str for key in value):
+            raise TypeError("trusted JSON mapping keys must be built-in strings")
+        return {key: _json_native(item) for key, item in value.items()}
+    if type(value) in (list, tuple):
+        return [_json_native(item) for item in value]
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    raise TypeError("trusted JSON data contains a non-JSON value")
+
+
 def _snapshot_mapping(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a mapping")
     try:
-        snapshot = json.loads(canonical_json(value))
+        snapshot = json.loads(canonical_json(_json_native(value)))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} must be canonical JSON data") from exc
     if type(snapshot) is not dict:
