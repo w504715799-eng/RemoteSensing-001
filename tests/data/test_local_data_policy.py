@@ -53,6 +53,14 @@ def test_ignore_rules_keep_pinned_metadata_addable() -> None:
         "artifacts/phase2b3b/sen2naipv2-calibration-conformal-acceptance-v1.json",
     )
     assert _is_ignored(repo_root, "artifacts/phase2b3b/prediction-cache.bin")
+    for name in (
+        "sen2naipv2-internal-test-access-authorization-v1.json",
+        "sen2naipv2-internal-test-evaluation-v1.json",
+        "sen2naipv2-internal-test-evaluation-cache-audit-v1.json",
+        "sen2naipv2-internal-test-evaluation-acceptance-v1.json",
+    ):
+        assert not _is_ignored(repo_root, f"artifacts/phase2b3c/{name}")
+    assert _is_ignored(repo_root, "artifacts/phase2b3c/prediction-cache.pt")
 
 
 def test_policy_rejects_a_tracked_taco_file(tmp_path: Path) -> None:
@@ -119,3 +127,15 @@ def test_policy_accepts_this_repositorys_tracked_metadata() -> None:
     repo_root = Path(__file__).parents[2]
 
     assert tracked_data_policy_violations(repo_root) == ()
+
+
+def test_policy_rejects_nonallowlisted_phase2b3c_files(tmp_path: Path) -> None:
+    repo_root = _temporary_repository(tmp_path)
+    unexpected = repo_root / "artifacts/phase2b3c/internal-test-cache.pt"
+    unexpected.parent.mkdir(parents=True)
+    unexpected.write_bytes(b"not-real-pixels")
+    _git(repo_root, "add", "-f", str(unexpected.relative_to(repo_root)))
+
+    violations = tracked_data_policy_violations(repo_root)
+
+    assert any("phase2b3c" in violation and "allowlist" in violation for violation in violations)

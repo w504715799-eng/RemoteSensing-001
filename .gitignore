@@ -28,6 +28,12 @@ __pycache__/
 !/artifacts/phase2b3b/sen2naipv2-calibration-conformal-v1.json
 !/artifacts/phase2b3b/sen2naipv2-calibration-conformal-cache-audit-v1.json
 !/artifacts/phase2b3b/sen2naipv2-calibration-conformal-acceptance-v1.json
+!/artifacts/phase2b3c/
+/artifacts/phase2b3c/*
+!/artifacts/phase2b3c/sen2naipv2-internal-test-access-authorization-v1.json
+!/artifacts/phase2b3c/sen2naipv2-internal-test-evaluation-v1.json
+!/artifacts/phase2b3c/sen2naipv2-internal-test-evaluation-cache-audit-v1.json
+!/artifacts/phase2b3c/sen2naipv2-internal-test-evaluation-acceptance-v1.json
 /models/
 /checkpoints/
 *.ckpt

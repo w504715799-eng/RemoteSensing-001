@@ -7,6 +7,15 @@ from pathlib import Path
 _DATASET_DIRECTORY = Path("artifacts/datasets")
 _ALLOWED_DATASET_SUFFIXES = frozenset({".json", ".md"})
 _MAX_DATASET_FILE_BYTES = 1_048_576
+_PHASE2B3C_DIRECTORY = Path("artifacts/phase2b3c")
+_PHASE2B3C_ALLOWED_FILES = frozenset(
+    {
+        "sen2naipv2-internal-test-access-authorization-v1.json",
+        "sen2naipv2-internal-test-evaluation-v1.json",
+        "sen2naipv2-internal-test-evaluation-cache-audit-v1.json",
+        "sen2naipv2-internal-test-evaluation-acceptance-v1.json",
+    }
+)
 
 
 def _git_output(repo_root: Path, *args: str) -> bytes:
@@ -63,6 +72,14 @@ def tracked_data_policy_violations(repo_root: Path) -> tuple[str, ...]:
 
         if str(relative_path).endswith(".taco"):
             violations.append(f"tracked TACO data file: {relative_path}")
+
+        if relative_path.parts[:2] == _PHASE2B3C_DIRECTORY.parts and (
+            len(relative_path.parts) != 3
+            or relative_path.name not in _PHASE2B3C_ALLOWED_FILES
+        ):
+            violations.append(
+                f"tracked Phase 2B3-C file is outside the exact allowlist: {relative_path}"
+            )
 
         if relative_path.parts[:2] != _DATASET_DIRECTORY.parts:
             continue
