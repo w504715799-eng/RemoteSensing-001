@@ -14,8 +14,14 @@ Read these documents before starting new work:
 - [Task-by-task research execution plan](superpowers/plans/2026-09-07-first-paper-research.md);
 - [Literature review and scope rationale](reports/2026-09-07-research-replan.md).
 
-The next task is M0 / Task 1: assemble the published evidence inventory and claim/metric
-dictionary using local Git-safe JSON only. New research tasks are not yet executed.
+The user subsequently authorized execution, with a stop to request GPU resources when needed.
+Tasks 1–2 now have evidence, metric, manuscript, and rendering-design documents; no new
+scientific computation has run. Neighborhood and Spain designs are drafts, not a final freeze.
+The next local task is the read-only evidence renderer followed by synthetic neighborhood tests.
+See [readiness checkpoint](reports/first-paper-development-readiness.md) and
+[Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
+v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.
+Do not describe the external study as completely quality-blind or resolve these gaps using pixels.
 The target is a complete draft in approximately 4–6 weeks, subject to data and resource gates.
 New networks, grouped calibration, SEN2NEON, downstream segmentation, and fallback products
 are outside the first-paper baseline scope. Formal external-test access and paid GPU execution
