@@ -1,6 +1,6 @@
-# Codex handoff: Phase 2B3-C local readiness complete; stopped before Task 12
+# Codex handoff: Phase 2B3-C one-time internal-test evaluation accepted
 
-Date: 2026-09-04 (Asia/Shanghai)
+Date: 2026-09-07 (Asia/Shanghai)
 
 ## Repository checkpoint
 
@@ -10,14 +10,20 @@ Date: 2026-09-04 (Asia/Shanghai)
   `b45ca5e` (`test: harden phase2b3c publication boundary`).
 - Independent acceptance/publication checkpoint:
   `d7d0c35` (`feat: verify and publish phase2b3c acceptance`).
+- Task 11 local-readiness documentation checkpoint:
+  `1f9d07a654d10cd155e32a329150383382ce93b6`.
+- Reviewed one-time access-permit commit:
+  `a5367ef630d634cd5482f37bf289d35da6ac9119`.
+- Three-file Phase 2B3-C result publication commit:
+  `ab7fb54e4b293eee7850cb62afe4c498ad18c9d9`.
 - Phase 2B3-B Git-safe evidence publication commit:
   `f8f49a820d22b7dea2e003736ee465f9d7788f7d`.
 - Work directly in the current attached `main`. Do not create a branch/worktree or allow concurrent
   writers. Confirm `git status --short`, `git branch --show-current`, and `git log -1 --oneline`
   before any later operation.
-- Tasks 1–11 are locally complete. No real Phase 2B3-C command, permit, ledger, pixel/cache access,
-  LDSR construction, CUDA inspection, GPU, or remote server was used. Task 12 is the next and only
-  next stage, and it begins with the dedicated authorization stop described below.
+- Tasks 1–12 and the authorized one-time workflow are complete. The terminal decision is
+  `empirically_met_but_inconclusive`; the immutable ledger is `accepted`. The protected evaluation
+  is consumed and must never be repeated, reset, rescued, or retuned.
 
 ## Phase 2B3-C local implementation state
 
@@ -76,13 +82,64 @@ three-decision synthetic end-to-end test uses a generated balanced 360-row manif
 pairs, fake complete K5 caches, formal evaluate, inference-free replay, copied-bundle independent
 verification, terminal ledger behavior, canonical publication, and the publication policy scan.
 
-The exact operations and later stop conditions are documented in
+The exact operations and stop conditions are documented in
 [the Phase 2B3-C runbook](phase2b3c-one-time-evaluation-runbook.md).
 
-No real `internal_test` image, prediction cache, score, risk, metric, or aggregate has been read.
-No real Phase 2B3-C preflight/evaluate/replay/verify command has run. No real access permit or
-ledger exists. No LDSR model was constructed, no CUDA/GPU was accessed, and no remote server was
-contacted during implementation or local verification.
+## Completed Phase 2B3-C one-time evaluation and publication
+
+The user granted the dedicated one-time real `internal_test` authorization on 2026-09-07 before
+the permit, ledger, pixel, or cache boundary was opened. The metadata-only readiness document was
+kept outside Git and bound:
+
+- readiness SHA-256: `78e46a77df4d5229db30511b20dfad17aaa522839384c9177229b828cb9538f6`;
+- evaluation ID: `516b0dc182329201d0e472fa15e5d95ed3863ac2e2b83762f40cce4c2c55b80c`;
+- implementation revision: `1f9d07a654d10cd155e32a329150383382ce93b6`;
+- computation-tree SHA-256: `db52687da91ac56b1852bced50accbdc58d611a10bc82f58b08a2222d31442c7`;
+- ordered-membership SHA-256:
+  `dc94582cde20facc6b0f4d87d5899d49256497d59627c219a2a3c14b7c6ae354`; and
+- environment SHA-256: `80240178079221f3a99c4b56c26b827dd8cb5e96ba11f783681b3934bcb4bb14`.
+
+The canonical permit SHA-256 is
+`efec86c1bbced2e2c0d9c8101d51a602e724853e3a99cea518aee0fe5265b464`. The first exact K5 probe
+reported `0/600` verified entries and `600/600` missing, then stopped before LDSR construction as
+required. After the user separately authorized GPU startup and use, the same permit and ledger
+resumed with the existing base `/opt/conda/bin/python`; no environment or dependency was created or
+modified. LDSR generated only the missing exact entries. Formal evaluate, immediate reconstruction,
+explicit inference-free replay, copied-bundle independent verification, publication, and terminal
+ledger advancement all completed successfully.
+
+The preregistered result is `empirically_met_but_inconclusive`:
+
+- aggregate trusted-pixel coverage: `0.5741024335225423`, above the fixed `0.10` minimum;
+- empirical mean loss: `0.04198510404780997`, below the fixed `0.05` target; and
+- grid-Kelly risk UCB: `0.0779855394819395`, above the fixed `0.05` target.
+
+The sole reason is `finite_sample_upper_bound_exceeds_target`. This is not a confirmation claim and
+must not be rescued by changing the threshold, alpha, coverage gate, score, seeds, membership,
+weighting, risk, or confidence method.
+
+The only Git-published Phase 2B3-C result files are:
+
+| File | SHA-256 |
+|---|---|
+| `sen2naipv2-internal-test-evaluation-v1.json` | `9f267e459908a28e6fd254de9cc1d7d2352bf23b672366a9eda9839d53a0e115` |
+| `sen2naipv2-internal-test-evaluation-cache-audit-v1.json` | `4bf048b222d4993adb0fd70b0273f60a994ecb7b3539e58ed3b2d57dcf4f43ff` |
+| `sen2naipv2-internal-test-evaluation-acceptance-v1.json` | `6fda78e13b13f78201487043fe9f679b432b692216778d172e7f36bf2d9ded21` |
+
+The independent verifier reported `acceptance_authorized=true`,
+`cache_computation_verified=true`, `prediction_inference_verified=false`, and ledger state
+`accepted`. The published acceptance binds the `bundle_complete` event SHA-256
+`45c08caa9d90d69fbaf8a72b66b960ff2930de05ec26b04ef2db4590dcac2c38` and records the terminal
+state literal, but its v1 schema does not contain the subsequently appended accepted-event digest.
+From the deterministic ledger schema, exact permit binding, canonical storage identity, sequence
+`4`, and that predecessor digest, the accepted-event SHA-256 was independently reconstructed
+offline as `3217912ad1387e186f0000d5eabe103d84f574419df034fe8ecd1b5f2630a278`.
+Do not revise the published schema or rerun protected data to change this limitation.
+
+The publication policy scanner examines Git-index entries. The coordinator therefore staged only
+the exact three result names before running the scanner; it returned no violations. A separate
+read-only review found no forbidden path, host, credential, timestamp, GPU identity, or per-sample
+numerical outcome in the four canonical Phase 2B3-C artifacts.
 
 ## Frozen Phase 2B3-A baseline
 
@@ -302,31 +359,25 @@ Continue to enforce:
 
 ## GPU and cloud status
 
-No GPU or cloud server was needed for local Phase 2B3-C Tasks 1–11. The server remains off. Do not
-connect merely to inspect caches: the exact K5 cache probe is itself protected `internal_test`
-access and may run only after the dedicated Task 12 authorization and reviewed permit exist.
+GPU use was separately authorized only after the exact probe reported all 600 entries missing.
+The GPU generated those entries once; formal replay and independent verification were
+inference-free. All remote commands used the existing base interpreter and made no environment or
+dependency changes. Remote compute and verification have ended, so the GPU/server is no longer
+required and may remain off.
 
-If an authorized real evaluation later reports any of the exact 600 prediction entries missing,
-stop before model construction and tell the user GPU is required. Remote execution must use the
-server's existing base interpreter (`/opt/conda/bin/python`), never `uv`, `.venv`, environment
-creation, or dependency mutation. If all 600 entries verify, complete evaluate/replay/verification
-on CPU and do not start LDSR or request GPU.
+Do not reconnect to enumerate caches, recover unpublished per-sample values, rerun inference, or
+repeat the consumed evaluation. The external cache, bundle, readiness, ledger, model, runtime,
+replay, path, endpoint, and credential state remains outside Git and is not a merge source.
 
 Cloud-side code, logs, tensors, caches, models, paths, endpoints, and credentials must never enter
 Git or become a merge source.
 
-## Mandatory next step: Task 12 authorization stop
+## Terminal state and next action
 
-Tasks 9–11 and their local gates are complete. Stop here. Do not create a permit or ledger and do
-not run real evaluate/replay/verify. The next coordinator may first produce only the metadata
-preflight/readiness JSON outside Git and report its digest, evaluation ID, implementation revision,
-computation-tree digest, and the local gate results. Preflight must not open a pixel/cache, inspect
-CUDA, construct LDSR, or advance/create a ledger.
-
-The user's standing instruction to proceed with recommended local steps is not a substitute for the
-design's dedicated, one-time Phase 2B3-C real-data authorization. At Task 12, stop and request that
-specific authorization before creating the reviewed permit or accessing any real `internal_test`
-pixel or cache. Parameter changes remain forbidden after observing any holdout information.
+Phase 2B3-C is terminal. Do not create another permit or ledger, rerun preflight/evaluate/replay/
+verify, reopen protected data, or attempt a second confirmation. Future work may consume only the
+three published aggregate result documents under their stated inconclusive interpretation. Any
+downstream design requires a new plan and must not reinterpret this run as `confirmed`.
 
 ## Verification at handoff
 
@@ -385,9 +436,13 @@ It reached `100%` with exit code zero. The exact planned Ruff scope passed with 
 before commit `d7d0c35`, and Task 10's policy plus three-decision synthetic end-to-end scope passed
 before commit `b45ca5e`.
 
-These results establish local implementation readiness only. They do not establish that any real
-cache is complete, that the real evaluation has run, or that any real Phase 2B3-C decision exists.
-Do not describe real evaluation, acceptance, ledger completion, or result publication as complete.
+Post-publication, the exact three result files were staged before policy inspection. The dedicated
+publication scan returned no violations; the tracked-data policy and scoped policy/result/
+acceptance tests reached `100%`; all four Phase 2B3-C artifacts were canonical JSON; cross-file
+result/cache/acceptance digests, counts, decision, checks, and terminal-state fields matched. An
+independent read-only review found no critical artifact issue and confirmed the decision semantics.
+Its implementation-level findings—the acceptance v1 accepted-event limitation and the index-only
+scanner behavior—are recorded above without changing code or rerunning consumed data.
 
 ## Persistent stop conditions
 
@@ -395,10 +450,9 @@ Do not describe real evaluation, acceptance, ledger completion, or result public
   `internal_test` records in their canonical post-manifest order for Phase 2B3-C.
 - Fail closed on any evidence, revision, membership, asset, tensor, model, policy, cache, replay,
   runtime, permit, ledger, canonical JSON, path, or digest mismatch.
-- Before dedicated authorization, do not open any `internal_test` image or cache, run a real C
-  command, construct LDSR, inspect CUDA for this phase, or write/advance the C access ledger.
-- After authorization, write `pixels_opened` before the first pixel or test-cache access and never
-  reset, delete, or replace ledger history. A crash after that event counts as consumed access.
+- The dedicated authorization has been consumed and the ledger is terminal `accepted`; never open
+  another `internal_test` image/cache, run another real C command, or create a replacement permit.
+- Never reset, delete, replace, copy as authority, or manually advance the external ledger history.
 - Never use development, calibration, or `internal_test` observations to tune Phase 2B3-C.
 - Never lower alpha or minimum coverage to rescue an unfavorable result.
 - Never treat a structurally self-consistent receipt or transport-valid bundle as scientific
