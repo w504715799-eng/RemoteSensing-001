@@ -18,7 +18,8 @@ The user subsequently authorized execution, with a stop to request GPU resources
 Tasks 1–2 have evidence, metric, manuscript, and rendering-design documents. The development
 neighborhood comparison has now completed; Spain remains a draft, not a final freeze.
 The read-only renderer and synthetic neighborhood module are now implemented. Three CSV tables
-and the development R1/R9 PDF are generated. Latest scoped checks: 78 local tests, 28 cloud tests.
+and the development R1/R9 PDF are generated. Latest scoped checks: 87 local tests, 28 cloud tests.
+The local OpenSR contract checks emit 43 existing PyTorch JIT deprecation warnings.
 Cloud development reuse verified 120 ROIs, 240 assets and 600 K5 predictions. Windows 3 and 9
 were evaluated twice on CPU with byte-identical science output; the preregistered rule selected 3.
 See [development results](reports/first-paper-neighborhood-development.md). No inference or B/C
@@ -28,6 +29,15 @@ New science and runtime records are durable; only the small science JSON was cop
 The user was notified that the server may be stopped while retaining durable storage. No job remains.
 Next: resolve versioned Spain contracts, build the independent external entry, and measure missing
 inference costs before final protocol freeze. Do not repeat the completed development selection.
+
+Latest local follow-up: a pinned text-only metadata projection now records 28 crops and 20 urban
+ROIs without quality columns. Before any image access, the proposed image version was changed
+from 021 to 100 to match the available CSV version; both package identities remain documented.
+This is not a claim that embedded metadata/tensor order has been verified. New input decoding,
+nodata/range rules and final compute budget still block the external freeze.
+OpenSR 1.3.3 contract tests establish cropped grids, soft class shares and missing-value semantics.
+See [OpenSR contract](reports/first-paper-opensr-contract.md). No cloud reconnection or image download
+was needed for this follow-up. Keep structural diagnostics image-level pending the remaining checks.
 See [readiness checkpoint](reports/first-paper-development-readiness.md) and
 [Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
 v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.

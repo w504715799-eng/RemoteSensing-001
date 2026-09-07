@@ -47,3 +47,30 @@ S2 ID 提供获取日期，HR 文件名只有年度，不能据此确认精确�
 需要公开文本或维护者说明确认 v3 成员对应、RGBN／L2A 的波段和单位、HR 协调、
 有效区域与 nodata 约定。未知项不得靠提前下载像素试错解决。
 目前选择描述性统计分支；不以 48 ROI 的像素级 bootstrap 构造伪精度。
+
+## 后续文本核验与版本决策
+
+固定 HF 数据卡 SHA-256：`3ad47f1076b5209bfdc75e0e9d7d746a7b1ab61e5144804a78af205c8dcb47a9`。
+[该版本 README](https://huggingface.co/datasets/isp-uv-es/opensr-test/blob/e4600b9c74a621adeec047e5f6cc7a2d70a58134/README.md)
+确认 L2A RGBN 索引为 `[3,2,1,7]`，HR 顺序 RGBN，`HRharm` 相对 L2A 协调，
+两 Spain 子集均 ×4、HR 512×512。官方示例采用除以 10000，但该示例用 SPOT，
+不能独自证明 Spain 特定的 nodata／异常范围合同。
+
+API 进一步核验 v2／100 包：
+
+| 路径 | 字节数 | LFS SHA-256，未下载内容 |
+|---|---:|---|
+| `100/spain_crops/spain_crops.pkl` | 140385908 | `5f68a962b200ef781cbabbe21e598b71379fafb3c12d614deae652e65bb86319` |
+| `100/spain_urban/spain_urban.pkl` | 100276003 | `da6d0ae68a78ef9c125d3b3805fde40718e61b1e54db2877d8041b049c2c3775` |
+
+两包与 021 各差 34 字节且哈希不同，不能认定语义相同。官方 changelog 未给出足够
+细节解释这个映射。因此在任何图像访问前，外部草案改选 **100 包 + 同版本 CSV**。
+理由是可追溯性和减少不必要的跨版本推断，不是模型效果。上面的 021 核查保留为历史记录。
+
+已用固定哈希投影出 [48 ROI 文本清单](../../artifacts/datasets/spain-metadata-v1.json)，
+仅包含身份、来源、坐标及分组计数，不含官方质量数值。它不是已验证的图像输入清单：
+包内 metadata 的行顺序／成员对应须在冻结后的受控加载中核验后才可计算指标。
+外部下载／pickle 解包安全、数值单位／范围／nodata 及最终运行预算仍待完成。
+
+投影 JSON SHA-256：`7ecb39fbd9ce48740a60bdc253aff4704773acfeefed26672aa8043d3530c325`。
+复建命令：`.venv/bin/python scripts/paper/audit_spain_metadata.py`；仅请求两份固定 CSV。
