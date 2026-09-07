@@ -52,9 +52,18 @@ Spain 外部评估未执行；其版本、来源和独立性限制见元数据�
 曲线见 [R1／R9 图](figures/development_risk_coverage.pdf)，复建方法见
 [复现说明](reproducibility.md)。
 
+在同一 120 ROI 上新增的邻域适配比较中，3×3 与 9×9 的平均 R9 AURC 分别为
+0.0091329202 和 0.0092148924。按预设规则选择 3×3，固定 sigma=1；两个候选均保留。
+所选适配的 R9 AURC 比原 K5 低约 4.60%，但这是开发选择结果，不是独立确认。
+其 R1 AURC 为 0.0088262835，R9／R1 rho 分别为 0.7387422781／0.4607505585。
+所有评分复用已有 K5；新 GPU 推理为 0。两轮 CPU 计算产生完全相同的科学 JSON。
+详见 [新增数值证据](tables/neighborhood-development-v1.json) 与
+[执行报告](../docs/reports/first-paper-neighborhood-development.md)。
+
 ## 5. External results and compute
 
-未执行。不得在此预填优势、显著性、GPU 时长或迁移保证。
+外部实验未执行。开发阶段已测：单线程 CPU 每 ROI 纯评分均值，3×3 为 0.269405 秒，
+9×9 为 0.352836 秒；不包含生成 K5 的成本。外部 GPU 时长与费用尚待实测估算。
 
 ## 6. Limitations and discussion
 

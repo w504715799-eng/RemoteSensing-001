@@ -18,3 +18,23 @@ No B/C pixel/cache access, no external test, no inference, no raw downloads.
    results may return to Git. Report actual CPU timing, no fabricated GPU estimate.
 7. Notify user when this cloud job is complete and server may be stopped. This does not mean
    the external protocol or full paper is complete.
+
+## Execution record
+
+- Implementation: `defa6fa4857d17d173915c80ebe8fdf780732f8f`.
+- User authorized cloud development execution without per-step confirmation, no raw downloads.
+- Existing cloud base environment is used; no new environment. At the user's explicit request,
+  pytest 8.4.2 and iniconfig 2.3.0 were installed into that environment. Cloud scoped tests: 28 passed.
+- An earlier run was stopped at the user's interpreter clarification request after 40/120 progress;
+  it produced no final result. No candidate configuration was changed. Restart consumes identical
+  inputs and the same code, with the explicitly approved base interpreter.
+- Formal restarted run passed the complete file check: 120 development ROIs, 240 assets, 600 K5
+  predictions. CPU execution and subsequent replay are required before any completion claim.
+- Permitted local publication: `paper/tables/neighborhood-development-v1.json` only for the new
+  numeric science payload, plus human-readable reports. No raw imagery, tensors, cache sidecars,
+  runtime files, connection information or model files may be copied into Git.
+
+Completed: both full CPU runs succeeded (264.0334 and 265.3517 seconds), science bytes identical,
+selected window 3. Durable science/runtime copies verified and synced, local science independently
+checked for membership, curve averages and summary means. No task/GPU compute process remained;
+user notified to stop the server while retaining storage. See the development result report.

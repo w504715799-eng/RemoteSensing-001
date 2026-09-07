@@ -15,12 +15,19 @@ Read these documents before starting new work:
 - [Literature review and scope rationale](reports/2026-09-07-research-replan.md).
 
 The user subsequently authorized execution, with a stop to request GPU resources when needed.
-Tasks 1–2 now have evidence, metric, manuscript, and rendering-design documents; no new
-scientific computation has run. Neighborhood and Spain designs are drafts, not a final freeze.
+Tasks 1–2 have evidence, metric, manuscript, and rendering-design documents. The development
+neighborhood comparison has now completed; Spain remains a draft, not a final freeze.
 The read-only renderer and synthetic neighborhood module are now implemented. Three CSV tables
-and the development R1/R9 PDF are generated; 69 scoped tests pass. No new real-data study ran.
-Next: resolve versioned Spain input contracts and the allowed development asset scope before
-candidate selection or external freeze. GPU is not needed for the completed local work.
+and the development R1/R9 PDF are generated. Latest scoped checks: 78 local tests, 28 cloud tests.
+Cloud development reuse verified 120 ROIs, 240 assets and 600 K5 predictions. Windows 3 and 9
+were evaluated twice on CPU with byte-identical science output; the preregistered rule selected 3.
+See [development results](reports/first-paper-neighborhood-development.md). No inference or B/C
+pixel/cache access occurred. The existing base environment was used; the user explicitly approved
+installing pytest 8.4.2 and iniconfig 2.3.0. No new environment was created.
+New science and runtime records are durable; only the small science JSON was copied locally.
+The user was notified that the server may be stopped while retaining durable storage. No job remains.
+Next: resolve versioned Spain contracts, build the independent external entry, and measure missing
+inference costs before final protocol freeze. Do not repeat the completed development selection.
 See [readiness checkpoint](reports/first-paper-development-readiness.md) and
 [Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
 v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.

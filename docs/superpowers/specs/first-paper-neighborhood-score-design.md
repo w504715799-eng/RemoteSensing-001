@@ -31,3 +31,9 @@ G_1 是 sigma=1、半径 3、归一化的离散高斯核，反射边界。
 独立部署成本：LR 需要中心一次 LDSR；三模型需要中心 LDSR、SEN2SRLite、bicubic；
 K5 和邻域各需五次 LDSR；随机解析参考的风险需要同一中心预测。
 实验总成本只计共享 K5 加一次 SEN2SRLite 和 bicubic，不按评分数乘算。
+
+## Development 选择记录
+
+2026-09-07 依上述访问前规则选中 window=3；sigma=1、radius=3、reflect 边界不变。
+两个候选与全量复算结果见 [development 报告](../../reports/first-paper-neighborhood-development.md)。
+不再扩大候选集，外部主比较仍是原定 K5 对 LR；此选择不是 Spain 最终协议冻结。
