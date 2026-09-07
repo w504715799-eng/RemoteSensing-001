@@ -1,0 +1,3 @@
+role,roi_count,threshold,coverage,calibration_criterion,mean_roi_loss,risk_ucb,decision
+calibration,120,7.970395366024563e-06,0.5832304954528809,0.04999883134510526,,,freeze_calibration
+internal_test,120,7.970395366024563e-06,0.5741024335225423,,0.04198510404780997,0.0779855394819395,empirically_met_but_inconclusive

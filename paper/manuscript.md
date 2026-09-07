@@ -47,6 +47,11 @@ Spain 外部评估未执行；其版本、来源和独立性限制见元数据�
 终局保持 **empirically_met_but_inconclusive**，流程验收不是风险确认。
 所有数字来源见 [证据清单](../docs/reports/first-paper-evidence-inventory.md)。
 
+已有数值表：[开发指标](tables/development_scores.csv)、[开发曲线](tables/development_curves.csv)、
+[校准与终局](tables/calibration_evaluation.csv)。
+曲线见 [R1／R9 图](figures/development_risk_coverage.pdf)，复建方法见
+[复现说明](reproducibility.md)。
+
 ## 5. External results and compute
 
 未执行。不得在此预填优势、显著性、GPU 时长或迁移保证。
