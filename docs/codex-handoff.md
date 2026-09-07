@@ -1,6 +1,29 @@
-# Codex handoff: Phase 2B3-C one-time internal-test evaluation accepted
+# Codex handoff: first-paper research plan; Phase 2B3-C remains terminal
 
 Date: 2026-09-07 (Asia/Shanghai)
+
+## Current objective: approved first-paper research direction
+
+The user accepted the recommended research direction on 2026-09-07 and requested a new plan
+and Git publication. The first paper now focuses on uncertainty-score cost, error-scale
+sensitivity, and frozen calibration transfer for Sentinel-2 RGBN x4 super-resolution.
+
+Read these documents before starting new work:
+
+- [Current first-paper roadmap](research-roadmap.md);
+- [Task-by-task research execution plan](superpowers/plans/2026-09-07-first-paper-research.md);
+- [Literature review and scope rationale](reports/2026-09-07-research-replan.md).
+
+The next task is M0 / Task 1: assemble the published evidence inventory and claim/metric
+dictionary using local Git-safe JSON only. New research tasks are not yet executed.
+The target is a complete draft in approximately 4–6 weeks, subject to data and resource gates.
+New networks, grouped calibration, SEN2NEON, downstream segmentation, and fallback products
+are outside the first-paper baseline scope. Formal external-test access and paid GPU execution
+still require their dedicated execution scope and authorization after the new protocol is frozen.
+
+The historical Phase 2B3-C workflow below is complete and immutable. New work must not rerun
+its commands, reopen its protected data, or alter its inconclusive interpretation. Historical
+plans are not instructions to repeat completed experiments.
 
 ## Repository checkpoint
 
@@ -24,6 +47,90 @@ Date: 2026-09-07 (Asia/Shanghai)
 - Tasks 1–12 and the authorized one-time workflow are complete. The terminal decision is
   `empirically_met_but_inconclusive`; the immutable ledger is `accepted`. The protected evaluation
   is consumed and must never be repeated, reset, rescued, or retuned.
+
+## Historical Phase 2B3-C completion summary
+
+### Task objective
+
+Implement the preregistered Phase 2B3-C one-time `internal_test` evaluation on local `main`, prove
+the full workflow with synthetic/local CPU gates, stop for dedicated real-data authorization,
+probe the exact 600-entry K5 cache, use GPU only after a separate authorization if entries are
+missing, independently verify and publish the observed decision, and leave GitHub `main` aligned
+with the reviewed local history.
+
+### Completed modifications
+
+- Tasks 9–11 completed the independent copied-bundle verifier, acceptance/publication boundary,
+  exact four-file publication policy, leakage protections, synthetic end-to-end coverage, runbook,
+  local gates, and readiness handoff.
+- Task 12 produced metadata-only readiness outside Git, committed the exact reviewed permit,
+  consumed the one-time ledger only after explicit authorization, and stopped before LDSR when the
+  exact cache probe reported `0/600` present and `600/600` missing.
+- After separate GPU authorization, the fixed LDSR implementation generated only the missing
+  entries. Formal evaluate, immediate reconstruction, explicit inference-free replay, copied-bundle
+  independent verification, three-file publication, and terminal `accepted` advancement passed.
+- The permit, result publication, and terminal documentation were committed separately as
+  `a5367ef`, `ab7fb54`, and `e4fd8c9`. Before the earlier handoff-only edit, local `main` and GitHub
+  `origin/main` both resolved to `e4fd8c9b7ae8293bd873625a2e20684832b9ce5d` with no diff.
+
+### Key decisions
+
+- The frozen threshold, alpha, minimum coverage, score, K5 seeds, risk, membership, ordering, and
+  confidence method were never changed after protected access.
+- The observed decision is permanently `empirically_met_but_inconclusive`, not `confirmed`:
+  coverage and empirical mean loss met their fixed targets, but the grid-Kelly UCB did not.
+- The one-time authorization is consumed. No rerun, second permit, replacement ledger, retuning,
+  or alternate interpretation is allowed.
+- No implementation/schema change was made after observing the holdout. Review findings about the
+  acceptance v1 terminal-event binding and index-only publication scanner are documented rather
+  than repaired through a prohibited second run.
+
+### Principal modified files
+
+- Runtime and CLIs: `src/trustsr/cli/phase2b3c.py`,
+  `src/trustsr/cli/phase2b3c_verify.py`, `src/trustsr/data/internal_test_subset.py`,
+  `src/trustsr/data/internal_test_pairs.py`, and the Phase 2B3-C/internal-test modules under
+  `src/trustsr/evaluation/`.
+- Tests: the corresponding Phase 2B3-C CLI, data, model, risk, policy, workflow, verifier,
+  acceptance, result, replay, and synthetic end-to-end tests under `tests/`.
+- Documentation: `docs/phase2b3c-one-time-evaluation-runbook.md` and this handoff.
+- Git-safe artifacts: the permit plus the three canonical JSON documents under
+  `artifacts/phase2b3c/`; no runtime, replay, ledger, bundle manifest, cache, tensor, model, path,
+  endpoint, credential, timestamp, or per-sample numerical outcome entered Git.
+
+### Verification results
+
+- The planned Phase 2B3-C local CPU pytest gate reached `100%`; Ruff, `compileall`, all five CLI
+  help checks, and `git diff --check` passed before real access.
+- Real evaluate completed for 120 frozen records and 600 exact predictions. Immediate and explicit
+  replay were byte-identical. Independent copied-bundle verification reported
+  `acceptance_authorized=true`, `cache_computation_verified=true`, and ledger state `accepted`.
+- After publication, the scoped tracked-data, publication-policy, result, and acceptance tests
+  reached `100%`; the index policy scanner returned no violations; all four artifacts were
+  canonical and their cross-file digests/counts/decision/checks matched.
+- A separate read-only review found no critical artifact issue and confirmed the decision
+  semantics and absence of forbidden publication data.
+
+### Unfinished items
+
+- No functional Phase 2B3-C implementation, evaluation, replay, verification, publication, or
+  GitHub synchronization work remains.
+- The earlier handoff-only edit was intentionally staged and left unpublished. The subsequent
+  user request now authorizes publishing this reviewed handoff together with the new research plan.
+- Outstanding first-paper research work is tracked in the new execution plan, not in the
+  completed Phase 2B3-C task list.
+
+### Known risks and immutable cautions
+
+- `empirically_met_but_inconclusive` cannot support a confirmation claim.
+- The acceptance v1 artifact binds the `bundle_complete` event and records terminal state
+  `accepted`, but does not contain the subsequently appended accepted-event digest. The exact
+  deterministic offline reconstruction and limitation are recorded below; do not rerun protected
+  data to alter the schema.
+- The publication scanner reads Git-index entries, so candidate artifacts must be staged through
+  the exact allowlist before the scan. This procedure was followed for the published files.
+- The external ledger/cache/bundle/model state is not Git authority and must not be copied back,
+  reset, deleted, inspected for another evaluation, or used as a merge source.
 
 ## Phase 2B3-C local implementation state
 
@@ -372,7 +479,7 @@ replay, path, endpoint, and credential state remains outside Git and is not a me
 Cloud-side code, logs, tensors, caches, models, paths, endpoints, and credentials must never enter
 Git or become a merge source.
 
-## Terminal state and next action
+## Phase 2B3-C terminal state and boundary for new work
 
 Phase 2B3-C is terminal. Do not create another permit or ledger, rerun preflight/evaluate/replay/
 verify, reopen protected data, or attempt a second confirmation. Future work may consume only the

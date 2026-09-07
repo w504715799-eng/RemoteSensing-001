@@ -2,6 +2,13 @@
 
 Incremental experiments for trustworthy Sentinel-2 RGBN ×4 super-resolution.
 
+Current user-approved research direction (2026-09-07): [first-paper roadmap](docs/research-roadmap.md),
+[execution plan](docs/superpowers/plans/2026-09-07-first-paper-research.md), and
+[literature review](docs/reports/2026-09-07-research-replan.md).
+The completed one-time internal evaluation remains
+`empirically_met_but_inconclusive`; its frozen execution boundaries are recorded in
+[the handoff](docs/codex-handoff.md).
+
 ## Phase 0
 
 Set up the CPU development environment, then run the reproducible bicubic baseline:
