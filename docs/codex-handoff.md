@@ -38,6 +38,12 @@ nodata/range rules and final compute budget still block the external freeze.
 OpenSR 1.3.3 contract tests establish cropped grids, soft class shares and missing-value semantics.
 See [OpenSR contract](reports/first-paper-opensr-contract.md). No cloud reconnection or image download
 was needed for this follow-up. Keep structural diagnostics image-level pending the remaining checks.
+
+2026-09-08: the active user goal is to continue until GPU is genuinely needed, without stepwise
+approval. New `spain_inputs.py` implements strict decoded-array preparation and member-to-row
+binding, with 23 new tests; 110 scoped tests pass (43 existing JIT deprecation warnings).
+This is NOT a complete package loader: hash-gated safe decoding, five-score external aggregation
+and final protocol/budget gates remain. No Spain pixels were accessed, and the goal remains active.
 See [readiness checkpoint](reports/first-paper-development-readiness.md) and
 [Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
 v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.
