@@ -2,6 +2,35 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — historical metadata recovered and audited
+
+2026-09-08. This checkpoint supersedes older next-step instructions. The original
+Phase 2B1-A full manifest was found on the existing cloud persistent disk. Its exact
+pinned SHA passed before projection; no legacy recovery CLI, assets, predictions,
+models or GPU computation were used. Only allowlisted metadata was returned locally.
+The server is no longer needed for this stage; user was notified it can be shut down.
+
+Ignored local export: `artifacts/progressive-historical-manifest/metadata.jsonl`
+and `receipt.json`. Projection SHA:
+`8bf11a4851a97a1af26107f8f91c65946ca931b0156fa85cf8c436d7589bd08a`.
+Published summary: `research/evidence/crosssensor-historical-manifest-audit-v1.json`.
+Reproducible offline verifier: `research/trustmask/audit_recovered_manifest.py`.
+All 8,000 identities, source indices, source identity, centroids and geometry match
+the committed progressive shards. All signed HR-minus-LR UTC date deltas pass:
+-1: 2,145; 0: 3,972; +1: 1,883. Top-level time equals LR time for every member.
+
+New limitation: LR timestamps occur only at 22:00Z (7,174) or 23:00Z (826); HR
+similarly only at these hours. These are verified stored metadata values, not
+verified satellite sensing instants. Do not match catalogs by exact instant or
+infer S2 product identity from timestamps. The cause of this pattern is unresolved.
+Next step is a bounded metadata-only investigation of timestamp semantics and
+candidate source products, using the existing predeclared new-member probes and
+an explicit date-window convention. Catalog matches would remain candidates until
+construction/compositing provenance is established. No split freeze or GPU run yet.
+Prior external request draft remains unsent; no contact authorization. Old C terminal.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — recover existing historical full manifest first
 
 2026-09-08. This checkpoint supersedes older next-step instructions. Git commits

@@ -1,0 +1,55 @@
+{
+  "gpu_used": false,
+  "identity_source_index_centroid_geometry_checks": "all_passed",
+  "manifest_sha256": "7487b0af2ebef86910e918d5d6b2fb927a6f5e46bac7c2e30be7ffb2ce994482",
+  "member_count": 8000,
+  "pixels_opened": false,
+  "projection_sha256": "8bf11a4851a97a1af26107f8f91c65946ca931b0156fa85cf8c436d7589bd08a",
+  "recovery": "remote_pinned_digest_verified_before_projection",
+  "reference_sha256": {
+    "artifacts/datasets/progressive-crosssensor-geometry-1.json": "eecfd7ef9d2fc9e153a44fc2bdf35cca9724d84340bf9e2890a9e833a87bb5ef",
+    "artifacts/datasets/progressive-crosssensor-geometry-2.json": "41f343b33cb05af430e33bc7a8fa4cb99fdeddaeeb16659807eede68896b82e4",
+    "artifacts/datasets/progressive-crosssensor-geometry-3.json": "008d669135a51660234cd592ca7ad5f2334f6acd7cd355d6ea94697130684db9",
+    "artifacts/datasets/progressive-crosssensor-geometry-4.json": "98b152f5b635f8f25593df70e566b81c9ae14efd32c6f18a2f1a3f6e3e24594a",
+    "artifacts/datasets/progressive-crosssensor-members-v1.json": "30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6"
+  },
+  "s2_product_identity": "unresolved",
+  "schema": "trustmask-historical-manifest-audit-v1",
+  "signed_day_counts": {
+    "-1": 2145,
+    "0": 3972,
+    "1": 1883
+  },
+  "signed_utc_date_checks": "all_passed",
+  "source_independence": "not_certified",
+  "time_of_day_counts": {
+    "hr_time_start": {
+      "22:00:00Z": 7175,
+      "23:00:00Z": 825
+    },
+    "lr_time_start": {
+      "22:00:00Z": 7174,
+      "23:00:00Z": 826
+    },
+    "time_start": {
+      "22:00:00Z": 7174,
+      "23:00:00Z": 826
+    }
+  },
+  "timestamp_ranges": {
+    "hr_time_start": [
+      "2018-12-17T23:00:00Z",
+      "2022-11-08T23:00:00Z"
+    ],
+    "lr_time_start": [
+      "2018-12-17T23:00:00Z",
+      "2022-11-08T23:00:00Z"
+    ],
+    "time_start": [
+      "2018-12-17T23:00:00Z",
+      "2022-11-08T23:00:00Z"
+    ]
+  },
+  "timestamp_semantics": "stored_metadata_not_verified_satellite_sensing_instants",
+  "top_equals_lr_count": 8000
+}

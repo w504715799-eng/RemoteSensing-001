@@ -42,3 +42,37 @@ time actually equals LR time across all members. Only then publish small audited
 metadata evidence and decide whether acquisition timestamps support a bounded
 catalog lookup. This export is not a completed semantic audit or an independence
 certificate. Source grouping, split freeze and GPU experiments remain pending.
+
+## Recovery result (2026-09-08)
+
+The original persistent-disk file was recovered using the prepared standalone
+script. The remote SHA check passed. Only the export and receipt were returned;
+no image or prediction cache was opened. GPU computation was not used. The full
+historical manifest remains remote, and the local projection is ignored by Git.
+
+The offline audit passed all 8,000 identity/source-index/source/centroid/geometry
+comparisons against the committed progressive shards. Signed UTC calendar-date
+deltas were -1 for 2,145 records, 0 for 3,972, and +1 for 1,883. All top-level times
+equal LR times. See `research/evidence/crosssensor-historical-manifest-audit-v1.json`
+for digests, timestamp ranges and complete aggregate results.
+
+All LR timestamps are 22:00Z (7,174) or 23:00Z (826); HR timestamps have the same
+restricted hours (7,175 / 825). This concentration leaves the interpretation as
+actual sensing instants unverified. Its cause has not been established. A future
+bounded catalog probe must document its date-window assumptions and retain all
+candidate products; it cannot treat exact-time matching or proximity as provenance.
+The completed audit establishes consistency of the stored metadata, not S2 product
+identity, complete composite membership, or independence of candidate groups.
+
+Replay locally, with a fresh output path:
+
+```bash
+.venv/bin/python -m research.trustmask.audit_recovered_manifest \
+  --export artifacts/progressive-historical-manifest \
+  --output /tmp/historical-manifest-audit-replay.json
+```
+
+The verifier pins the recovered projection digest, checks the export receipt, and
+records digests of the five reference shards used for comparison. The receipt's
+original pending-validation field remains unchanged as a transport record; the
+separate audit records the subsequent semantic checks.
