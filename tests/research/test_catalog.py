@@ -98,3 +98,23 @@ def test_historical_identity_requires_published_digest(tmp_path):
         p.write_text(json.dumps({'samples': [{'sample_id': str(i)} for i in range(120)]}))
     with pytest.raises(ValueError, match='SHA'):
         historical_ids(tmp_path)
+
+
+def test_nested_directory_is_relative_to_its_authorized_parent():
+    from research.trustmask.catalog import nested_directory_interval
+    raw = b'#y' + (100).to_bytes(8, 'little') + (20).to_bytes(8, 'little')
+    assert nested_directory_interval(raw, 200, 500, 1000) == (300, 20)
+
+
+@pytest.mark.parametrize('raw,parent,length,top', [
+    (b'#y' + (1).to_bytes(8, 'little') + (20).to_bytes(8, 'little'), 200, 500, 1000),
+    (b'#y' + (490).to_bytes(8, 'little') + (20).to_bytes(8, 'little'), 200, 500, 1000),
+    (b'#y' + (100).to_bytes(8, 'little') + (0).to_bytes(8, 'little'), 200, 500, 1000),
+    (b'#y' + (100).to_bytes(8, 'little') + (20).to_bytes(8, 'little'), 900, 500, 1000),
+    (b'#y' + (100).to_bytes(8, 'little') + (20).to_bytes(8, 'little'), True, 500, 1000),
+    (b'x' * 18, 200, 500, 1000),
+])
+def test_nested_bad_offsets_stop_before_any_directory_request(raw, parent, length, top):
+    from research.trustmask.catalog import nested_directory_interval
+    with pytest.raises(ValueError):
+        nested_directory_interval(raw, parent, length, top)

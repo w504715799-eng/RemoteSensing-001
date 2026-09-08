@@ -2,6 +2,173 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — source/footprint audit delivery, 2026-09-08
+
+This section supersedes the older terminal checkpoint below. Continue on main, single writer.
+Completed the bounded source-footprints plan and preserved old evidence receipts.
+New evidence: `research/evidence/crosssensor-source-footprint-audit-v1.json`.
+All three predeclared nested probes completed: second and third directories succeeded after
+one bounded retry; prior URLError attempt retained in receipt. No pixels, models, GPU or SSH.
+All three directories lack LR scene IDs. All three top timestamps equal LR timestamps and HR
+is one day earlier; this is only three observations, not a catalogwide rule.
+Four geometry shards match pinned top metadata exactly; all8000 geometry summaries and7km
+groups replayed.7km screen retains7269 members/5279 candidate groups, not independent samples.
+Upstream SEN2NAIP revision resolved:79e93461ad93911ebcd5aa0f342376e4c41e8743. Its cross-sensor
+folder only lists cross-sensor.zip (2222325537 bytes); archive not downloaded. Original paper
+v1 sizes/counts differ from v2; identity mapping is not proven.
+
+Next: design bounded upstream ZIP directory/metadata.json provenance checks and establish v1/v2
+mapping or another justified source-identity route. Do not bulk fetch8000 nested directories.
+LR-sharing audit, precise spatial separation, sample-size method and five-stage split freeze
+remain pending. Conditional Hoeffding feasibility is in docs/reports/progressive-data-audit.md:
+6-method risk family needs3045 independent test groups at0.03 empirical risk margin;6851 at0.02.
+These are planning calculations, not observed results, independence claims or a frozen procedure.
+No fitting/calibration/GPU work until these gates close. Old C remains inconclusive and terminal.
+
+Verification:86 tests via `.venv/bin/python -m pytest -q tests/research`, research Ruff,
+geometry/source projection equality, offline7km replay and frozen load_frozen gate passed.
+Read-only implementation and evidence reviews approved; exact staged-policy and diff gates passed.
+Direct `.venv/bin/pytest` lacked research import path; use python -m pytest. Environment unchanged.
+Full research progress is not complete; no new empirical benefit results. The prior checkpoint
+below preserves cache identities and historical details; its1-of-3 probe status is superseded.
+
+---
+
+## ACTIVE RESUME CHECKPOINT — terminal handoff, 2026-09-08
+
+**Read this section first. It supersedes older “next” instructions below.** User requested
+only saving the handoff before opening another terminal. No new experiments or network requests
+were started for this handoff. Continue the approved progressive study when the user resumes.
+
+### Working state and authorization
+
+- Workspace `/home/wanghongxu/code/RemoteSensing001`, branch `main`, HEAD `7040975`
+  (`feat(research): audit candidate metadata and isolate historical groups`). Single writer;
+  continue on main, no worktree. Current implementation/evidence changes are **uncommitted**.
+- User wants evidence fusion → spatial adaptation → risk-constrained calibration, all optimizing
+  retained coverage under fixed expected ROI-max R9 loss ≤0.05, with convincing practical-benefit
+  quantification and comparison/ablations. Approved design remains
+  `docs/superpowers/specs/2026-09-08-progressive-coverage-design.md`.
+- Prefer focused tests; no full suite, no cost questions. No GPU/SSH needed now. Ask user to power
+  on only before work that actually needs GPU. Do not reopen old A/B/C pixels/caches or reuse
+  observed Spain as independent confirmation. Old C remains `empirically_met_but_inconclusive`.
+- New code stays in `research/trustmask/`, outside frozen `src/trustsr` and `scripts/paper`.
+- Process check at handoff found no matching active trustmask/catalog/probe process. Ignored
+  local metadata caches persist across terminals; they are not committed evidence.
+
+### Actual progress since HEAD
+
+1. **Controlled top metadata transport succeeded.** After intermittent TLS EOF failures, the
+   final `fetch_http_range` implementation successfully retrieved all three known ranges and
+   matched their previously recorded SHA256. Redirect handling stays body-free, HTTPS only,
+   exact 206/Content-Range required. Never disable TLS or accept full-object fallback.
+   The old v1 evidence and lower checkpoint still say final transport incomplete: preserve that
+   historical receipt and publish a new receipt rather than silently rewriting its history.
+2. Added `nested_directory_interval` to `research/trustmask/catalog.py`: nested header is exactly
+   **18 bytes**, not 42; relative directory offsets are bounded inside the top-authorized parent,
+   directory ≤64KiB. Seven new tests passed; catalog scope total **23 passed**.
+3. Added `research/trustmask/footprints.py` and eight passing focused tests. Geometry only:
+   north-up northern UTM, 520×520 at 2.5m, perimeter transformed with rasterio. All 8,000 top
+   records have nominal side 1,300m and area 1,690,000m². Maximum centroid discrepancy
+   0.07165529090313844m; sampled perimeter radius range 917.7795405006733–920.5813956013698m.
+   Sampled radius is **not a certified enclosure**, and nominal area is not valid/nodata support.
+4. Saved four small identity-bound geometry shards under `artifacts/datasets/` (2,000 rows each).
+   Hashes below. Full per-row derived geometry stays in ignored cache.
+5. A metadata-only **7km centroid-spacing sensitivity** gives 5,622 components; excluding all
+   connected historical groups removes 731 members, leaving **7,269 members / 5,279 candidate
+   groups**. All 360 historical IDs matched. Original 5km screen remains 7,477 / 6,158.
+   Rationale: 5km center separation is not 5km footprint-edge separation; ~0.921km radii imply
+   ~3.16km vs ~5.16km approximate edge gaps for 5km vs 7km center screens. This is a conservative
+   preliminary screen, **not exact edge-distance certification or statistical independence**.
+6. Nested source schema probe is only **1 of 3 complete**. First member:
+   `NA5120_E1183N0757__m_3912321_nw_10_060_20220710`.
+   Parent offset 2995954125, length 1305867; header 18 bytes; nested footer offset 2997251399,
+   length 8593. Only `lr`/`hr`, geometry, timestamps, format and structural fields are present;
+   no actual Sentinel-2 scene ID in this directory. LR shape 130² at 10m; HR 520² at 2.5m.
+   Do not generalize one probe to all 8,000 members or substitute timestamp for scene ID.
+7. **Important correction verified during handoff:** `validate_acquisition_times` in
+   `src/trustsr/data/crosssensor_schema.py` validates top time and LR/HR timestamps plus signed
+   HR-minus-LR UTC-date difference; it does **NOT** enforce top timestamp = LR timestamp.
+   For the single completed probe top time equals LR time 1657490400, HR 1657404000,
+   `days_between=-1`. This observation does not establish the relation across the catalog.
+   Top `days_between` values are {-1,0,1}; do not bulk infer LR dates without evidence.
+
+### Persistent local evidence and exact source
+
+Fixed source `tacofoundation/SEN2NAIPv2`, revision
+`c370504201072fdb1dd388013ab8c0fc7d00a57e`, object `sen2naipv2-crosssensor.taco`,
+size 9717583850. Declared full SHA
+`c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5`
+is not locally full-object verified. No image asset payload was read.
+
+Ignored cache directory: `artifacts/progressive-metadata/`:
+
+| File | SHA256 / meaning |
+| --- | --- |
+| `0-42.metadata` | `0ae2b7363e73464ffd0c0c64e890277d9c0718caa3786bf7166aa8fc12937c93` |
+| `9717576621-7229.metadata` | `ef1505137d5431bfcc1098a91482f1c52e6a99edb8ab58c5e1f45a73ae38af03` |
+| `9716971212-605409.metadata` | `9eb6bc8f5e52b3ca9f0aba0a733c98b95e579e6b5c02db515f44cc6d36921ea1` |
+| `2995954125-18.metadata` | `7a0c9ced8c58aa4d8292a359db3c6d37d0b5b4b7ae6ca1e77f257af76197b78d` |
+| `2997251399-8593.metadata` | `c5e0b909cf81b06bef5b9a4c9136c14c27893ae1488339f3c4c49ee1993866a7` |
+| `nested-first-probe.json` | Allowed identity/time/geometry projection and nested receipt |
+| `nested-probe.json` | Empty list from failed initial parallel probes; not a success receipt |
+| `9483557768-18.metadata` | Additional cached header only; verify its member/bounds before reuse |
+| `footprint-summary.json`, `footprint-summary-rows.json` | Aggregate and all-row geometry diagnostics |
+| `candidate-groups-7km.json` | Full audit object, eligible groups and excluded member list |
+
+Successful top source payload total: 612,680 bytes, excluding redirect/network overhead.
+Network errors were intermittent TLS EOF; successful redirect target was `us.aws.cdn.hf.co`.
+Never log signed URL query values. Cache each verified range durably before subsequent requests.
+Use `.venv/bin/python`; PyArrow19.0.1 lives separately at `/tmp/trustmask-metadata-libs`:
+`PYTHONPATH=/tmp/trustmask-metadata-libs .venv/bin/python ...`. Do not upgrade the main environment.
+
+New geometry shards (untracked; each ~261KB, eligible for small-metadata Git policy):
+
+- `artifacts/datasets/progressive-crosssensor-geometry-1.json`: SHA256 `eecfd7ef9d2fc9e153a44fc2bdf35cca9724d84340bf9e2890a9e833a87bb5ef`.
+- `artifacts/datasets/progressive-crosssensor-geometry-2.json`: SHA256 `41f343b33cb05af430e33bc7a8fa4cb99fdeddaeeb16659807eede68896b82e4`.
+- `artifacts/datasets/progressive-crosssensor-geometry-3.json`: SHA256 `008d669135a51660234cd592ca7ad5f2334f6acd7cd355d6ea94697130684db9`.
+- `artifacts/datasets/progressive-crosssensor-geometry-4.json`: SHA256 `98b152f5b635f8f25593df70e566b81c9ae14efd32c6f18a2f1a3f6e3e24594a`.
+
+### Exact resume order and incomplete checks
+
+1. Read `docs/superpowers/plans/2026-09-08-progressive-source-footprints.md`; its checkboxes
+   have not yet been updated. Transport/geometry implementation succeeded, publication is pending.
+2. Finish or explicitly record partial status for the remaining two predeclared schema probes:
+   `NA5120_E1183N0791__m_4112455_se_10_060_20220620` and
+   `NA5120_E1185N0724__m_3812242_ne_10_060_20200602`. These are from the original 5km eligible
+   inventory, chosen lexicographically before 7km sensitivity. Only bounded headers/directories;
+   no image data and no bulk 8,000-member requests until source-identity strategy is justified.
+3. Research actual LR provenance. Fixed collection raw link points to
+   `https://huggingface.co/datasets/isp-uv-es/SEN2NAIP`; root tree discovery returned cross-sensor,
+   demo, synthetic folders. Resolve immutable revision before relying on that source. Original
+   paper https://www.nature.com/articles/s41597-024-04214-y discusses per-ROI metadata.json,
+   but v1-to-v2 identity mapping is unproven. https://github.com/ESAOpenSR/opensr-degradation
+   is another primary construction reference. Possible public Sentinel-2 STAC source-set grouping
+   needs a justified date relation and catalog completeness; it is not implemented or approved
+   as an independence claim. Do not treat this speculative idea as the current frozen method.
+4. Publish new transport/geometry/nested evidence receipt, update
+   `docs/reports/progressive-data-audit.md` and plan status, preserve old receipts. Consider a
+   reproducible offline geometry audit entry point; current aggregate execution used local snippets.
+5. Finish source-sharing audit, statistical sample-size feasibility and five-stage split design
+   before fitting/calibration or GPU work. New empirical benefit results do not exist yet.
+6. Review changed code. Existing read-only reviewer `review_external` can be reused under the
+   requesting-code-review skill. Current changes have **not** had final review.
+7. Run only relevant checks: `pytest -q tests/research` (expected count 86 from prior 71 + 15 new,
+   **not yet run as a combined scope**), changed/research Ruff, `git diff --check`, original frozen
+   protocol `load_frozen` source gate, then tracked-data policy against the staged exact file set.
+   Individual catalog 23 and footprint 8 tests and changed-file Ruff previously passed; no claim
+   that all final checks passed. Do not add ignored raw metadata to Git.
+8. Commit the reviewed work on main and report actual progress. Do not repeat the former old-scope
+   90–95% estimate or claim new experiments are finished. This handoff itself does not commit code.
+
+Uncommitted implementation files at handoff: `research/trustmask/catalog.py`,
+`tests/research/test_catalog.py`, new `research/trustmask/footprints.py`,
+`tests/research/test_footprints.py`, four geometry shards, source-footprints plan, and this handoff.
+Original frozen protocol remains `paper/protocols/spain-external-frozen-v1.json`, expected SHA
+`798200c5c8b2cd9102755202810e8161832064de686a81b41c02776ddaf85525`.
+
+---
+
 ## Latest checkpoint: new metadata inventory and historical exclusion audited
 
 Metadata-only public crosssensor source audit yielded8000 members. All360 published historical

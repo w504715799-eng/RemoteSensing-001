@@ -97,3 +97,22 @@ def fetch_http_range(url, offset, length, total_bytes):
         with response:
             return read_range_response(response, offset, length, total_bytes)
     raise ValueError('too many metadata redirects')
+
+
+def nested_directory_interval(header, parent_offset, parent_length, top_directory_start):
+    """Locate only a nested metadata footer inside an authorized top-directory parent.
+
+    Nested TORTILLA headers are18bytes, unlike the42byte outer collection header.
+    Reading42bytes here could reach asset bytes and is deliberately unsupported.
+    """
+    if (any(type(v) is not int for v in (parent_offset, parent_length, top_directory_start))
+            or parent_offset < 42 or parent_length < 30
+            or parent_offset + parent_length > top_directory_start):
+        raise ValueError('invalid top-authorized parent interval')
+    if type(header) is not bytes or len(header) != 18 or header[:2] not in (b'#y', b'WX'):
+        raise ValueError('exact18byte nested metadata header required')
+    offset = int.from_bytes(header[2:10], 'little')
+    length = int.from_bytes(header[10:18], 'little')
+    if offset < 18 or not 12 <= length <= 64 * 1024 or offset + length > parent_length:
+        raise ValueError('nested metadata outside authorized parent or size cap')
+    return parent_offset + offset, length

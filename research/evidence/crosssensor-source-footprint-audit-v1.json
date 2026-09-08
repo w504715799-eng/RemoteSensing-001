@@ -1,0 +1,445 @@
+{
+  "footprint_edge_separation_certified": false,
+  "full_source_sha_verified": false,
+  "geometry": {
+    "centroid_discrepancy_m_max": 0.07165529090313844,
+    "count": 8000,
+    "nominal_area_m2_values": [
+      1690000.0
+    ],
+    "sampled_perimeter_radius_m_max": 920.5813956013698,
+    "sampled_perimeter_radius_m_min": 917.7795405006733
+  },
+  "geometry_and_grouping_replayed": true,
+  "geometry_shards_equal_pinned_top_projection": true,
+  "grouping_7km": {
+    "components": 5622,
+    "eligible_groups": 5279,
+    "eligible_members": 7269,
+    "excluded_members": 731,
+    "history_complete": true
+  },
+  "independence_certified": false,
+  "lr_scene_identity_audited": false,
+  "nested_prior_attempt": [
+    {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:data_split",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "__index_level_0__"
+      ],
+      "directory": {
+        "length": 8593,
+        "offset": 2997251399,
+        "origin": "cache",
+        "sha256": "c5e0b909cf81b06bef5b9a4c9136c14c27893ae1488339f3c4c49ee1993866a7"
+      },
+      "header": {
+        "length": 18,
+        "offset": 2995954125,
+        "origin": "cache",
+        "sha256": "7a0c9ced8c58aa4d8292a359db3c6d37d0b5b4b7ae6ca1e77f257af76197b78d"
+      },
+      "id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1657490400.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+        "tortilla:length": 1305867,
+        "tortilla:offset": 2995954125
+      },
+      "rows": [
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            10.0,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -10.0
+          ],
+          "stac:raster_shape": [
+            130,
+            130
+          ],
+          "stac:time_start": 1657490400.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "lr"
+        },
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            2.5,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -2.5
+          ],
+          "stac:raster_shape": [
+            520,
+            520
+          ],
+          "stac:time_start": 1657404000.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "hr"
+        }
+      ],
+      "status": "complete"
+    },
+    {
+      "error_type": "URLError",
+      "header": {
+        "length": 18,
+        "offset": 6655202887,
+        "origin": "network",
+        "sha256": "5fe8ac8562d1d05f374bc339123805dfa2525b29d6bb3520ef86e8731e9c6d17"
+      },
+      "id": "NA5120_E1183N0791__m_4112455_se_10_060_20220620",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1655762400.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1183N0791__m_4112455_se_10_060_20220620",
+        "tortilla:length": 1279910,
+        "tortilla:offset": 6655202887
+      },
+      "status": "incomplete"
+    },
+    {
+      "error_type": "URLError",
+      "header": {
+        "length": 18,
+        "offset": 9483557768,
+        "origin": "cache",
+        "sha256": "d8db0576296afcf37f04590be6a45eaf3f70c2dd3aa9ed1b87886e97d62af1db"
+      },
+      "id": "NA5120_E1185N0724__m_3812242_ne_10_060_20200602",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1591135200.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1185N0724__m_3812242_ne_10_060_20200602",
+        "tortilla:length": 1175906,
+        "tortilla:offset": 9483557768
+      },
+      "status": "incomplete"
+    }
+  ],
+  "nested_probes": [
+    {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:data_split",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "__index_level_0__"
+      ],
+      "directory": {
+        "length": 8593,
+        "offset": 2997251399,
+        "origin": "cache",
+        "sha256": "c5e0b909cf81b06bef5b9a4c9136c14c27893ae1488339f3c4c49ee1993866a7"
+      },
+      "header": {
+        "length": 18,
+        "offset": 2995954125,
+        "origin": "cache",
+        "sha256": "7a0c9ced8c58aa4d8292a359db3c6d37d0b5b4b7ae6ca1e77f257af76197b78d"
+      },
+      "id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1657490400.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+        "tortilla:length": 1305867,
+        "tortilla:offset": 2995954125
+      },
+      "rows": [
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            10.0,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -10.0
+          ],
+          "stac:raster_shape": [
+            130,
+            130
+          ],
+          "stac:time_start": 1657490400.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "lr"
+        },
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            2.5,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -2.5
+          ],
+          "stac:raster_shape": [
+            520,
+            520
+          ],
+          "stac:time_start": 1657404000.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "hr"
+        }
+      ],
+      "status": "complete"
+    },
+    {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:data_split",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "__index_level_0__"
+      ],
+      "directory": {
+        "length": 8593,
+        "offset": 6656474204,
+        "origin": "network",
+        "sha256": "746665f634711bbaed6f49b827bec52de79333dffcadfe38583c0480521cda50"
+      },
+      "header": {
+        "length": 18,
+        "offset": 6655202887,
+        "origin": "cache",
+        "sha256": "5fe8ac8562d1d05f374bc339123805dfa2525b29d6bb3520ef86e8731e9c6d17"
+      },
+      "id": "NA5120_E1183N0791__m_4112455_se_10_060_20220620",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1655762400.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1183N0791__m_4112455_se_10_060_20220620",
+        "tortilla:length": 1279910,
+        "tortilla:offset": 6655202887
+      },
+      "rows": [
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            404551.78074650903,
+            10.0,
+            0.0,
+            4556869.6196068665,
+            0.0,
+            -10.0
+          ],
+          "stac:raster_shape": [
+            130,
+            130
+          ],
+          "stac:time_start": 1655762400.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "lr"
+        },
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            404551.78074650903,
+            2.5,
+            0.0,
+            4556869.6196068665,
+            0.0,
+            -2.5
+          ],
+          "stac:raster_shape": [
+            520,
+            520
+          ],
+          "stac:time_start": 1655676000.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "hr"
+        }
+      ],
+      "status": "complete"
+    },
+    {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:data_split",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "__index_level_0__"
+      ],
+      "directory": {
+        "length": 8594,
+        "offset": 9484725080,
+        "origin": "network",
+        "sha256": "72bf7e9ced94512b06f8ce74f3a7549196beff02d7ed16bee9724da575beec43"
+      },
+      "header": {
+        "length": 18,
+        "offset": 9483557768,
+        "origin": "cache",
+        "sha256": "d8db0576296afcf37f04590be6a45eaf3f70c2dd3aa9ed1b87886e97d62af1db"
+      },
+      "id": "NA5120_E1185N0724__m_3812242_ne_10_060_20200602",
+      "parent": {
+        "days_between": -1,
+        "stac:time_start": 1591135200.0,
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1185N0724__m_3812242_ne_10_060_20200602",
+        "tortilla:length": 1175906,
+        "tortilla:offset": 9483557768
+      },
+      "rows": [
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            518515.7310461276,
+            10.0,
+            0.0,
+            4240629.735395985,
+            0.0,
+            -10.0
+          ],
+          "stac:raster_shape": [
+            130,
+            130
+          ],
+          "stac:time_start": 1591135200.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "lr"
+        },
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            518515.73104616493,
+            2.5,
+            0.0,
+            4240629.735474056,
+            0.0,
+            -2.5
+          ],
+          "stac:raster_shape": [
+            520,
+            520
+          ],
+          "stac:time_start": 1591048800.0,
+          "tortilla:file_format": "GTiff",
+          "tortilla:id": "hr"
+        }
+      ],
+      "status": "complete"
+    }
+  ],
+  "pixel_payload_read": false,
+  "probe_count": 3,
+  "probe_schema_has_lr_scene_id": false,
+  "quality_columns_decoded": false,
+  "schema": "trustmask.source-footprint-audit.v1",
+  "shards": [
+    {
+      "path": "artifacts/datasets/progressive-crosssensor-geometry-1.json",
+      "rows": 2000,
+      "sha256": "eecfd7ef9d2fc9e153a44fc2bdf35cca9724d84340bf9e2890a9e833a87bb5ef",
+      "size_bytes": 260835
+    },
+    {
+      "path": "artifacts/datasets/progressive-crosssensor-geometry-2.json",
+      "rows": 2000,
+      "sha256": "41f343b33cb05af430e33bc7a8fa4cb99fdeddaeeb16659807eede68896b82e4",
+      "size_bytes": 260827
+    },
+    {
+      "path": "artifacts/datasets/progressive-crosssensor-geometry-3.json",
+      "rows": 2000,
+      "sha256": "008d669135a51660234cd592ca7ad5f2334f6acd7cd355d6ea94697130684db9",
+      "size_bytes": 260757
+    },
+    {
+      "path": "artifacts/datasets/progressive-crosssensor-geometry-4.json",
+      "rows": 2000,
+      "sha256": "98b152f5b635f8f25593df70e566b81c9ae14efd32c6f18a2f1a3f6e3e24594a",
+      "size_bytes": 260819
+    }
+  ],
+  "source_object": "sen2naipv2-crosssensor.taco",
+  "source_revision": "c370504201072fdb1dd388013ab8c0fc7d00a57e",
+  "source_size": 9717583850,
+  "split_frozen": false,
+  "top_equals_lr_catalogwide_proven": false,
+  "top_equals_lr_observed_count": 3,
+  "top_transport": {
+    "cached_sha_reverified_this_session": true,
+    "network_repeated_this_session": false,
+    "range_receipts": [
+      {
+        "length": 42,
+        "offset": 0,
+        "sha256": "0ae2b7363e73464ffd0c0c64e890277d9c0718caa3786bf7166aa8fc12937c93"
+      },
+      {
+        "length": 7229,
+        "offset": 9717576621,
+        "sha256": "ef1505137d5431bfcc1098a91482f1c52e6a99edb8ab58c5e1f45a73ae38af03"
+      },
+      {
+        "length": 605409,
+        "offset": 9716971212,
+        "sha256": "9eb6bc8f5e52b3ca9f0aba0a733c98b95e579e6b5c02db515f44cc6d36921ea1"
+      }
+    ],
+    "status": "completed_in_previous_terminal_reported_in_handoff"
+  },
+  "upstream_discovery": {
+    "cross_sensor_tree": [
+      {
+        "lfs": {
+          "oid": "4fe9cc4f292320568fea7e39fc86d97fed13ea8cf8f0e37823aa73c4e54019d2",
+          "pointerSize": 135,
+          "size": 2222325537
+        },
+        "oid": "8d26e2fae35d48b8ba02b1c118608fc430deb3b1",
+        "path": "cross-sensor/cross-sensor.zip",
+        "size": 2222325537,
+        "type": "file",
+        "xetHash": "2e4a25633b91deb0e8211469097e5a3cf88e8f532f69d39edec39aa50bda73c5"
+      }
+    ],
+    "repository": "isp-uv-es/SEN2NAIP",
+    "revision": "79e93461ad93911ebcd5aa0f342376e4c41e8743",
+    "revision_resolved_from": "https://huggingface.co/api/datasets/isp-uv-es/SEN2NAIP",
+    "status": "tree_retrieved"
+  }
+}
