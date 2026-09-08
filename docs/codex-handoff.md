@@ -2,6 +2,33 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: formal execution entry implemented; protocol remains draft
+
+2026-09-08 continuation implements `python -m scripts.paper.run_spain` with draft/preflight/run/
+replay commands. Exact package/member/model/science/implementation identities are protocol-bound;
+actual imported code must come from the repository. Missing-only predictions persist/fsync an
+attempt before inference; resumed failed/interrupted slots are not retried automatically. Complete
+caches do not construct models. Two cache-only science reconstructions must agree before the
+no-overwrite manifest-last publication. Input normalization receipts and explicit failure reasons
+are retained; timing is separate. See [execution runbook](first-paper-spain-execution-runbook.md).
+
+Machine-readable candidate: `paper/protocols/spain-external-draft-v1.json`. It is intentionally
+non-runnable: status=draft, unknown cloud runtime versions and budget are null. Do not fill these
+with guesses or flip status merely to pass gates. Final freeze and dedicated external access/GPU
+authorization have not occurred. No cloud, Spain, old B/C or real model access happened locally.
+
+Verification: 70 scoped execution/replay/score tests passed (18.98 s) plus 7 data-policy tests
+(0.97 s); no full suite. Changed-file Ruff and whitespace checks pass; prior artifacts, data/model
+modules and old score/replay cores have no diff. Draft SHA-256 is
+`d0c6fa3e2672b03fe7af07f90bc6a7c6a625e6afae31d45a4dfbe9a7afa98e14` and matches current source hashes.
+Read-only review found no remaining blockers after the fixes below.
+
+Review fixes: state directory fsync before inference (plus new-run parent sync), import-origin
+validation, canonical protocol SHA identity, normalized JSON return on completed resume.
+Next needed input: availability of the original cloud server and its hourly price, requested from
+the user for CPU-only synthetic timing/runtime inventory. Continue without redoing the completed
+GPU timing or SEN2SRLite diagnostics. Current implementation uses the existing environment only.
+
 ## Latest local checkpoint: restricted package decode and authenticated replay cores
 
 2026-09-08 user requested continued execution with fewer full-suite runs. New local-only
