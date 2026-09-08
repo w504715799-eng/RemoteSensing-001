@@ -1,0 +1,560 @@
+{
+  "alternate_metadata_probe": {
+    "all_nested_schemas_audited": false,
+    "full_object_sha_verified": false,
+    "lr_source_id_present_in_inspected_schema": false,
+    "nested": {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "file_format",
+        "__index_level_0__"
+      ],
+      "directory_length": 8521,
+      "directory_offset": 2997074063,
+      "id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+      "parent": {
+        "tortilla:file_format": "TORTILLA",
+        "tortilla:id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+        "tortilla:length": 1305795,
+        "tortilla:offset": 2995776789
+      },
+      "rows": [
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            10.0,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -10.0
+          ],
+          "stac:raster_shape": [
+            130,
+            130
+          ],
+          "stac:time_start": 1657490400.0,
+          "tortilla:id": "lr"
+        },
+        {
+          "stac:crs": "EPSG:32610",
+          "stac:geotransform": [
+            457977.27227470325,
+            2.5,
+            0.0,
+            4394866.8159883935,
+            0.0,
+            -2.5
+          ],
+          "stac:raster_shape": [
+            520,
+            520
+          ],
+          "stac:time_start": 1657404000.0,
+          "tortilla:id": "hr"
+        }
+      ],
+      "status": "complete"
+    },
+    "pixel_equivalence_established": false,
+    "repository": "tacofoundation/tortilla_demo",
+    "revision": "1e5af89d6895000583a6fd6678ece92a99d86fec",
+    "schema": {
+      "columns": [
+        "tortilla:id",
+        "tortilla:file_format",
+        "tortilla:offset",
+        "tortilla:length",
+        "stac:crs",
+        "stac:geotransform",
+        "stac:raster_shape",
+        "stac:time_start",
+        "stac:centroid",
+        "file_format",
+        "days_between",
+        "correlation",
+        "scale_factor",
+        "__index_level_0__"
+      ],
+      "directory_length": 380067,
+      "directory_offset": 9716395212,
+      "file_format_values": [
+        "TORTILLA"
+      ],
+      "id_order_matches_fixed": true,
+      "id_set_matches_fixed": true,
+      "index_type": "int64",
+      "rows": 8000,
+      "source": {
+        "lfs": {
+          "oid": "c3f80d653e7e369f8e72f87969a4062101af5b683fd24948dac0d9a0aeca39d5",
+          "pointerSize": 135,
+          "size": 9716781901
+        },
+        "oid": "091c9e49b8c6f2fd80e42d696f65afee7897520d",
+        "path": "sen2naipv2-crosssensor.taco",
+        "size": 9716781901,
+        "type": "file",
+        "xetHash": "84784f1048b64516b86d9d64cf83f78004c9b6bf7e9b65506ef73d890b449eb8"
+      }
+    },
+    "transport_attempts": [
+      {
+        "length": 2,
+        "offset": 0,
+        "sha256": "43b7c239d8bfd2f3c62d5bac183d1a1d1c1e665c5c4caf301e51e9f674ca186a",
+        "status": "complete"
+      },
+      {
+        "length": 16,
+        "offset": 2,
+        "sha256": "0fe64cd03427d4cdfa707c008eafce56c1065de8dca7b9df8cc283b6f19e1248",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 380067,
+        "offset": 9716395212,
+        "status": "failed"
+      },
+      {
+        "length": 380067,
+        "offset": 9716395212,
+        "sha256": "1c58e22c841992558a54ee5b111e6af51f0d08bc157a2646d5d259459e8c02aa",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 18,
+        "offset": 2995776789,
+        "status": "failed"
+      },
+      {
+        "length": 18,
+        "offset": 2995776789,
+        "sha256": "78e68f3449118e1253d9a05106ac1559376ffe18c32589025997deb25243d917",
+        "status": "complete"
+      },
+      {
+        "length": 8521,
+        "offset": 2997074063,
+        "sha256": "737c42fbad7d1faa7a4a9625cb69dfabc40f9bb03c47d2b3464151adad1112fd",
+        "status": "complete"
+      }
+    ],
+    "unique_successful_source_bytes": 388624
+  },
+  "archive_validation_scope": "trusted central directory plus selected local headers and JSON; unselected local extra fields and full archive integrity not verified",
+  "cache_sha_reverified": true,
+  "central_directory": {
+    "entry_count": 11405,
+    "length": 1166146,
+    "metadata_json_count": 2851,
+    "offset": 2221159369
+  },
+  "completed_json_size_crc_and_decompression_replayed": true,
+  "completed_probes": 3,
+  "declared_probes": 3,
+  "external_messages_sent": false,
+  "full_source_sha_verified": false,
+  "independence_certified": false,
+  "lr_source_sharing_audited": false,
+  "next_step": "Obtain direct v2 per-member source manifest or design a separately approved source alternative; do not repeat completed v1 probes or claim their IDs map to v2.",
+  "numeric_decoding_policy": "parse_int=str and parse_float=str; only projected geometry explicitly converted; quality numeric values not converted, printed or used",
+  "pixel_payload_read": false,
+  "prior_receipt": {
+    "path": "research/evidence/crosssensor-upstream-provenance-v1.json",
+    "sha256": "c9f7fb7a1feecdab198986679c3e9b42aebe0d95ebf46753f28d0d48becfb0da"
+  },
+  "probe_selection": "first_three_lexicographic_metadata_json_paths_before_content_read",
+  "probes": [
+    {
+      "entry": {
+        "compressed": 310,
+        "crc": 159100485,
+        "flags": 8,
+        "limit": 917446249,
+        "method": 8,
+        "name": "cross-sensor/ROI_0000/metadata.json",
+        "name_bytes": 35,
+        "offset": 917445830,
+        "size": 553
+      },
+      "identity_geometry_projection": {
+        "naip_date": "2019-09-09",
+        "naip_id": "m_3710663_nw_13_060_20190909",
+        "proj:epsg": "32613",
+        "proj:geometry": "POLYGON ((391740 4106030, 391740 4107240, 390530 4107240, 390530 4106030, 391740 4106030))",
+        "proj:transform": "2.5, 0.0, 390530.0, 0.0, -2.5, 4107240.0, 0.0, 0.0, 1.0",
+        "roi_id": "ROI_00002",
+        "s2_date": "2019-09-09",
+        "s2_id": "S2A_MSIL2A_20190909T174911_N0213_R141_T13SCB_20190909T235808"
+      },
+      "json_sha256": "c5e2fdfec2f6c2de672e4853f7b4190709b29031e6bb83183945b06235bdbb73",
+      "keys": [
+        "roi_id",
+        "s2_id",
+        "s2_date",
+        "s2_mean_solar_azimuth",
+        "s2_mean_solar_zenith",
+        "naip_id",
+        "naip_date",
+        "proj:epsg",
+        "proj:geometry",
+        "proj:transform",
+        "QA1",
+        "QA2",
+        "d_sim_to_real"
+      ],
+      "nearest_v2_centroid_diagnostic": {
+        "distance_m": 8456.15753105437,
+        "id": "NA5120_E1461N0637__m_3710655_sw_13_060_20190909",
+        "mapping_authorized": false
+      },
+      "status": "complete",
+      "v2_exact_naip_suffix_matches": []
+    },
+    {
+      "entry": {
+        "compressed": 311,
+        "crc": 323517564,
+        "flags": 8,
+        "limit": 298678022,
+        "method": 8,
+        "name": "cross-sensor/ROI_0001/metadata.json",
+        "name_bytes": 35,
+        "offset": 298677602,
+        "size": 561
+      },
+      "identity_geometry_projection": {
+        "naip_date": "2020-07-03",
+        "naip_id": "m_4412116_se_10_060_20200703",
+        "proj:epsg": "32610",
+        "proj:geometry": "POLYGON ((658350 4959330, 658350 4960540, 657140 4960540, 657140 4959330, 658350 4959330))",
+        "proj:transform": "2.5, 0.0, 657140.0, 0.0, -2.5, 4960540.0, 0.0, 0.0, 1.0",
+        "roi_id": "ROI_00004",
+        "s2_date": "2020-07-03",
+        "s2_id": "S2A_MSIL2A_20200703T184921_N0214_R113_T10TFQ_20200703T230055"
+      },
+      "json_sha256": "3194a648a927ff5ae22425e37169ec5407533295d9d1dafede126b450109e281",
+      "keys": [
+        "roi_id",
+        "s2_id",
+        "s2_date",
+        "s2_mean_solar_azimuth",
+        "s2_mean_solar_zenith",
+        "naip_id",
+        "naip_date",
+        "proj:epsg",
+        "proj:geometry",
+        "proj:transform",
+        "QA1",
+        "QA2",
+        "d_sim_to_real"
+      ],
+      "nearest_v2_centroid_diagnostic": {
+        "distance_m": 16938.196978344386,
+        "id": "NA5120_E1252N0849__m_4412123_ne_10_060_20200703",
+        "mapping_authorized": false
+      },
+      "status": "complete",
+      "v2_exact_naip_suffix_matches": []
+    },
+    {
+      "entry": {
+        "compressed": 310,
+        "crc": 3473127080,
+        "flags": 8,
+        "limit": 76613732,
+        "method": 8,
+        "name": "cross-sensor/ROI_0002/metadata.json",
+        "name_bytes": 35,
+        "offset": 76613313,
+        "size": 561
+      },
+      "identity_geometry_projection": {
+        "naip_date": "2021-09-17",
+        "naip_id": "m_4411330_se_12_060_20210917",
+        "proj:epsg": "32611",
+        "proj:geometry": "POLYGON ((794820 4933890, 794820 4935100, 793610 4935100, 793610 4933890, 794820 4933890))",
+        "proj:transform": "2.5, 0.0, 793610.0, 0.0, -2.5, 4935100.0, 0.0, 0.0, 1.0",
+        "roi_id": "ROI_00006",
+        "s2_date": "2021-09-17",
+        "s2_id": "S2A_MSIL2A_20210917T182021_N0301_R127_T11TQK_20210917T230428"
+      },
+      "json_sha256": "a0c07fb37eeb318ebeeaff3a4ad0c6e4a8b1f6b24cb0b8ecafa165921d214c40",
+      "keys": [
+        "roi_id",
+        "s2_id",
+        "s2_date",
+        "s2_mean_solar_azimuth",
+        "s2_mean_solar_zenith",
+        "naip_id",
+        "naip_date",
+        "proj:epsg",
+        "proj:geometry",
+        "proj:transform",
+        "QA1",
+        "QA2",
+        "d_sim_to_real"
+      ],
+      "nearest_v2_centroid_diagnostic": {
+        "distance_m": 17713.62159687091,
+        "id": "NA5120_E1368N0810__m_4411346_nw_12_060_20210917",
+        "mapping_authorized": false
+      },
+      "status": "complete",
+      "v2_exact_naip_suffix_matches": []
+    }
+  ],
+  "public_source_inspection": [
+    {
+      "finding": "Loader reads lr/hr from TACO; no per-member upstream source mapping in this file.",
+      "url": "https://github.com/ESAOpenSR/SRGAN/blob/3430e13957e5af537edab074f06bff15e264c347/opensr_srgan/data/sen2naip/sen2naip_dataset.py"
+    },
+    {
+      "finding": "Converts point geometry and assigns sequential ROI labels; no S2 product provenance in this file.",
+      "url": "https://github.com/JulioContrerasH/Things_of_SEN2NAIP/blob/e37501668a396b410fe149d0f26dfe100d419ff6/main.py"
+    },
+    {
+      "finding": "Inspected public question about harmonization-model availability; no source manifest in fetched thread.",
+      "url": "https://huggingface.co/datasets/tacofoundation/SEN2NAIPv2/discussions/2"
+    }
+  ],
+  "quality_values_used": false,
+  "range_receipts": [
+    {
+      "length": 22,
+      "offset": 2222325515,
+      "sha256": "67037df532f56f997cd052e11e27ac2a0c7481d3fe4a252abba06008e7463696",
+      "status": "complete"
+    },
+    {
+      "length": 1166146,
+      "offset": 2221159369,
+      "sha256": "531f036ddd56ebcb642f967c08f8f5ef286eb2ba94319054240f5180724f124c",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 917445830,
+      "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 917445860,
+      "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 298677602,
+      "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 298677632,
+      "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+      "status": "complete"
+    },
+    {
+      "length": 310,
+      "offset": 917445923,
+      "sha256": "eff80a068764dfe49b63dff0290470c611ae8957f0bc8037f993ed34cadb2c29",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 76613313,
+      "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 76613343,
+      "sha256": "deb9ed43b25f889a02e6d09a61fc6323d0733bfc4bee0628a856129afc29ca98",
+      "status": "complete"
+    },
+    {
+      "length": 310,
+      "offset": 76613406,
+      "sha256": "2261ca6634dd614d7a693159218f172c410b10762cf8560c091aa4b6334abf4c",
+      "status": "complete"
+    },
+    {
+      "length": 311,
+      "offset": 298677695,
+      "sha256": "59a07b49cc0b15bdd1b2ba490f04352605a8965ac923fb28ead1f14bee6931bc",
+      "status": "complete"
+    }
+  ],
+  "schema": "trustmask.upstream-provenance.v2",
+  "search_scope_note": "Indexed code/repository searches for SEN2NAIP/NA5120/sen2naipv2 plus inspected official files; not exhaustive evidence that a public manifest does not exist.",
+  "source_declared_sha256": "4fe9cc4f292320568fea7e39fc86d97fed13ea8cf8f0e37823aa73c4e54019d2",
+  "source_object": "cross-sensor/cross-sensor.zip",
+  "source_repository": "isp-uv-es/SEN2NAIP",
+  "source_revision": "79e93461ad93911ebcd5aa0f342376e4c41e8743",
+  "source_size": 2222325537,
+  "split_frozen": false,
+  "transport_attempts": {
+    "directory": [
+      {
+        "error_type": "URLError",
+        "length": 1166146,
+        "offset": 2221159369,
+        "status": "failed"
+      },
+      {
+        "length": 1166146,
+        "offset": 2221159369,
+        "sha256": "531f036ddd56ebcb642f967c08f8f5ef286eb2ba94319054240f5180724f124c",
+        "status": "complete"
+      }
+    ],
+    "members": [
+      {
+        "length": 30,
+        "offset": 917445830,
+        "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 917445860,
+        "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 310,
+        "offset": 917445923,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 310,
+        "offset": 917445923,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 298677602,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 298677632,
+        "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 30,
+        "offset": 76613313,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 30,
+        "offset": 76613313,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 917445830,
+        "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+        "status": "cache"
+      },
+      {
+        "length": 63,
+        "offset": 917445860,
+        "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+        "status": "cache"
+      },
+      {
+        "length": 310,
+        "offset": 917445923,
+        "sha256": "eff80a068764dfe49b63dff0290470c611ae8957f0bc8037f993ed34cadb2c29",
+        "status": "complete"
+      },
+      {
+        "length": 30,
+        "offset": 298677602,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "cache"
+      },
+      {
+        "length": 63,
+        "offset": 298677632,
+        "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+        "status": "cache"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 76613313,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 76613343,
+        "sha256": "deb9ed43b25f889a02e6d09a61fc6323d0733bfc4bee0628a856129afc29ca98",
+        "status": "complete"
+      },
+      {
+        "length": 310,
+        "offset": 76613406,
+        "sha256": "2261ca6634dd614d7a693159218f172c410b10762cf8560c091aa4b6334abf4c",
+        "status": "complete"
+      }
+    ],
+    "resume_one": [
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "length": 311,
+        "offset": 298677695,
+        "sha256": "59a07b49cc0b15bdd1b2ba490f04352605a8965ac923fb28ead1f14bee6931bc",
+        "status": "complete"
+      }
+    ],
+    "second_member_pass_query": "provenance_probe=2; same exact ranges; one attempt per missing range",
+    "tail_initial_error": "URLError; second attempt succeeded"
+  },
+  "unique_successful_source_bytes": 1167378,
+  "v1_v2_mapping_established": false,
+  "v2_member_projection_sha256": "30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6"
+}

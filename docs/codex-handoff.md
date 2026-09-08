@@ -2,6 +2,43 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — provenance probes complete, source manifest missing
+
+2026-09-08. This section supersedes all older next-step instructions. main single writer.
+New evidence research/evidence/crosssensor-upstream-provenance-v2.json binds preservedv1.
+All3originalZIP probes now complete; do not retry ROI_0001. New311byte range at298677695 has
+SHA59a07b49cc0b15bdd1b2ba490f04352605a8965ac923fb28ead1f14bee6931bc; oneURLError then success.
+Decoded JSON SHA3194a648a927ff5ae22425e37169ec5407533295d9d1dafede126b450109e281.
+The new JSON embedsROI_00004, actualS2 productID andNAIP ID; zero exactv2NAIP matches,
+nearestv2center16.938km. All3probes have zero matches, not a catalogwide nonoverlap proof.
+ZIP cumulative unique source bytes1167378; all size/CRC/decompression replays passed.
+
+New bounded source lead: tacofoundation/tortilla_demo revision1e5af89d6895000583a6fd6678ece92a99d86fec,
+sen2naipv2-crosssensor.taco size9716781901, declaredSHAc3f80d653e7e369f8e72f87969a4062101af5b683fd24948dac0d9a0aeca39d5.
+Ignored cache artifacts/progressive-provenance/alternate contains2byteWX magic,16byte pointer,
+Parquet directory at9716395212 length380067, IDs and schema/transport receipts.
+All8000IDs and order match fixedsource; this does NOT establish pixel/file equivalence.
+One existing predeclared new member NA5120_E1183N0757__m_3912321_nw_10_060_20220710
+has nested parent2995776789 length1305795,18byte header, directory2997074063 length8521.
+NoS2IDs in top or inspected nested schema. Only388624source bytes, no images/full object.
+
+Indexed public code searches and inspected official/source-related files did not supply av2
+mapping; see report for exact pinned URLs. This is not proof no public mapping exists.
+Concrete next dependency: obtain directv2source manifest with memberID→S2product/GEEimageID,
+complete mosaic/composite source sets, NAIPID, times/geometry and applicable revision.
+Local unsent draft: docs/drafts/sen2naipv2-provenance-request.md. No external message authorized
+or sent yet; posting/contact needs explicit user authorization. Do not loop over completed
+probes or bulk request empty schemas. If no manifest can be obtained, design an explicitly
+identified alternative data route; do not silently waive source-sharing constraints.
+Independent sample-size/split freeze, fitting/calibration andGPU remain pending. OldC terminal.
+No production code changed this resume.20ZIP tests, frozen source gate, offline evidence
+replay and independent read-only evidence review passed. Final staged-policy/diff gates run
+before commit. Local Hugging Face posting credential is unavailable (boolean-only check);
+no credential value exposed. User can send draft or establish authenticated/authorized posting.
+No full suite or old pixels/caches needed.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — upstream provenance attempt, 2026-09-08
 
 This newest section supersedes all older next-step instructions. Continue on main, single writer.

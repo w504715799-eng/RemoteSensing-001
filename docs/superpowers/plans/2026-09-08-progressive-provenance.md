@@ -21,7 +21,7 @@
 
 - [x] Test real synthetic ZIP with image before JSON; permitted reads exclude image payload. Test malformed EOCD/directory/local-header, disallowed path, CRC and bounded decompression. First run must fail for missing module.
 - [x] Implement eocd_interval(raw,total), directory_entries(raw,start,count), read_metadata_member(fetch,entry,directory_start). Focused test/Ruff; review before network expansion.
-- [ ] Retrieve pinned central directory and three predeclared JSON entries; preserve range receipts and failed attempts. Resolve source keys before selecting values; compare identity naming/geometry with v2 only if justified. Check official construction references if mapping absent.
+- [x] Retrieve pinned central directory and three predeclared JSON entries; preserve range receipts and failed attempts. Resolve source keys before selecting values; compare identity naming/geometry with v2 only if justified. Check official construction references if mapping absent.
 - [x] Publish evidence and source-sharing consequences; no actual split freeze. Relevant research tests, frozen source gate, reviewed claims, staged policy/diff gates, commit on main.
 
 ## Execution status
@@ -37,3 +37,15 @@ network-dependent third probe remains pending. No pixels or full ZIP downloaded.
 
 Final independent evidence review verified rangeSHA,byte totals,JSON replay,zeroNAIP matches
 and nearest-distance arithmetic. Exact staged data-policy and diff gates passed.
+
+## Later resume completion
+
+All3ZIP JSON probes now complete; missing311byte body retrieved and replayed. Newv2receipt
+preserves historical partialv1. All3NAIP suffixes have zero exact matches in fixedv2 inventory.
+Bounded additional provenance lead: tacofoundation/tortilla_demo revision
+1e5af89d6895000583a6fd6678ece92a99d86fec, same basename but different declaredSHA.
+Read2byte magic then16directory pointer bytes;380067byte top directory has the same8000IDs/order
+but no S2IDs. One previously predeclared new member nested18byte header/8521byte directory
+also lacks S2IDs. No other alternative nested records, images or whole objects read.
+The audit plan is delivered; source-sharing gate remains open. Local maintainer inquiry draft
+is ready but unsent. Do not repeat the completed probes or assume source equivalence.

@@ -200,3 +200,55 @@ ZIP最后22字节给出中央目录偏移2,221,159,369、长度1,166,146，共11
 
 最终独立证据复审另行复核全部范围SHA、字节合计、JSON回放、NAIP零匹配和距离结果；
 暂存文件的数据策略与diff检查通过。
+
+## 2026-09-08 续作三：三个探针齐全，备用对象仍未补足来源
+
+[完整续作回执v2](../../research/evidence/crosssensor-upstream-provenance-v2.json)绑定并保留
+上一份v1回执。缺失的311字节JSON内容段在一次URLError后成功，大小、CRC和解压
+回放均通过。三个原版探针现已全部完成，不应继续重试这些已完成请求。
+
+新增条目为ZIP路径`cross-sensor/ROI_0001/metadata.json`，内嵌`roi_id=ROI_00004`；
+其`s2_id=S2A_MSIL2A_20200703T184921_N0214_R113_T10TFQ_20200703T230055`，
+`naip_id=m_4412116_se_10_060_20200703`。该NAIP后缀同样没有精确匹配任何v2成员；
+原版足迹中心距最近v2中心约16.938km。至此三项均未建立版本映射；结论仍仅限三项，
+不代表已遍历原版全部2,851项。ZIP累计唯一成功源字节为1,167,378。
+
+### 同一发布组织的备用封装核查
+
+公开检索发现[备用对象](https://huggingface.co/datasets/tacofoundation/tortilla_demo/blob/1e5af89d6895000583a6fd6678ece92a99d86fec/sen2naipv2-crosssensor.taco)：
+`tacofoundation/tortilla_demo`固定revision `1e5af89d6895000583a6fd6678ece92a99d86fec`，
+同名文件大小9,716,781,901字节，声明SHA
+`c3f80d653e7e369f8e72f87969a4062101af5b683fd24948dac0d9a0aeca39d5`。
+它与当前源的整包哈希不同，不能按文件名当成同一对象。
+
+本次扩展仅为来源线索核查：先请求2字节魔数，确认为已支持的WX，再取16字节目录
+指针；只读取指针限定的Parquet目录，未请求未知格式后的数据。
+其目录位于9,716,395,212，长度380,067；8,000个成员ID及顺序与固定v2清单完全相同。
+但列名没有S2产品ID。还检查了此前预选新成员
+`NA5120_E1183N0757__m_3912321_nw_10_060_20220710`的一项嵌套目录：
+18字节头部和8,521字节目录仍只有lr/hr、几何、时间和结构字段。
+身份清单相同不证明像素等价，也不证明其余7,999项嵌套schema相同；没有读取影像。
+备用封装合计388,624源字节，所有成功范围SHA已复核，完整对象SHA未本地验证。
+
+### 已排查的公开代码与明确的解决入口
+
+本轮使用公开网页及GitHub代码／仓库索引，查询SEN2NAIP、sen2naipv2、NA5120，
+并限定发布者／官方组织进行检索。索引检索有覆盖限制，不构成“公开清单不存在”的证明。
+实际读取的[官方加载器](https://github.com/ESAOpenSR/SRGAN/blob/3430e13957e5af537edab074f06bff15e264c347/opensr_srgan/data/sen2naip/sen2naip_dataset.py)
+只从TACO加载lr/hr；[相关作者仓库脚本](https://github.com/JulioContrerasH/Things_of_SEN2NAIP/blob/e37501668a396b410fe149d0f26dfe100d419ff6/main.py)
+用于坐标与ROI序号整理，没有给出S2产品映射。
+[官方现有讨论](https://huggingface.co/datasets/tacofoundation/SEN2NAIPv2/discussions/2)
+是关于协调模型是否公开的提问，已取得页面没有来源清单。
+
+当前尚缺的是v2成员→原始S2产品／完整mosaic来源集合的可核验记录，不是更多同类
+空schema探针。已准备[维护者询问草稿](../drafts/sen2naipv2-provenance-request.md)，明确
+请求成员ID、S2/GEE ID、全部混合来源、NAIP ID、实际采集时间、几何和适用版本，
+另请确认top时间的含义。草稿只保存在本地，没有发出消息。
+
+接下来优先取得该清单，再做小样本交叉验证与完整来源分组；如果来源记录无法获得，
+需明确设计其他可追溯数据路线及样本量，而不能默认解除共享来源约束。
+此阶段仍不冻结独立测试集、不进入拟合或GPU工作，也不宣称新方法实际收益成立。
+
+本轮20项ZIP定向测试、旧冻结源门及独立证据复审通过；没有修改生产代码。
+当前环境没有可用的Hugging Face发布凭证（只检查是否存在，未输出凭证内容）；
+需由用户转发草稿，或在建立登录和明确发布授权后再发送。
