@@ -29,8 +29,6 @@ def test_draft_binds_both_full_subsets_and_verified_cloud_provenance():
 def frozen_candidate():
     result = api().build_draft(ROOT)
     result['status'] = 'frozen'
-    result['runtime_versions'] = {name: 'test-version' for name in api().RUNTIME_PACKAGES}
-    result['runtime_versions'].update(api().KNOWN_VERSIONS)
     result['budget'] = {'maximum_wall_seconds': 3600, 'estimated_wall_seconds': 1200.0,
                         'hourly_price': 1.0, 'currency': 'CNY',
                         'evidence_sha256': 'a' * 64}
@@ -78,4 +76,24 @@ def test_frozen_protocol_bytes_must_be_canonical_to_keep_one_digest_identity():
     candidate = frozen_candidate()
     raw = canonical_json(candidate) + b'\n'
     with pytest.raises(ValueError, match='canonical'):
+        api().load_frozen(raw, hashlib.sha256(raw).hexdigest(), ROOT)
+
+
+def test_draft_runtime_inventory_comes_from_completed_cloud_measurement():
+    draft = api().build_draft(ROOT)
+    assert draft['runtime_versions']['pandas'] == '2.3.3'
+    assert draft['runtime_versions']['satalign'] == '0.1.17'
+    assert all(isinstance(value, str) for value in draft['runtime_versions'].values())
+    assert draft['budget'] is None and draft['status'] == 'draft'
+
+
+def test_rehashed_runtime_change_cannot_reuse_a_cloud_measurement():
+    candidate = api().build_draft(ROOT)
+    candidate['status'] = 'frozen'
+    candidate['runtime_versions'] = {name: 'test-version' for name in api().RUNTIME_PACKAGES}
+    candidate['runtime_versions'].update(api().KNOWN_VERSIONS)
+    candidate['budget'] = {'maximum_wall_seconds': 3600, 'estimated_wall_seconds': 1200.0,
+                           'hourly_price': 1.0, 'currency': 'CNY', 'evidence_sha256': 'a' * 64}
+    raw = canonical_json(candidate)
+    with pytest.raises(ValueError, match='runtime'):
         api().load_frozen(raw, hashlib.sha256(raw).hexdigest(), ROOT)

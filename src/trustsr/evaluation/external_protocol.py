@@ -15,6 +15,8 @@ EVIDENCE = {
                'aad0d0652e1858590e4768ed1d8275056347cb58a0f784e4263a62d8ce5a5e3a'),
     'cloud': ('paper/tables/sen2sr-cloud-policy-check-v1.json',
               'ed7fed19297b21debcbcad81938def564a212ff53417e19c3b9e980bb8038102'),
+    'cpu_execution': ('paper/tables/cloud-cpu-execution-v1.json',
+                      '4467cfeb57d291d96fc57bd4c35378829727d7fe6cacf9f73650e2fd85a0c6dc'),
 }
 PACKAGES = {
     'spain_crops': (140385908, '5f68a962b200ef781cbabbe21e598b71379fafb3c12d614deae652e65bb86319'),
@@ -65,8 +67,8 @@ def build_draft(repository: Path) -> dict:
                            'spatial_independence_and_pretraining_overlap_not_established',
                            'embedded_membership_and_pickle_compatibility_checked_after_authorization'],
         },
-        'implementation': implementation, 'runtime_versions': {
-            name: KNOWN_VERSIONS.get(name) for name in RUNTIME_PACKAGES},
+        'implementation': implementation,
+        'runtime_versions': evidence['cpu_execution']['profile']['versions'],
         'budget': None,
     }
 
@@ -91,6 +93,8 @@ def load_frozen(raw: bytes, expected_sha256: str, repository: Path) -> dict:
             or any(not isinstance(v, str) or not v.strip() for v in versions.values())
             or any(versions[k] != v for k, v in KNOWN_VERSIONS.items())):
         raise ValueError('complete frozen runtime versions required')
+    if canonical_json(versions) != canonical_json(draft['runtime_versions']):
+        raise ValueError('runtime differs from the measured cloud environment')
     budget = protocol['budget']
     fields = {'maximum_wall_seconds', 'estimated_wall_seconds', 'hourly_price', 'currency',
               'evidence_sha256'}

@@ -2,6 +2,33 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: original-cloud CPU measurement complete; price pending
+
+2026-09-08 user supplied the original server for the previously scoped CPU-only measurement.
+Deployed local 07103bf archive to a new durable directory and verified all 372 source/text files.
+Existing base environment unchanged; CUDA hidden. One full-grid synthetic benchmark completed:
+decode0.583128s, cache-write proxy0.228323s, two identical science replays7.466629/6.708647s.
+25 focused cloud tests passed in29.70s. No real inference, Spain or historical-cache access.
+Sources were fsynced/read back and only three small path-free JSON records were copied locally.
+No task/GPU compute processes remained; user was told server can stop while retaining the disk.
+
+Evidence `paper/tables/cloud-cpu-execution-v1.json` SHA-256:
+`4467cfeb57d291d96fc57bd4c35378829727d7fe6cacf9f73650e2fd85a0c6dc`.
+See [cloud CPU evidence and budget](reports/first-paper-cloud-cpu-budget.md).
+The full measured runtime version map now populates the draft and is mandatory at the freeze gate;
+22 local protocol/CLI tests pass. No full-suite rerun. No source changes were merged from the cloud.
+Current draft SHA-256 (supersedes historical draft hashes below):
+`dfe9239b162136a15af532810674a89fbc4e7252520bad2d90306e9f4ef7897c`.
+
+48-ROI nominal inference+two-replay+cache-write projection is1122.132718s (~18.70min).
+Budget draft proposes35min including explicit input/loading/variance allowances, with a45min
+run-only limit; these are assumptions, not a billing bound or execution authorization.
+Hourly price and billing granularity are still missing and were requested from the user.
+`paper/protocols/spain-budget-draft-v1.json` records the arithmetic; execution protocol remains
+DRAFT with budget=null. Do not guess price or start Spain. No further diagnostic rerun is needed.
+Next: receive price/billing terms, review the concrete budget, finalize the protocol and obtain
+remaining dedicated external/GPU execution authorization. Original Phase 2B3-C stays terminal.
+
 ## Latest checkpoint: formal execution entry implemented; protocol remains draft
 
 2026-09-08 continuation implements `python -m scripts.paper.run_spain` with draft/preflight/run/
