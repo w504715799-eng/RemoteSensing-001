@@ -2,6 +2,21 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: freeze review packet prepared; actual price still pending
+
+User requested continuation. Completed the local-only
+[freeze review packet](reports/first-paper-freeze-record.md): exact two-package/48-ROI scope,
+336 prediction slots, candidate/code/budget identities, normalization and remaining source
+limitations, failure/display rules, prior validation and unchanged C acceptance identity.
+Updated the design's stale decoder/structure/automatic-retry wording to match verified code.
+No Python/protocol/evidence changes; candidate SHA remains the one recorded below. No cloud
+connection, raw input/cache/model reads, inference or test-suite rerun this turn.
+Verified candidate bytes against current implementation, pinned evidence and linked files.
+Hourly rate and billing granularity requested again; await the actual values to finalize cost.
+Task 6 review preparation is delivered, but final freeze and Task 7 execution remain incomplete.
+Do not repeat completed measurements. Final budget/authorization decisions must use the session
+context and concrete completed packet, not assume every continuation requires new permission.
+
 ## Latest checkpoint: original-cloud CPU measurement complete; price pending
 
 2026-09-08 user supplied the original server for the previously scoped CPU-only measurement.
