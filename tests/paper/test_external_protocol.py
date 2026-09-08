@@ -97,3 +97,26 @@ def test_rehashed_runtime_change_cannot_reuse_a_cloud_measurement():
     raw = canonical_json(candidate)
     with pytest.raises(ValueError, match='runtime'):
         api().load_frozen(raw, hashlib.sha256(raw).hexdigest(), ROOT)
+
+
+def test_user_managed_cost_freeze_is_loadable_without_price():
+    candidate = api().build_frozen(ROOT)
+    raw = canonical_json(candidate)
+    assert candidate['status'] == 'frozen'
+    assert candidate['budget']['cost_management'] == 'user'
+    assert 'hourly_price' not in candidate['budget']
+    assert candidate['budget']['maximum_wall_seconds'] == 2700
+    assert api().load_frozen(raw, hashlib.sha256(raw).hexdigest(), ROOT) == candidate
+
+
+@pytest.mark.parametrize('field,value', [
+    ('maximum_wall_seconds', 0), ('maximum_wall_seconds', 999999),
+    ('estimated_wall_seconds', True), ('cost_management', 'unknown'),
+    ('evidence_sha256', '0' * 64),
+])
+def test_user_managed_cost_does_not_disable_execution_identity(field, value):
+    candidate = api().build_frozen(ROOT)
+    candidate['budget'][field] = value
+    raw = canonical_json(candidate)
+    with pytest.raises(ValueError):
+        api().load_frozen(raw, hashlib.sha256(raw).hexdigest(), ROOT)

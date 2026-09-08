@@ -25,6 +25,8 @@ PACKAGES = {
 KNOWN_VERSIONS = {'torch': '2.12.1+cu130', 'opensr-test': '1.3.3',
                   'opensr-model': '1.1.1', 'sen2sr': '0.8.5', 'mlstac': '0.4.9'}
 RUNTIME_PACKAGES = (*KNOWN_VERSIONS, 'numpy', 'pandas', 'scipy', 'safetensors', 'satalign')
+TIMING_PLAN = ('paper/protocols/spain-budget-draft-v1.json',
+               'a77e313b6932c6cbc69778b4efaca38b9786b2d654423d1ff6911683d96f598c')
 
 
 def build_draft(repository: Path) -> dict:
@@ -73,6 +75,29 @@ def build_draft(repository: Path) -> dict:
     }
 
 
+def _user_managed_budget(repository: Path) -> dict:
+    """Use measured planning times; price and supplier billing belong to the user."""
+    relative, digest = TIMING_PLAN
+    raw = (repository / relative).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ValueError('execution timing evidence SHA-256 mismatch')
+    plan = json.loads(raw)
+    return {
+        'cost_management': 'user',
+        'maximum_wall_seconds': plan['proposed_run_wall_limit_seconds'],
+        'estimated_wall_seconds': plan['proposed_estimated_wall_seconds'],
+        'evidence_sha256': digest,
+    }
+
+
+def build_frozen(repository: Path) -> dict:
+    """Freeze the implemented contract with user-managed costs, without external IO."""
+    protocol = build_draft(repository)
+    protocol['status'] = 'frozen'
+    protocol['budget'] = _user_managed_budget(repository)
+    return protocol
+
+
 def load_frozen(raw: bytes, expected_sha256: str, repository: Path) -> dict:
     """Authenticate the separately reviewed protocol, then reject draft/unbound execution."""
     if len(raw) > 1_048_576 or hashlib.sha256(raw).hexdigest() != expected_sha256:
@@ -96,6 +121,11 @@ def load_frozen(raw: bytes, expected_sha256: str, repository: Path) -> dict:
     if canonical_json(versions) != canonical_json(draft['runtime_versions']):
         raise ValueError('runtime differs from the measured cloud environment')
     budget = protocol['budget']
+    if isinstance(budget, dict) and 'cost_management' in budget:
+        if canonical_json(budget) != canonical_json(_user_managed_budget(repository)):
+            raise ValueError('execution limits differ from the user-managed timing contract')
+        return protocol
+    # Retain support for previously reviewed protocols with explicit monetary budgets.
     fields = {'maximum_wall_seconds', 'estimated_wall_seconds', 'hourly_price', 'currency',
               'evidence_sha256'}
     if not isinstance(budget, dict) or set(budget) != fields:

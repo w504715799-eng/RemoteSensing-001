@@ -1,4 +1,4 @@
-"""Frozen Spain external execution; draft/preflight never read external pixels."""
+"""Frozen Spain execution; draft/freeze/preflight never read external pixels."""
 
 import argparse
 import hashlib
@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 from trustsr.data.spain_package import decode_package
-from trustsr.evaluation.external_protocol import build_draft, load_frozen
+from trustsr.evaluation.external_protocol import build_draft, build_frozen, load_frozen
 from trustsr.evaluation.external_run import read_regular, run_study, write_once
 from trustsr.jsonio import canonical_json
 
@@ -123,6 +123,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     draft = commands.add_parser('draft', help='write a text-only non-runnable protocol draft')
     draft.add_argument('--output', type=Path, required=True)
+    freeze = commands.add_parser('freeze', help='freeze the contract; user manages costs')
+    freeze.add_argument('--output', type=Path, required=True)
     for name in ('preflight', 'run', 'replay'):
         command = commands.add_parser(name)
         command.add_argument('--protocol', type=Path, required=True)
@@ -138,11 +140,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         verify_import_origin()
-        if args.command == 'draft':
-            raw = canonical_json(build_draft(REPOSITORY))
+        if args.command in ('draft', 'freeze'):
+            builder = build_frozen if args.command == 'freeze' else build_draft
+            protocol = builder(REPOSITORY)
+            raw = canonical_json(protocol)
+            digest = hashlib.sha256(raw).hexdigest()
+            if args.command == 'freeze':
+                load_frozen(raw, digest, REPOSITORY)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             write_once(args.output, raw)
-            print(json.dumps({'status': 'draft', 'sha256': hashlib.sha256(raw).hexdigest()}))
+            print(json.dumps({'status': protocol['status'], 'sha256': digest}))
             return 0
         if args.command in ('run', 'replay') and not args.confirm_external_access:
             raise ValueError('dedicated frozen external-access acknowledgement required')

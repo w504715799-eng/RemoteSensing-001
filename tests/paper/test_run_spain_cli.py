@@ -87,3 +87,29 @@ def test_stale_installed_package_cannot_generate_or_execute_protocol(tmp_path, m
     with pytest.raises(SystemExit):
         module.main(['draft', '--output', str(tmp_path / 'draft.json')])
     assert not (tmp_path / 'draft.json').exists()
+
+
+def test_freeze_cli_writes_loadable_protocol_without_external_access(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    module = api()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('text-only freeze reached runtime or external data')
+
+    monkeypatch.setattr(module, 'decode_package', forbidden)
+    monkeypatch.setattr(module, 'verify_runtime', forbidden)
+    path = tmp_path / 'frozen.json'
+    assert module.main(['freeze', '--output', str(path)]) == 0
+    raw = path.read_bytes()
+    result = module.load_frozen(raw, hashlib.sha256(raw).hexdigest(), module.REPOSITORY)
+    assert result['status'] == 'frozen'
+    assert result['budget']['cost_management'] == 'user'
+    assert 'hourly_price' not in json.loads(raw)['budget']
+    # Repeating text publication is idempotent, but conflicting files are never overwritten.
+    assert module.main(['freeze', '--output', str(path)]) == 0
+    path.write_text('{}')
+    with pytest.raises(SystemExit):
+        module.main(['freeze', '--output', str(path)])
+    assert path.read_text() == '{}'

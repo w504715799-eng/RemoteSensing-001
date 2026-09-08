@@ -2,6 +2,26 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest override: user manages costs; freeze functionality and final protocol delivered
+
+User explicitly said to disregard their costs and focus on functionality. This overrides ALL
+historical hourly-price/billing-budget blockers below. Do not ask for price or cost approval again.
+Added text-only `python -m scripts.paper.run_spain freeze --output ...` and `build_frozen`.
+User-managed cost mode omits price/currency and binds the existing timing evidence, 2100-second
+estimate and 2700-second run timeout. Canonical SHA, implementation, science, runtime, data and
+model checks remain; old monetary protocol shape stays supported. Conflicting files cannot be
+overwritten. No cloud/raw data/model/cache access was needed to implement or freeze this.
+
+Final `paper/protocols/spain-external-frozen-v1.json` SHA:
+`798200c5c8b2cd9102755202810e8161832064de686a81b41c02776ddaf85525`.
+Current draft SHA: `ac5ce4302fc1766d162967403961ef7a4366be27f15b04fdf76e080d0cbbb594`.
+See [freeze record](reports/first-paper-freeze-record.md) and updated execution runbook.
+29 protocol/CLI tests and 5 execution/publication tests passed; seven new cases were red first.
+Changed-file Ruff and read-only code review pass. No full-suite or completed diagnostics rerun.
+Next: functional integration/deployment with this exact source and protocol, then the planned
+external study as authorized by the session; actual Spain compatibility/results remain untested.
+Do not reinterpret this as another cost/permission questionnaire. Old C remains terminal.
+
 ## Latest checkpoint: freeze review packet prepared; actual price still pending
 
 User requested continuation. Completed the local-only
