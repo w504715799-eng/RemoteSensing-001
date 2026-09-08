@@ -2,6 +2,28 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest override: SEN2SRLite discrepancy resolved on the cloud profile
+
+2026-09-08 CPU-only follow-up supersedes the unresolved-thread hypothesis below.
+On the same three fixed development ROIs, 1 thread reproduces timing hashes and 96 threads
+reproduce historical A hashes, each repeated twice. One-thread differences are small but two
+R1 AURC deltas exceed the stated diagnostic tolerance; do not call them universally negligible.
+New `CloudSEN2SRLiteX4` pins 96 threads during loading/predict, restores caller settings even on
+failure, and versions cache provenance. Use only serial, single-worker CPU execution; old adapters
+and historical results remain unchanged. Actual cloud adapter verification matches 3/3 old hashes.
+This profile's three-call mean is 0.888265 s (including first cold call), replacing 0.209878 s
+for future SEN2SRLite budget projections; nominal inference-only estimate is now 7.179 minutes.
+See [diagnosis and handoff](reports/first-paper-sen2sr-reproducibility.md) for numeric evidence,
+scope, limitations and remaining gates. No Spain/B/C access or new GPU inference occurred.
+Next: safe decoding, authenticated external runner and per-method failure accounting, OpenSR
+failure rules, end-to-end budget and final protocol freeze. Do not rerun completed diagnostics.
+Only `main` exists locally and remotely; integrate directly, no artificial merge or cloud-code merge.
+Verification: full local suite completed with exit 0 (2492 tests, 43 existing JIT deprecation
+warnings); 22 focused model tests and 5 cloud policy tests passed. New-file Ruff, staged data
+policy, canonical evidence hashes and cloud adapter source hash all pass; read-only review found
+no blocking issues. Both cloud JSON records were synced and read back; no GPU process remained.
+The user was notified that the server can be stopped while retaining its data disk.
+
 ## Current objective: approved first-paper research direction
 
 The user accepted the recommended research direction on 2026-09-07 and requested a new plan

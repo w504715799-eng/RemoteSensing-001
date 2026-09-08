@@ -19,6 +19,13 @@ HR，以及 `HRharm` 相对 L2A 的协调关系。输出意向仍为 [0,1] 反�
 
 ## 比较与统计
 
+2026-09-08 执行身份补充：SEN2SRLite 使用独立 `CloudSEN2SRLiteX4` CPU 96 intra-op
+线程策略，串行单 worker，加载／预测后恢复调用者线程数。provenance 必须进入新缓存键，
+不混用历史未记录线程策略的缓存。已在三个固定 development ROI 复现旧哈希；
+更换硬件／依赖／backend 必须重核验，不以 Spain 调参。详见
+[CPU 核查](../../reports/first-paper-sen2sr-reproducibility.md)。其他冻结模型配置不变；
+此补充不解除其余外部访问门槛。
+
 - 中心 LDSR seed 3407；K5 seeds 3407–3411；模型身份沿用冻结记录。
 - Crops、Urban 分开。主比较是每 ROI 的 `AURC_R9(K5)-AURC_R9(LR)`，
   再对子集有效配对 ROI 等权平均。负值有利于 K5；不跨子集合并像素。

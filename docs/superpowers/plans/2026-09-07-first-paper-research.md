@@ -26,6 +26,14 @@ Task 5 已完成渲染、邻域模块、合成验证和真实开发选择及复�
 
 ## Global Constraints
 
+2026-09-08 最新检查点：有界 GPU 测速已完成，不重跑。SEN2SRLite 哈希差异已定位
+为 CPU 线程数，新独立云端 96 线程适配器在三个固定开发 ROI 上复现历史输出。
+后续外部 runner 必须采用此适配器及其新 provenance；旧 A/B/C 不变。
+推理部分预算改为约 7.179 分钟，完整流水线预算未完成。见
+[诊断及下一步](../../reports/first-paper-sen2sr-reproducibility.md)。
+下一步顺序仍为安全解包、认证外部 runner／逐方法失败处理、OpenSR 失败规则、
+端到端预算和最终协议冻结；不得把旧未完成状态当成重复测速指令。
+
 - 在当前 attached `main` 顺序工作；本地 Git 为权威，云端代码不得合回。
 - Phase 2B3-C 保持 `empirically_met_but_inconclusive`，不重跑、不重开、不重新解释为确认。
 - 已发布 Phase 2B3-A/B/C 科学结果及冻结参数均不可覆盖。

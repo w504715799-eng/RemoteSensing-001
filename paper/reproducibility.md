@@ -1,5 +1,13 @@
 # 当前可复现部分
 
+2026-09-08 补充：SEN2SRLite CPU 线程差异已核查，新
+`src/trustsr/models/cloud_sen2srlite.py` 在独立串行 CPU 路径固定 96 线程并恢复调用者设置，
+不修改历史适配器。路径无关证据是 `paper/tables/sen2sr-cpu-diagnostic-v1.json` 与
+`paper/tables/sen2sr-cloud-policy-check-v1.json`；canonical SHA、范围、实际耗时和
+重新验证条件见 [核查报告](../docs/reports/first-paper-sen2sr-reproducibility.md)。
+权重无关测试：`.venv/bin/python -m pytest tests/models/test_cloud_sen2srlite.py -q`。
+真实三个开发样本已完成验证，不重跑旧阶段或借此开放 Spain／B/C 数据。
+
 2026-09-07；覆盖已发布证据渲染、评分合成验证与 development 候选比较，不代表外部研究完成。
 
 ```bash
@@ -38,6 +46,6 @@ Spain 元数据审计中的官方质量字段有限暴露必须随最终实验�
 .venv/bin/python -m scripts.paper.benchmark_inference --help
 ```
 
-真实推理成本需另行申请短时 GPU，在固定 3 个 development 样本上测量；SEN2SRLite
+以下为历史准备状态：真实推理成本需另行申请短时 GPU，在固定 3 个 development 样本上测量；SEN2SRLite
 维持 CPU。测速只记录同步预测墙钟和内存，不生成新的质量结论，不重跑旧阶段。
 完整访问范围和硬超时见 [计算预算](../docs/reports/first-paper-compute-budget.md)。
