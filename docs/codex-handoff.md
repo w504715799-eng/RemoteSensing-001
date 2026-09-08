@@ -2,6 +2,14 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest writing refinement: connect the three contributions
+
+The manuscript now organizes the questions as score evaluation → spatial adaptation → limits
+of threshold use. This is a progression of questions, not a validated serial algorithm: the
+neighborhood score reuses K5 predictions, while threshold transfer applies only to original K5.
+Do not claim that neighborhood AURC gains imply calibrated coverage or transferred risk control.
+Only abstract/introduction/discussion/conclusion wording changed; no new results or experiments.
+
 ## Latest checkpoint: manuscript methods and literature review delivered
 
 User authorized the next step and instructed us to pause and ask them to power on if GPU is
