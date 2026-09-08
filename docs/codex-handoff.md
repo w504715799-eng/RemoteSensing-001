@@ -2,6 +2,24 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: manuscript methods and literature review delivered
+
+User authorized the next step and instructed us to pause and ask them to power on if GPU is
+needed. This checkpoint is local documentation only: no SSH, raw data, cache or model access.
+Reviewed fixed source/protocol and published small evidence; expanded score formulas, units,
+deployment calls, sampler settings, calibration threshold rules and pinned OpenSR parameters.
+Explicitly distinguish joint neighborhood texture variance from smoothed K5, and compute R9
+before masking. Retain unfavorable results and the original inconclusive internal terminal.
+
+See [completion review](reports/first-paper-completion-review.md) and `paper/manuscript.md`.
+Six direct references checked against primary/official sources; no dependency upgrades.
+Frozen protocol/source gate and science/execution hashes passed unchanged; no scientific/code
+artifact diff and no full tests. Prior table/figure reconstruction is already complete; do not rerun.
+Task 8 generic draft and method review delivered; target venue/type/format selection remains.
+No institutional requirements have been supplied; do not invent them or ask about costs again.
+Next work is submission positioning/formatting and author-provided metadata, not another GPU
+benchmark. If a later authorized study requires GPU, notify the user before dependent work.
+
 ## Latest checkpoint: full Spain study, independent replay and figures completed
 
 User authorized the next study, supplied the server and one-hour availability, and requested

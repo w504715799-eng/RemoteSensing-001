@@ -2,10 +2,10 @@
 
 | 产物 | 内容 | 当前状态／数据角色 |
 |---|---|---|
-| T1 | 数据角色、ROI 数、模型调用成本 | 开发推理及正式48 ROI流水线已测；费用由用户管理 |
-| T2 | 三评分 R9/R1 AURC 与 rho | 已有 development JSON；禁止当作外部结果 |
+| T1 | 数据角色、ROI 数、模型调用成本 | 正文第2节数据角色及3.2节调用表；开发／正式流水线时间见第5节 |
+| T2 | 三评分 R9/R1 AURC 与 rho | 已生成 development_scores.csv；仅 development |
 | F1 | 开发 R9/R1 十点风险—覆盖曲线，含随机解析参考 | 已生成 `figures/development_risk_coverage.pdf` |
-| T3 | B 阈值／覆盖／校准准则；C 均值／覆盖／UCB／终局 | 两种 bound 分列，不能连成同义置信曲线 |
+| T3 | B 阈值／覆盖／校准准则；C 均值／覆盖／UCB／终局 | 已生成 calibration_evaluation.csv；两种 bound 分列，不是同义置信曲线 |
 | T4 | Spain 两子集五评分配对比较和缺失分母 | 已生成spain_scores/paired/curves/transfer/structure五CSV |
 | F2 | 外部固定阈值覆盖与损失 | 已生成spain_threshold_transfer.pdf；仅K5使用原阈值 |
 | F3 | 预设 ROI 的预测、参考、分数、风险 | 已生成spain_fixed_examples.pdf；每子集首两ROI，不换样本 |

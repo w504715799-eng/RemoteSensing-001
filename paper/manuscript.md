@@ -1,6 +1,6 @@
-# Cost, Error Scale, and Calibration Transfer of Uncertainty Scores for Sentinel-2 Super-Resolution
+# Computational Cost, Error Scale, and Threshold Transfer of Uncertainty Scores for Sentinel-2 Super-Resolution
 
-工作初稿，2026-09-08。预设外部实验已执行，仍需完整投稿前方法、文献和论证审阅。
+研究初稿，2026-09-08。预设实验与本轮方法、文献和论证审阅已完成；尚未按目标期刊编排。
 
 ## Abstract（工作稿）
 
@@ -24,7 +24,7 @@ Sentinel-2 超分辨率增加空间细节的同时，也需要说明哪些重建
 
 研究问题：
 
-1. 同一中心重建下，K5 相比低成本 LR 残差的排序增益是否值得额外推理成本？
+1. 同一中心重建下，K5 相比 LR 残差的排序增益对应多少额外模型调用与实测时间？
 2. 从 R1 到 R9，方法排名和选择风险如何变化；邻域二阶矩适配是否改变这一关系？
 3. 内部校准的固定 K5 阈值在 Spain 两子集上产生什么覆盖与损失，而非能否补救原终局？
 
@@ -40,9 +40,65 @@ Urban 20 ROI全部执行。包哈希、受限解包及内嵌六字段成员／�
 
 ## 3. Methods
 
+### 3.1 Fixed reconstruction
+
 中心预测固定 LDSR seed 3407；K5 使用 3407–3411。评分比较包括 LR 重投影残差、
 三模型分歧、K5 方差、邻域二阶矩适配和随机解析基线。随机解析基线不额外推理，
 邻域适配复用 K5。报告独立部署调用数和整个研究实际调用数，避免重复计算缓存成本。
+
+中心不是五样本均值。采用 opensr-model 1.1.1 的 `opensr-ldsrs2_v1_0_0.ckpt`，
+100 sampling steps、eta=0.95、temperature=1，启用 histogram matching，预测
+截断到 [0,1]。SEN2SRLite 使用 sen2sr 0.8.5 和独立 CPU 96 线程适配器。
+权重 SHA、模型配置和完整依赖绑定在[冻结协议](protocols/spain-external-frozen-v1.json)，
+实际身份见[执行证据](tables/spain-execution-v1.json)。本研究不训练模型。
+
+### 3.2 Score definitions and calls
+
+记 LR 为 $X$、协调参考为 $Y$、五个 LDSR 输出为 $S_k$，中心为 $S_0$。
+$D_4$ 是 area 四倍下采样，$U_4$ 是重复为 4×4 块，$b$ 为四个波段；
+$B_w$ 是反射边界的 $w\times w$ 均值池化。分数不读取 HR：
+
+$$
+s_{LR}=U_4\left[\frac14\sum_b|D_4(S_{0,b})-X_b|\right],\qquad
+s_{K5}=\frac14\sum_b\left[\frac15\sum_{k=0}^4 S_{k,b}^2-
+\left(\frac15\sum_{k=0}^4 S_{k,b}\right)^2\right].
+$$
+
+三模型分歧用中心、bicubic 和 SEN2SRLite 输出代入总体方差定义，分母为 3。
+LR 残差是固定面积降采样的一致性代理，不是已标定的传感器成像模型。邻域适配为
+
+$$
+s_{N,w}=G\left\{\frac14\sum_b\left[
+B_w\left(\frac15\sum_k S_{k,b}^2\right)-
+\left(B_w\left(\frac15\sum_k S_{k,b}\right)\right)^2
+\right]\right\}.
+$$
+
+$G$ 是 sigma=1、半径 3 的归一化 7×7 Gaussian 卷积，使用反射边界。
+邻域计算为 CPU float64，舍入产生的微小负方差截零。它包含联合种子／空间变化：
+即使五样本相同，空间纹理仍可产生正值，不能称为仅平滑 K5 或纯随机不确定性。
+development 比较 w=3、9，按平均 R9 AURC 选较低者，差不超过 $10^{-12}$ 时
+选较小窗口；选中 w=3 后外部固定。方法归属和差异见[相关工作](related-work.md)。
+
+| 单独部署的评分 | 每 ROI 所需输出／调用 | 相对已有中心额外调用 |
+|---|---|---:|
+| LR／随机解析基线 | 1 次 LDSR | 0 |
+| 三模型分歧 | 1 次 LDSR + 1 次 bicubic + 1 次 SEN2SRLite | 2 |
+| K5 | 5 次 LDSR | 4 |
+| 邻域 w3 | 同一 5 次 LDSR，加 CPU 后处理 | 4 |
+
+bicubic 计为一次基线输出计算，不是神经网络前向。完整研究共享输出，每 ROI
+共 7 槽，48 ROI 共 336 份；不能累加独立部署成本。随机基线不生成新的重建。
+
+### 3.3 Error scale and ranking
+
+$$
+R_1(p)=\frac14\sum_b|S_{0,b}(p)-Y_b(p)|,\qquad R_9=B_9(R_1).
+$$
+
+R9 在完整网格计算后才应用保留掩码；先取绝对值再空间平均，窗口宽 22.5 m。
+分数升序保留 $\lceil cN\rceil$ 个像素，同分按展平索引排序；选择风险是保留位置
+的风险均值。十点离散 AURC 是 c=0.1,…,1.0 的选择风险算术均值，不是梯形积分。
 
 主要排序指标为逐 ROI 的十点离散 R9 AURC；R1 与 Spearman 为次要诊断。
 风险的反射边界、同分规则和 ROI 最大损失定义见 [指标字典](metric-dictionary.md)。
@@ -52,6 +108,35 @@ Urban 20 ROI全部执行。包哈希、受限解包及内嵌六字段成员／�
 选择波段须有限且在[0,32767]；零保留，超过10000的值饱和并计数，除以10000。
 实际两子集饱和计数均为0，但这不确认源nodata语义。只使用描述性等ROI统计，
 不做显著性检验、bootstrap或独立ROI置信区间；失败保留逐方法、配对和结构诊断分母。
+
+归一化反射率本身无量纲；为区分尺度，R1、R9、AURC 和 LR 分数按反射率尺度
+报告，三模型／K5／邻域方差及其阈值按反射率平方尺度报告。rho、覆盖和 softmin
+分量无量纲；不同类型分数的绝对大小不能直接比较。
+
+### 3.4 Frozen threshold and risk interpretation
+
+阈值保留 $s_{K5}(p)\leq t$，ROI 损失 $L_i(t)$ 是保留位置最大 R9，全拒绝记 0。
+校准在 n=120 个 ROI 上选满足下式的最大已观测分数阈值：
+
+$$
+\frac{\sum_{i=1}^{n}L_i(t)+1}{n+1}\leq\alpha,\qquad\alpha=0.05.
+$$
+
+没有可行候选时令 $t=-\infty$，全拒绝。归一化损失上限为 1，已发布阈值为
+$7.970395366024563\times10^{-6}$。alpha 是期望 ROI 损失目标，区别于内部测试
+上界的 confidence_error=0.05。共形期望风险结果依赖可交换性等条件，不等于
+单侧高概率置信声明，也不自动覆盖地理迁移。
+[Conformal Risk Control](https://research.google/pubs/conformal-risk-control/) 给出
+这一期望风险框架。本研究保留原内部终局，在 Spain 只描述覆盖与损失，不重新校准。
+
+### 3.5 Secondary structural diagnosis
+
+OpenSR-Test 1.3.3 在独立 CPU 进程评估中心重建：裁边 16 得到 480×480 网格，
+启用光谱与空间协调，PCC 配准距离上限 5、最大关键点设置 500；使用 ND 距离、
+softmin 温度 0.25，im/om/ha score 参数均为 0.05，梯度掩码为 auto。
+三分量仅在共同有限像素上平均，记录支持数；配准失败或无有效支持不填零。
+此 HR 辅助协调仅服务结构诊断，不改变主评分或 R1/R9。softmin 分量不是硬分类
+幻觉比例，裁边／配准后的结构网格也不能直接当作原评分网格。
 
 ## 4. Existing results
 
@@ -130,6 +215,14 @@ LDSR 与 bicubic 输出哈希匹配历史记录。随后 CPU 诊断发现，SEN2
 
 开发选择偏差、空间相关、预训练重叠未知、协调参考的误差以及有限 ROI 数量限制结论。
 K5 五个种子不是五次独立复现，R9 改善也不表示 2.5 m 尺度细节均正确。
+邻域分数的优势可能部分来自纹理复杂度与误差的相关性；现有比较不能分离空间
+纹理与随机种子方差各自的贡献，不能据此断言后验不确定性估计更准确。
+异构三模型与同模型五样本的调用数也不直接等价于计算量。墙钟测量绑定硬件、
+线程和缓存边界；未评估下游决策收益，故不提出普遍成本最优结论。
+
+本文贡献是固定中心下的可复现比较、尺度相关的正负结果，以及保留原终局的
+地理阈值迁移描述。没有新增共形定理，也没有验证像素级幻觉检测器。更多独立
+地理来源、空间分组推断或纹理消融需要另行预设，不能回头修改已消费测试。
 论文的完成标准是完整预设比较及可复现报告，包括负结果；不是保证得到正结果。
 
 ## 7. Conclusion
