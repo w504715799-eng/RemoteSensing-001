@@ -1,0 +1,291 @@
+{
+  "cpu_threads": 1,
+  "cuda_runtime": "13.0",
+  "development_result_sha256": "5bb0e5138d6ed1df6c65744556be02ccd48b77d3288df39630d16fbd9cd2dce9",
+  "gpu_name": "NVIDIA GeForce RTX 4090",
+  "gpu_total_memory_bytes": 25250627584,
+  "input_seconds": 0.2947554108686745,
+  "manifest_sha256": "c7f8ffa8415575d85daafe284a0796ec3f111442f0ac662f1d01311c4a851d4a",
+  "models": {
+    "bicubic": {
+      "cold_start": null,
+      "load_seconds": 1.2319069355726242e-06,
+      "mean_seconds": 0.006184546276926994,
+      "measurements": [
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "ebfef1f86281e548365c240d22005c4a3701f6247c2c079fe236a1ebf738d3ad",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 0.0048318649642169476,
+          "seed": null
+        },
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "26ffa68807c0997c957f5cb5d61eb6b48f41f89b5d2955f1c0cea1285197bc95",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 0.006640944862738252,
+          "seed": null
+        },
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "c5485a4e125076e02c7f0f6fc0f99bf6a607086e5a1c163bde0234038a9edb6c",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 0.007080829003825784,
+          "seed": null
+        }
+      ],
+      "provenance": {
+        "align_corners": false,
+        "antialias": true,
+        "implementation": "torch.nn.functional.interpolate",
+        "implementation_schema_version": 1,
+        "mode": "bicubic",
+        "name": "bicubic-x4",
+        "output_policy": "clip_to_[0,1]",
+        "scale": 4,
+        "torch_version": "2.12.1+cu130"
+      }
+    },
+    "ldsr": {
+      "cold_start": {
+        "cuda_peak_allocated_bytes": 4133724672,
+        "cuda_peak_reserved_bytes": 5452595200,
+        "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+        "output_sha256": "655ecd280d7b0a52c7b42281499b3d51893f1feb73e1787ad43b010924fe974b",
+        "seconds": 2.006148516200483
+      },
+      "load_seconds": 5.074614122044295,
+      "mean_seconds": 1.6159431567726037,
+      "measurements": [
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "655ecd280d7b0a52c7b42281499b3d51893f1feb73e1787ad43b010924fe974b",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 1.6120252790860832,
+          "seed": 3407
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "be02c343e965a9a12bb05da681111d068e15d31188aecde8612c5afec1db0c19",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 1.608822536887601,
+          "seed": 3408
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "2ebd46fee3134ce56e172f7b65780cdf56a83516a94467e968d9f8631ce7012a",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 1.6145335908513516,
+          "seed": 3409
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "442a48fd9b645c436392a6884677b1a122497104d0df60167ea832c63669a00b",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 1.6093788021244109,
+          "seed": 3410
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "ddbd802f9164bbdc51513553047457d89b445f8fb0429f59686f721b0073e16c",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 1.6205627510789782,
+          "seed": 3411
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "73f552119095c25c71a02e31572d72d3de4ee48aba8bcc87808c576b5d1f97ea",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 1.6070871211122721,
+          "seed": 3407
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "51a3f3ba63d2a96033aaa9cc56e3a1826c7f411a345866556f10e42a399d532d",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 1.6139396319631487,
+          "seed": 3408
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "0f578f787fb34852eb3af0734945e73bc535f88c57c39cdf9a98ba4842b6c328",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 1.6092307788785547,
+          "seed": 3409
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "f6586e75cc12976be261e4548e4afff3d4025367d5f71e42b741c9207228c756",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 1.636249793926254,
+          "seed": 3410
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "cc2efe95400246b26fff7165f45c35bb4461513c081aa47a151930bc07992a7b",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 1.6202392298728228,
+          "seed": 3411
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "3a1b54b952577eca7f69fffff75755a25f15fa08a4a1cc89dc5fcee6b62f476f",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 1.6183572909794748,
+          "seed": 3407
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "4a41d00102d8547f411d6341eb641174ded3b03e994ad8432c54c1bb7f33e4cc",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 1.6142662391066551,
+          "seed": 3408
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "ea26e1c6021aafc5359ddca8fb6d57862222e868e74513e5669153e959a21a71",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 1.619726211996749,
+          "seed": 3409
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "1bf2bcd458fabba818d28e3ed9c2302e0faebbb2a32bb7e4bc9b124b88408138",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 1.6118323898408562,
+          "seed": 3410
+        },
+        {
+          "cuda_peak_allocated_bytes": 4133724672,
+          "cuda_peak_reserved_bytes": 5452595200,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "a60003d0c046e279afcd0a27200fd2d09d5c3e67dfa3315872445708fcd7c4e0",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 1.6228957038838416,
+          "seed": 3411
+        }
+      ],
+      "provenance": {
+        "checkpoint_name": "opensr-ldsrs2_v1_0_0.ckpt",
+        "checkpoint_sha256": "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a",
+        "checkpoint_size": 1130715795,
+        "checkpoint_url": "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt",
+        "config_sha256": "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f",
+        "cuda_runtime": "13.0",
+        "device": "cuda",
+        "histogram_matching": true,
+        "implementation_schema_version": 1,
+        "name": "ldsr-s2-x4",
+        "opensr_model_version": "1.1.1",
+        "output_policy": "clip_to_[0,1]",
+        "sampling_eta": 0.95,
+        "sampling_steps": 100,
+        "sampling_temperature": 1.0,
+        "scale": 4,
+        "seed": 3407,
+        "torch_version": "2.12.1+cu130"
+      }
+    },
+    "sen2srlite": {
+      "cold_start": {
+        "cuda_peak_allocated_bytes": null,
+        "cuda_peak_reserved_bytes": null,
+        "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+        "output_sha256": "ba8331bde10e7e0e9accc922b7d69230d56dacf68008e8ac10354b185f3d1aff",
+        "seconds": 0.21097528701648116
+      },
+      "load_seconds": 0.43867569393478334,
+      "mean_seconds": 0.20987756364047527,
+      "measurements": [
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "20a658421c5ef302b51c7acee4ab3e900a42f5878f436b40bdb32bce241683d5",
+          "output_sha256": "ba8331bde10e7e0e9accc922b7d69230d56dacf68008e8ac10354b185f3d1aff",
+          "sample_id": "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+          "seconds": 0.228085309965536,
+          "seed": null
+        },
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "9c9f6427cfb4218e3a47ef7fd03a2fa4246561bac620b465a9654ab744f2e144",
+          "output_sha256": "f2c6474b839858837f9d2329cf67d0295972998edb2153f46fc768ef89673ec4",
+          "sample_id": "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+          "seconds": 0.20506085408851504,
+          "seed": null
+        },
+        {
+          "cuda_peak_allocated_bytes": null,
+          "cuda_peak_reserved_bytes": null,
+          "input_sha256": "00ed39ec5c123df83f199bce8cc4402afcf757041e5449e016bc0cd23e98110b",
+          "output_sha256": "f61fc8ed1cba103a5f49614db7032fd82796e3ec9123d0b1e5601f898405a75f",
+          "sample_id": "NA5120_E1209N0691__m_3712049_ne_10_060_20220614",
+          "seconds": 0.19648652686737478,
+          "seed": null
+        }
+      ],
+      "provenance": {
+        "asset_sha256:example_data.safetensor": "c895c7da8a8d48882b73a2a1955e4260714b97540eea290229a284d73f129985",
+        "asset_sha256:hard_constraint.safetensor": "fbad981519066387c413ead1d6af7ef3e0d2947c34147ba90163fc79ae539239",
+        "asset_sha256:load.py": "4b6c836b1f73078c62c84d4374b2d8daee5345f6239f64e0b6be29432383bac6",
+        "asset_sha256:mlm.json": "59caa5c6af96a6fbebdbd771d93c91cc2d3a770302cd2f262b5409e77a40e3f7",
+        "asset_sha256:model.safetensor": "479aa796d5068d0b1206118ccbca27bd3223df0214db1a9b31a1e18349ed1c7e",
+        "device": "cpu",
+        "implementation_schema_version": 1,
+        "manifest_url": "https://huggingface.co/tacofoundation/sen2sr/resolve/main/SEN2SRLite/NonReference_RGBN_x4/mlm.json",
+        "mlstac_version": "0.4.9",
+        "model_id": "SEN2SRLite_NonReference_RGBN_x4",
+        "name": "sen2srlite-x4",
+        "output_policy": "clip_to_[0,1]",
+        "scale": 4,
+        "sen2sr_version": "0.8.5",
+        "torch_version": "2.12.1+cu130"
+      }
+    }
+  },
+  "sample_ids": [
+    "NA5120_E1193N0687__m_3612111_nw_10_060_20220519",
+    "NA5120_E1207N0710__m_3812162_sw_10_060_20200617",
+    "NA5120_E1209N0691__m_3712049_ne_10_060_20220614"
+  ],
+  "schema": "trustsr.first-paper-inference-timing.v1",
+  "scope": "inference-only; no external experiment, scoring or prediction storage",
+  "script_sha256": "3669a670f00d0aa5ece4c74c2166e5992c3d0fe6e4d56901269f7472d157f706",
+  "status": "complete",
+  "torch_version": "2.12.1+cu130"
+}

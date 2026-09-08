@@ -67,3 +67,10 @@ K5、固定 w3 邻域）及随机解析期望，共用中心预测计算 R1/R9 �
 **2487 passed, 43 warnings in 778.23s**。新代码 Ruff、Git diff whitespace 和 staged
 data-policy 检查通过；A/B/C 产物、旧 CLI、模型适配器及冻结评价代码无 diff。
 本轮仍未连接云端；完成的是 GPU 测速准备，不是外部研究或最终论文。
+
+## 后续 GPU 测速完成
+
+用户提供服务器后，按 `49a7e39` 完成固定范围测速，云端 27 项测试通过；环境未改。
+实际结果、来源 SHA 和限制见 [测速报告](first-paper-inference-timing.md)。模型推理成本
+已可作限定外推，但完整流水线开销、SEN2SRLite 新旧哈希差异与安全解包仍待处理。
+不将这次完成计作最终外部协议冻结；无 Spain 访问，用户已获知可关机保留数据盘。

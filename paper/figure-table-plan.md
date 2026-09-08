@@ -2,7 +2,7 @@
 
 | 产物 | 内容 | 当前状态／数据角色 |
 |---|---|---|
-| T1 | 数据角色、ROI 数、模型调用成本 | 数量可写；时间与费用未测 |
+| T1 | 数据角色、ROI 数、模型调用成本 | 3 个 development ROI 推理时间已测；完整流水线及费用未完成 |
 | T2 | 三评分 R9/R1 AURC 与 rho | 已有 development JSON；禁止当作外部结果 |
 | F1 | 开发 R9/R1 十点风险—覆盖曲线，含随机解析参考 | 已生成 `figures/development_risk_coverage.pdf` |
 | T3 | B 阈值／覆盖／校准准则；C 均值／覆盖／UCB／终局 | 两种 bound 分列，不能连成同义置信曲线 |

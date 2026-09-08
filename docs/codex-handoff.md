@@ -18,7 +18,8 @@ The user subsequently authorized execution, with a stop to request GPU resources
 Tasks 1–2 have evidence, metric, manuscript, and rendering-design documents. The development
 neighborhood comparison has now completed; Spain remains a draft, not a final freeze.
 The read-only renderer and synthetic neighborhood module are now implemented. Three CSV tables
-and the development R1/R9 PDF are generated. Latest scoped checks: 137 local tests, 28 cloud tests.
+and the development R1/R9 PDF are generated. Software checkpoint: 137 scoped local tests;
+cloud timing preparation: 27 tests (the earlier neighborhood run had 28 scoped cloud tests).
 The local OpenSR contract checks emit 43 existing PyTorch JIT deprecation warnings.
 Cloud development reuse verified 120 ROIs, 240 assets and 600 K5 predictions. Windows 3 and 9
 were evaluated twice on CPU with byte-identical science output; the preregistered rule selected 3.
@@ -59,7 +60,22 @@ NOT run. It is the next resource-dependent step, not evidence that remaining ext
 or protocol freeze has finished. Request a short GPU session before running it.
 Final local verification for this checkpoint: full suite 2487 passed, 43 known JIT warnings
 (778.23 seconds); new-file Ruff, staged data policy and frozen-tree diff checks pass.
-Read-only review found no blocking issues. No cloud connection, real timing or Spain access occurred.
+Read-only review found no blocking issues. That local checkpoint involved no cloud or Spain access.
+
+2026-09-08 GPU follow-up: the user supplied the server after the resource request. The bounded
+timing run at `49a7e39` completed with exit 0: 3 bicubic calls, 1 cold + 3 SEN2SRLite CPU calls,
+1 cold + 15 LDSR GPU calls, exactly the fixed first three development IDs. Cloud 27 CPU tests pass;
+no dependencies/environment changed. Timing is durable, GPU processes are absent, and the user
+was told the server may be stopped while retaining storage. Do NOT repeat this measurement.
+LDSR mean 1.615943 seconds; prediction-window allocated peak 3.849831 GiB, reserved 5.078125 GiB.
+Nominal 48-ROI inference-only projection is 6.637 minutes, not an end-to-end or price guarantee.
+Only the small, path-free timing JSON was synchronized locally; no images/models/predictions.
+New-vs-published prediction hashes: LDSR 15/15 and bicubic 3/3 equal; SEN2SRLite 0/3 equal despite
+matching inputs, weights and recorded identity fields. Cause and error magnitude are unresolved;
+CPU thread settings are a hypothesis, not an established explanation. Investigate before final freeze,
+without changing historical results or using Spain for debugging. See
+[timing report](reports/first-paper-inference-timing.md) and
+`paper/tables/inference-timing-v1.json` for source hashes and exact measurements.
 See [readiness checkpoint](reports/first-paper-development-readiness.md) and
 [Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
 v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.
