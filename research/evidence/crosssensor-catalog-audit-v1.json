@@ -1,0 +1,115 @@
+{
+  "candidate_groups_sha256": "c8a946789adf8dde52b8785085e58fabcde6aa61a264344806b19c3b36f06a86",
+  "directory_columns": [
+    "tortilla:id",
+    "tortilla:file_format",
+    "tortilla:data_split",
+    "tortilla:offset",
+    "tortilla:length",
+    "stac:crs",
+    "stac:geotransform",
+    "stac:raster_shape",
+    "stac:time_start",
+    "stac:time_end",
+    "stac:centroid",
+    "rai:ele",
+    "rai:cisi",
+    "rai:gdp",
+    "rai:hdi",
+    "rai:gmi",
+    "rai:pop",
+    "rai:admin0",
+    "rai:admin1",
+    "rai:admin2",
+    "days_between",
+    "correlation",
+    "scale_factor",
+    "__index_level_0__"
+  ],
+  "eligible_group_count": 6158,
+  "eligible_group_size_distribution": {
+    "1": 5010,
+    "2": 1005,
+    "3": 121,
+    "4": 18,
+    "5": 3,
+    "7": 1
+  },
+  "eligible_member_count": 7477,
+  "excluded_member_count": 523,
+  "footprint_separation_audited": false,
+  "full_source_sha_verified": false,
+  "grouping_component_count": 6517,
+  "grouping_radius_km": 5.0,
+  "hardened_network_retrieval_completed": false,
+  "hardened_offline_group_replay_passed": true,
+  "history": [
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json",
+      "sha256": "d61c36e2180a2dc3468d4d9aba083ac0925d163ac2bb910e0227138e9fa249f1"
+    },
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3b/sen2naipv2-calibration-conformal-cache-audit-v1.json",
+      "sha256": "40aff8aaccb27719d958d42026d68d8efc0c7f79479e3bd99777053ee1d6399f"
+    },
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3c/sen2naipv2-internal-test-evaluation-cache-audit-v1.json",
+      "sha256": "4bf048b222d4993adb0fd70b0273f60a994ecb7b3539e58ed3b2d57dcf4f43ff"
+    }
+  ],
+  "history_complete": true,
+  "history_members": 360,
+  "independence_certified": false,
+  "initial_transport": "urllib_default_redirects; exact final 206 ranges validated",
+  "lr_scene_identity_audited": false,
+  "member_count": 8000,
+  "metadata_bytes_received": 612680,
+  "missing_seen_ids": [],
+  "persisted_projection": {
+    "path": "artifacts/datasets/progressive-crosssensor-members-v1.json",
+    "sha256": "30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6",
+    "size_bytes": 586131
+  },
+  "pixel_payload_read": false,
+  "projected_members_sha256": "17938d95bbdae73e91e290bddbdd50b3427d6b41e69b9f7267ba67991907ddf7",
+  "quality_columns_decoded": false,
+  "range_receipts": [
+    {
+      "length": 42,
+      "offset": 0,
+      "sha256": "0ae2b7363e73464ffd0c0c64e890277d9c0718caa3786bf7166aa8fc12937c93"
+    },
+    {
+      "length": 7229,
+      "offset": 9717576621,
+      "sha256": "ef1505137d5431bfcc1098a91482f1c52e6a99edb8ab58c5e1f45a73ae38af03"
+    },
+    {
+      "length": 605409,
+      "offset": 9716971212,
+      "sha256": "9eb6bc8f5e52b3ca9f0aba0a733c98b95e579e6b5c02db515f44cc6d36921ea1"
+    }
+  ],
+  "schema": "trustmask.catalog-audit.v1",
+  "science_or_pixel_access": false,
+  "source_count": 7795,
+  "source_declared_sha256": "c6f29d8e80dc5e856e2b4510c0e6830043d4b15c9228a9ca249a4f618e7475a5",
+  "source_object": "sen2naipv2-crosssensor.taco",
+  "source_revision": "c370504201072fdb1dd388013ab8c0fc7d00a57e",
+  "source_rule": "naip_id_suffix_plus_centroid_5km_connected_components",
+  "source_size": 9717583850,
+  "split_frozen": false,
+  "transport_followups": [
+    {
+      "attempt": "v2",
+      "status": "TLS_EOF_after_header"
+    },
+    {
+      "attempt": "v3",
+      "status": "TLS_EOF_before_header"
+    }
+  ]
+}

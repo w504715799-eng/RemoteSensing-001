@@ -42,3 +42,12 @@ by this module. A reference error is not a downstream task label or error-free g
 Scientific design and dependent data/statistics phase:
 [design](../../docs/superpowers/specs/2026-09-08-progressive-coverage-design.md),
 [implementation plan](../../docs/superpowers/plans/2026-09-08-progressive-coverage-foundation.md).
+
+
+Metadata-only audit is available as `audit_catalog --output NEW_DIRECTORY` with isolated
+PyArrow19.0.1. `catalog.py` restricts reads to a legacy TACO header and its two metadata intervals;
+`grouping.py` joins shared source IDs/spatial neighbors and removes entire historically touched
+groups. `check_partition` validates five disjoint stage roles structurally, not statistical
+independence or provenance. See [audit report](../../docs/reports/progressive-data-audit.md) for
+persisted identity projection and the incomplete hardened-network replay status. Never interpret
+candidate group counts as a certified independent sample size.

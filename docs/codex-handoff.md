@@ -2,6 +2,24 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: new metadata inventory and historical exclusion audited
+
+Metadata-only public crosssensor source audit yielded8000 members. All360 published historical
+IDs matched; source-sharing plus5km centroid-connected grouping excludes523 members, leaving
+7477 members in6158 candidate groups. These are NOT certified independent test samples.
+No quality columns decoded, no pixel/model/cache or SSH/GPU access. Persistent small identity
+projection is artifacts/datasets/progressive-crosssensor-members-v1.json (SHA30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6).
+See [data audit](reports/progressive-data-audit.md) and research/evidence/crosssensor-catalog-audit-v1.json.
+
+Implemented bounded TACO metadata header/HTTP range checks, body-free redirects, fixed historical
+SHA gates, source/spatial grouping and five-stage structural partition checks.71 focused tests
+and Ruff passed, read-only review issues fixed. Old frozen implementation remains unchanged.
+Initial3metadata ranges succeeded; after redirect hardening,2 attempts hit TLS EOF. Final network
+retrieval has NOT completed, but final history/group logic exactly replays the stored projection.
+Do not redownload old pixels or call all6158 groups independent. Next: validate hardened metadata
+retrieval and audit LR-source sharing/full footprints, then independent sample-size and split
+freezing. Current work needs no GPU; notify user before GPU-dependent steps.
+
 ## Latest checkpoint: approved progressive study, local foundation delivered
 
 User approved the design and explicitly prioritized comprehensive experiments and measurable
