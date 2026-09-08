@@ -2,6 +2,24 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: approved progressive study, local foundation delivered
+
+User approved the design and explicitly prioritized comprehensive experiments and measurable
+practical benefit. Implemented research/trustmask scoring decomposition/fusion and offline mask
+workload accounting, plus a labeled synthetic demo. New code is outside the frozen source tree.
+42 focused tests and changed-file Ruff passed; read-only code review issue fixed by regression.
+See [foundation report](reports/progressive-coverage-foundation.md), design and implementation
+plan dated2026-09-08. This is NOT new empirical evidence or a calibrated deployment package.
+
+Scientific target is equal geographic-group / within-group ROI mean loss and coverage, with
+physical workload totals separate. Main comparison is full method versus existing neighborhood;
+6-row minimal matrix and additional ablations. Joint risk/benefit delta allocation explicit.
+Review tiles/area are proxies; human time is only modeled until actually measured. No GPU/SSH,
+model or pixel/cache access. Public fixed HF tree lacks a standalone member metadata catalog.
+Next is bounded metadata extraction, old-group overlap exclusion, independent sample design,
+then fitting/calibration and full run protocol. Real new experiments remain pending. Notify user
+before GPU-dependent work; no repeated cost or routine design approval questions.
+
 ## Latest user direction: one optimization goal and three dependent studies
 
 User now wants three genuinely progressive studies and final comparison with 2–3 methods.
