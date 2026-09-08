@@ -27,3 +27,43 @@ base 环境经用户授权新增 pytest 8.4.2、iniconfig 2.3.0；未新建环�
 处理规则是预定研究合同，不代表真实包 dtype／nodata 已被验证。
 没有下载或解包 Spain，没有连接云端，没有改动原 SPOT loader 或 A/B/C 产物。
 仍需安全解码／固定包哈希入口、五评分汇总与外部协议最终验收，尚未到 GPU 阶段。
+
+## 2026-09-08 五评分核心检查点
+
+新增 `src/trustsr/evaluation/external_scores.py`：四张 HR-free 分数图（LR、三模型、
+K5、固定 w3 邻域）及随机解析期望，共用中心预测计算 R1/R9 十点曲线、AURC、rho；
+随机 rho 为 null，不伪装成一次有随机相关性的实现。旧阈值仅应用 K5，单独记录
+覆盖、ROI 最大 R9 损失与全拒绝。新输出修正高风险排除比例的名称，不改旧字段。
+
+主比较汇总要求每个固定 ROI 恰有结果或明确的整 ROI 失败，拒绝缺项、重复、清单外
+成员和非有限 AURC；无有效配对返回 null，不返回零。此函数只汇总主比较，尚未覆盖
+完整运行器的逐方法部分失败、所有次要指标的子集均值及 HR 来源计数。
+
+16 项新测试先失败后通过；相关回归命令：
+
+```sh
+.venv/bin/python -m pytest tests/data/test_spain_inputs.py tests/paper tests/risk tests/data/test_local_data_policy.py --override-ini addopts='' -q
+```
+
+结果 126 passed，43 条既有 PyTorch JIT 弃用警告。没有 Spain 像素访问、云端连接
+或旧实验重跑。模型身份与 seed 顺序仍由未来运行器认证，数组核心不声称认证预测来源。
+
+## 限定硬件测速入口
+
+`scripts/paper/benchmark_inference.py` 已实现；11 项 CPU 测试验证固定 3 ROI 选择、
+缺失／错 split 拒绝、真实 bicubic 输出计时与哈希、非法输出拒绝、无 CUDA 时无数据
+访问或输出，以及历史数据／模型／仓库输出路径保护。相关回归合计 137 passed，
+43 条既有警告；CLI `--help` 可运行。真实 GPU 分支尚未执行，不以合成测试冒充硬件测试。
+
+预算口径更正：冻结 A 中 SEN2SRLite 是 CPU，不能把它的耗时称为 GPU 推理耗时。
+固定范围、调用数、30 分钟外层硬超时与测量限制详见 [预算规格](first-paper-compute-budget.md)。
+下一资源步骤是短时 GPU 测量；安全解包和完整外部运行器仍未完成，Spain 未获本入口访问。
+
+只读代码审阅未发现 Critical／Important 问题；独立合成成功路径检查确认 3 次 bicubic、
+4 次 SEN2SRLite、16 次 LDSR 及 seed 顺序。该成功路径探针尚未收入自动回归测试；
+现有自动测试覆盖 CPU 测量核心和无 CUDA／无效输入停止路径。真实硬件仍待测。
+
+最终全仓验证：`.venv/bin/python -m pytest --override-ini addopts='' -q` 返回
+**2487 passed, 43 warnings in 778.23s**。新代码 Ruff、Git diff whitespace 和 staged
+data-policy 检查通过；A/B/C 产物、旧 CLI、模型适配器及冻结评价代码无 diff。
+本轮仍未连接云端；完成的是 GPU 测速准备，不是外部研究或最终论文。

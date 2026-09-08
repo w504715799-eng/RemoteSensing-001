@@ -1,6 +1,6 @@
 # Codex handoff: first-paper research plan; Phase 2B3-C remains terminal
 
-Date: 2026-09-07 (Asia/Shanghai)
+Date: 2026-09-08 (Asia/Shanghai)
 
 ## Current objective: approved first-paper research direction
 
@@ -18,7 +18,7 @@ The user subsequently authorized execution, with a stop to request GPU resources
 Tasks 1–2 have evidence, metric, manuscript, and rendering-design documents. The development
 neighborhood comparison has now completed; Spain remains a draft, not a final freeze.
 The read-only renderer and synthetic neighborhood module are now implemented. Three CSV tables
-and the development R1/R9 PDF are generated. Latest scoped checks: 87 local tests, 28 cloud tests.
+and the development R1/R9 PDF are generated. Latest scoped checks: 137 local tests, 28 cloud tests.
 The local OpenSR contract checks emit 43 existing PyTorch JIT deprecation warnings.
 Cloud development reuse verified 120 ROIs, 240 assets and 600 K5 predictions. Windows 3 and 9
 were evaluated twice on CPU with byte-identical science output; the preregistered rule selected 3.
@@ -44,6 +44,22 @@ approval. New `spain_inputs.py` implements strict decoded-array preparation and 
 binding, with 23 new tests; 110 scoped tests pass (43 existing JIT deprecation warnings).
 This is NOT a complete package loader: hash-gated safe decoding, five-score external aggregation
 and final protocol/budget gates remain. No Spain pixels were accessed, and the goal remains active.
+Next local checkpoint: `external_scores.py` now computes all five R1/R9 diagnostics on a shared
+center prediction, descriptive fixed-threshold K5 transfer, and the primary equal-ROI paired
+summary with exhaustive whole-ROI failure accounting. Its score builder accepts no HR input.
+16 new synthetic tests and the scoped regression suite pass: 126 tests, 43 existing warnings.
+This is an array-level core, not a complete external runner: prediction authentication, partial
+method failure accounting, safe package decoding and GPU timing remain outstanding.
+The bounded hardware timing entry is now `python -m scripts.paper.benchmark_inference`;
+scope and the exact three development IDs are in the compute-budget report. It retains SEN2SRLite
+on CPU (matching frozen A), measures 1 cold + 15 LDSR calls, and never writes predictions or
+computes quality metrics. No CUDA causes failure before any data/model load or output creation.
+11 additional CPU checks pass; scoped total is now 137 (43 known warnings). Real GPU timing has
+NOT run. It is the next resource-dependent step, not evidence that remaining external CPU work
+or protocol freeze has finished. Request a short GPU session before running it.
+Final local verification for this checkpoint: full suite 2487 passed, 43 known JIT warnings
+(778.23 seconds); new-file Ruff, staged data policy and frozen-tree diff checks pass.
+Read-only review found no blocking issues. No cloud connection, real timing or Spain access occurred.
 See [readiness checkpoint](reports/first-paper-development-readiness.md) and
 [Spain metadata audit](reports/first-paper-spain-metadata-audit.md). The latter records unresolved
 v2/v3 membership correspondence and incidental exposure to official quality columns in metadata.

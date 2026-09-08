@@ -24,3 +24,20 @@ development 运行入口为 `scripts/paper/evaluate_neighborhood.py`，需要云
 
 外部复现记录尚缺：最终数据合同、成员映射、推理预算、冻结协议及运行结果。
 Spain 元数据审计中的官方质量字段有限暴露必须随最终实验报告披露。
+
+## 外部入口的本地合同检查（2026-09-08）
+
+`spain_inputs.py` 只处理已解码数组与 metadata 行对应；`external_scores.py` 只接收
+内存张量，生成四张分数图及随机解析期望。分数构建不接收 HR，诊断共享 seed 3407
+中心预测，邻域配置沿用 development 选中的 w3。随机 Spearman 为 null，不伪造一次
+随机图；固定 K5 阈值不重新拟合。主比较汇总使用 ROI 等权，不合并 Crops／Urban。
+这些测试不是 Spain 结果，也没有认证任何真实外部预测。
+
+```sh
+.venv/bin/python -m pytest tests/data/test_spain_inputs.py tests/paper tests/risk tests/data/test_local_data_policy.py --override-ini addopts='' -q
+.venv/bin/python -m scripts.paper.benchmark_inference --help
+```
+
+真实推理成本需另行申请短时 GPU，在固定 3 个 development 样本上测量；SEN2SRLite
+维持 CPU。测速只记录同步预测墙钟和内存，不生成新的质量结论，不重跑旧阶段。
+完整访问范围和硬超时见 [计算预算](../docs/reports/first-paper-compute-budget.md)。
