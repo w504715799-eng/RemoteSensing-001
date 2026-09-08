@@ -2,7 +2,8 @@
 
 2026-09-08。用户明确费用自行管理；价格和计费粒度不再是开发或冻结条件。
 入口：`python -m scripts.paper.run_spain {draft,freeze,preflight,run,replay}`。
-正式协议已生成，尚未执行真实Spain实验。
+正式协议已完成一次真实Spain实验及独立缓存复算，见
+[结果报告](reports/first-paper-spain-results.md)。下列命令用于理解复现流程，不是重复推理指令。
 
 ## 当前可用内容
 

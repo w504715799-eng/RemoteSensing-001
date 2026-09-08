@@ -2,6 +2,40 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest checkpoint: full Spain study, independent replay and figures completed
+
+User authorized the next study, supplied the server and one-hour availability, and requested
+parallel acquisition. Task 7 now completed under source 2c851de and the final protocol below.
+377 deployed text/source file hashes and original runtime preflight passed. Direct cloud
+download was unreachable; downloaded both fixed official packages locally in parallel and
+relayed them to a new durable directory, verifying size/SHA at both ends. Restricted decoding
+and all embedded members passed without changing scientific code or the allowlist.
+
+All336 prediction slots stored, zero failures, full28 Crops/20 Urban members; 2 science replays
+byte-identical and manifest-last publication succeeded. Main process1234.032s; separate-process
+CPU-only replay378.192s passed and all five published result/state/runtime files stayed unchanged.
+Science SHA `f09fc42555cb00deac5125e478b61817200de9a796bd668e5abcc15fbfb07fe4`;
+execution evidence SHA `8eaa870b5677bbfb856fdf6533f76f054d8053e33820a89d67e62a780f888651`.
+See [full results](reports/first-paper-spain-results.md), `paper/tables/spain-science-v1.json`
+and `paper/tables/spain-execution-v1.json`. Only small text evidence/scientific figures enter Git.
+All cloud work finished, outputs synced/read back; no task/GPU compute processes remained.
+User was told the server can stop while retaining the durable disk. Do not rerun this study.
+
+K5 mean R9 AURC is6.1579%/8.6360% lower than LR in Crops/Urban, with28/28 and20/20 valid pairs.
+Fixed threshold mean coverage47.4338%/23.5099%, mean ROImax R9 loss .04035626/.04878006.
+Neighborhood w3 has lowest mean R1/R9 AURC in both subsets. Preserve unfavorable comparisons:
+Crops R1 three-model AURC is lower than K5; both subsets' R1 rho is higher for three-model.
+All findings remain descriptive. Structural softmin averages cover only upstream common finite
+support, not all230400 cropped pixels and not hard hallucination fractions. Old C stays terminal.
+
+Added postprocessors under `paper/tools/` (outside frozen implementation tree):5 CSVs,2 summary
+plots and fixed first-two-ROI panels per subset.3 focused renderer tests pass, no full suite;
+independent text/code review passed, figures inspected. Panel guard fixes preserve identical PNG.
+`src/trustsr` and `scripts/paper` unchanged; final frozen protocol remains valid.
+Updated manuscript working abstract/results/conclusion and reproducibility. Next is Task8 full
+paper quality/methodology/literature review and submission preparation, NOT costs or more GPU
+diagnostics. No need to ask again about pricing or authorization already supplied in this session.
+
 ## Latest override: user manages costs; freeze functionality and final protocol delivered
 
 User explicitly said to disregard their costs and focus on functionality. This overrides ALL

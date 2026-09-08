@@ -2,13 +2,14 @@
 
 | 产物 | 内容 | 当前状态／数据角色 |
 |---|---|---|
-| T1 | 数据角色、ROI 数、模型调用成本 | 3 个 development ROI 推理时间已测；完整流水线及费用未完成 |
+| T1 | 数据角色、ROI 数、模型调用成本 | 开发推理及正式48 ROI流水线已测；费用由用户管理 |
 | T2 | 三评分 R9/R1 AURC 与 rho | 已有 development JSON；禁止当作外部结果 |
 | F1 | 开发 R9/R1 十点风险—覆盖曲线，含随机解析参考 | 已生成 `figures/development_risk_coverage.pdf` |
 | T3 | B 阈值／覆盖／校准准则；C 均值／覆盖／UCB／终局 | 两种 bound 分列，不能连成同义置信曲线 |
-| T4 | Spain 两子集五评分配对比较和缺失分母 | 未执行，不生成占位数值 |
-| F2 | 外部固定阈值覆盖与损失 | 未执行；仅 K5 使用原数值阈值 |
-| F3 | 预设 ROI 的预测、参考、分数、风险 | 未执行；按 ROI ID 预选，不挑最好案例 |
+| T4 | Spain 两子集五评分配对比较和缺失分母 | 已生成spain_scores/paired/curves/transfer/structure五CSV |
+| F2 | 外部固定阈值覆盖与损失 | 已生成spain_threshold_transfer.pdf；仅K5使用原阈值 |
+| F3 | 预设 ROI 的预测、参考、分数、风险 | 已生成spain_fixed_examples.pdf；每子集首两ROI，不换样本 |
+| F4 | 外部R1/R9十点风险—覆盖曲线 | 已生成spain_risk_coverage.pdf；等ROI描述性均值，无置信区间 |
 
 图注必须标明 ROI 聚合、误差窗口、覆盖网格、方向和开发选择偏差。
 F1 不画独立性未经证明的像素 bootstrap 区间。CSV 为科学数值事实源；PDF 元数据
