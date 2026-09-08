@@ -54,8 +54,15 @@ def evaluate_external_roi(
         raise ValueError("sample_id must be nonempty")
     maps = build_score_maps(pair.lr, samples, bicubic, sen2sr)
     center = samples[0].detach().cpu()
+    return evaluate_score_maps(pair, center, maps)
+
+
+def evaluate_score_maps(pair: SRPair, center: torch.Tensor, maps: dict) -> dict:
+    """Evaluate available score maps on one center, retaining analytical random risk."""
+    pair.validate()
+    SRPair(pair.sample_id, pair.source, pair.lr, center, pair.scale).validate()
     hr = pair.hr.detach().cpu()
-    result = {"roi": pair.sample_id}
+    result = {"roi": pair.sample_id, "transfer": None}
     for window in (1, 9):
         risk = local_l1_risk(center, hr, window=window)
         diagnostics = {}
@@ -71,7 +78,7 @@ def evaluate_external_roi(
             "aurc": random_risk, "random_aurc": random_risk, "aurc_gain": 0.0,
         }
         result[f"R{window}"] = diagnostics
-        if window == 9:
+        if window == 9 and "k5" in maps:
             mask = maps["k5"] <= TRANSFER_THRESHOLD
             rejected = not bool(mask.any())
             result["transfer"] = {

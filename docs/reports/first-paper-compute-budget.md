@@ -88,3 +88,12 @@ timeout --signal=TERM --kill-after=30s 30m python -m scripts.paper.benchmark_inf
 输出每次调用后更新，`status=running` 表示未完成，不能用于完整预算；仅末尾正常退出
 且 `status=complete` 才能计算正式测量摘要。缓存写盘和外部解包开销不在本入口测量中，
 必须另列，不能把 inference-only 时间报告为端到端运行总时间。
+
+## 2026-09-08 本地完整合成串联
+
+新增 `python -m scripts.paper.benchmark_external_cpu`，无需网络、数据路径或模型，
+临时构造一个512网格样本，串联受限解码、七份合成预测缓存、五评分与隔离OpenSR。
+两轮复算耗时4.185629／4.037788秒，科学JSON字节一致；详见
+[集成报告](first-paper-external-local-integration.md)。本地PyTorch 2.13.0与云端冻结
+2.12.1不同，因此不将此数直接混入正式成本。后续可在原云端环境只跑此合成CPU入口，
+并补加载／下载／计费条件；无需再次运行真实GPU测速或SEN2SRLite诊断。

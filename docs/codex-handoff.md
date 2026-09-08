@@ -2,6 +2,26 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest local checkpoint: restricted package decode and authenticated replay cores
+
+2026-09-08 user requested continued execution with fewer full-suite runs. New local-only
+Task 5 work implements restricted hash-gated package decoding, package-SHA source identities,
+seven-slot cache-authenticated replay, partial-method/paired/transfer denominators and isolated
+OpenSR correctness with actual harmonization registration failure detection. A subset replay
+binds expected model-provenance SHA; the final protocol must supply that trusted expected value.
+See [integration evidence and remaining work](reports/first-paper-external-local-integration.md).
+
+Validation: 77 focused tests + 7 local data-policy tests passed; no full suite rerun. Full-grid
+synthetic package→cache→five scores→real OpenSR→summary ran twice with byte-identical science;
+replay times 4.185629/4.037788 seconds on local CPU, NOT the frozen cloud environment or a price
+projection. Changed-file Ruff and whitespace checks pass. No cloud/Spain/B/C access occurred.
+
+Next: formal execution CLI binding frozen package/member/model identities, missing-prediction
+execution and failure reasons, final source/nodata disclosure, cloud CPU end-to-end budget,
+and protocol freeze. The new cores are not a complete authorized external runner. Real package
+pickle compatibility is untested; unknown types must stop, never trigger unrestricted fallback.
+Do not rerun the completed GPU timing or SEN2SRLite diagnostics. Work sequentially on main.
+
 ## Latest override: SEN2SRLite discrepancy resolved on the cloud profile
 
 2026-09-08 CPU-only follow-up supersedes the unresolved-thread hypothesis below.
