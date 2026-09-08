@@ -2,6 +2,48 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — upstream provenance attempt, 2026-09-08
+
+This newest section supersedes all older next-step instructions. Continue on main, single writer.
+New bounded ZIP reader: research/trustmask/zip_metadata.py. Plan:
+docs/superpowers/plans/2026-09-08-progressive-provenance.md. Evidence:
+research/evidence/crosssensor-upstream-provenance-v1.json. Current bounded attempt is published;
+all three probes are NOT complete. Do not interpret its partial delivery as a closed source audit.
+
+Fixed upstream ZIP revision79e93461ad93911ebcd5aa0f342376e4c41e8743;2222325537bytes.
+EOCD at2222325515 length22 SHA67037df532f56f997cd052e11e27ac2a0c7481d3fe4a252abba06008e7463696.
+Central directory at2221159369 length1166146;11405entries,2851metadata.json.
+Ignored durable cache artifacts/progressive-provenance contains verified ranges, entries,
+selected.json, probes.json, both member-transport attempts, and probe-0.json/probe-2.json.
+Only1167067unique source bytes retrieved, no TIFF or full ZIP; full-object SHA not verified.
+Use .venv/bin/python; ZIP module needs no PyArrow/new dependencies.
+
+Preselected first3JSONs: ROI_0000/metadata.json andROI_0002/metadata.json succeeded;
+ROI_0001/metadata.json remains incomplete: body offset298677695 length311; local header at
+298677602 length30 and prefix at298677632 length63 already cached. Reverify receipt SHA before
+reuse; central member record/reader authorize reads. Initial per-range two attempts followed by
+one missing-range pass with provenance_probe=2; URLError logs preserved. Do not endlessly retry.
+
+Two actual S2 productIDs recovered, but their NAIP suffixes have0exact matches among8000v2
+members; nearest v2 centers are8.456km and17.714km away. FolderROI_0000 embedsROI_00002;
+folderROI_0002 embedsROI_00006. Never join by numerical ROI indices. Identity projections only;
+quality numeric tokens not converted/printed/used. This is2schema observations, not bulk mapping.
+
+Next: complete remaining tiny JSON when transport recovers, and seek a direct v2 construction
+manifest mapping v2 members to actual S2 productIDs/mosaic source sets plus NAIP identity.
+Checked public project descriptions did not supply this mapping; do not claim no public mapping
+exists. Do not bulk request2851JSONs or8000nested directories without a justified mapping strategy.
+No source-sharing closure, independence certification, sample-size/split freeze, fitting or GPU.
+The earlier conditional Hoeffding sample-size planning remains valid only under its assumptions.
+No external messages sent; contacting maintainers would need explicit sending authorization.
+
+Validation:20ZIP tests and106research tests, research Ruff, frozen load_frozen source gate,
+cachedSHA and completedJSON CRC/decompression replay passed. Reviewer overlap finding fixed
+with regression before source expansion. Frozen src/trustsr and scripts/paper unchanged.
+Independent evidence review and final staged data-policy/diff gates passed.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — source/footprint audit delivery, 2026-09-08
 
 This section supersedes the older terminal checkpoint below. Continue on main, single writer.

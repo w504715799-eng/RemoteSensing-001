@@ -1,0 +1,336 @@
+{
+  "archive_validation_scope": "trusted central directory plus selected local headers and JSON; unselected local extra fields and full archive integrity not verified",
+  "cache_sha_reverified": true,
+  "central_directory": {
+    "entry_count": 11405,
+    "length": 1166146,
+    "metadata_json_count": 2851,
+    "offset": 2221159369
+  },
+  "completed_json_size_crc_and_decompression_replayed": true,
+  "completed_probes": 2,
+  "declared_probes": 3,
+  "full_source_sha_verified": false,
+  "independence_certified": false,
+  "lr_source_sharing_audited": false,
+  "next_step": "Complete ROI_0001 metadata if transport recovers; seek v2 direct source manifest or construct a justified alternative, not numeric ROI matching or bulk archive probing",
+  "numeric_decoding_policy": "parse_int=str and parse_float=str; only projected geometry explicitly converted; quality numeric values not converted, printed or used",
+  "pixel_payload_read": false,
+  "probe_selection": "first_three_lexicographic_metadata_json_paths_before_content_read",
+  "probes": [
+    {
+      "entry": {
+        "compressed": 310,
+        "crc": 159100485,
+        "flags": 8,
+        "limit": 917446249,
+        "method": 8,
+        "name": "cross-sensor/ROI_0000/metadata.json",
+        "name_bytes": 35,
+        "offset": 917445830,
+        "size": 553
+      },
+      "identity_geometry_projection": {
+        "naip_date": "2019-09-09",
+        "naip_id": "m_3710663_nw_13_060_20190909",
+        "proj:epsg": "32613",
+        "proj:geometry": "POLYGON ((391740 4106030, 391740 4107240, 390530 4107240, 390530 4106030, 391740 4106030))",
+        "proj:transform": "2.5, 0.0, 390530.0, 0.0, -2.5, 4107240.0, 0.0, 0.0, 1.0",
+        "roi_id": "ROI_00002",
+        "s2_date": "2019-09-09",
+        "s2_id": "S2A_MSIL2A_20190909T174911_N0213_R141_T13SCB_20190909T235808"
+      },
+      "json_sha256": "c5e2fdfec2f6c2de672e4853f7b4190709b29031e6bb83183945b06235bdbb73",
+      "keys": [
+        "roi_id",
+        "s2_id",
+        "s2_date",
+        "s2_mean_solar_azimuth",
+        "s2_mean_solar_zenith",
+        "naip_id",
+        "naip_date",
+        "proj:epsg",
+        "proj:geometry",
+        "proj:transform",
+        "QA1",
+        "QA2",
+        "d_sim_to_real"
+      ],
+      "nearest_v2_centroid_diagnostic": {
+        "distance_m": 8456.15753105437,
+        "id": "NA5120_E1461N0637__m_3710655_sw_13_060_20190909",
+        "mapping_authorized": false
+      },
+      "status": "complete",
+      "v2_exact_naip_suffix_matches": []
+    },
+    {
+      "entry": {
+        "compressed": 311,
+        "crc": 323517564,
+        "flags": 8,
+        "limit": 298678022,
+        "method": 8,
+        "name": "cross-sensor/ROI_0001/metadata.json",
+        "name_bytes": 35,
+        "offset": 298677602,
+        "size": 561
+      },
+      "error_type": "URLError",
+      "status": "incomplete"
+    },
+    {
+      "entry": {
+        "compressed": 310,
+        "crc": 3473127080,
+        "flags": 8,
+        "limit": 76613732,
+        "method": 8,
+        "name": "cross-sensor/ROI_0002/metadata.json",
+        "name_bytes": 35,
+        "offset": 76613313,
+        "size": 561
+      },
+      "identity_geometry_projection": {
+        "naip_date": "2021-09-17",
+        "naip_id": "m_4411330_se_12_060_20210917",
+        "proj:epsg": "32611",
+        "proj:geometry": "POLYGON ((794820 4933890, 794820 4935100, 793610 4935100, 793610 4933890, 794820 4933890))",
+        "proj:transform": "2.5, 0.0, 793610.0, 0.0, -2.5, 4935100.0, 0.0, 0.0, 1.0",
+        "roi_id": "ROI_00006",
+        "s2_date": "2021-09-17",
+        "s2_id": "S2A_MSIL2A_20210917T182021_N0301_R127_T11TQK_20210917T230428"
+      },
+      "json_sha256": "a0c07fb37eeb318ebeeaff3a4ad0c6e4a8b1f6b24cb0b8ecafa165921d214c40",
+      "keys": [
+        "roi_id",
+        "s2_id",
+        "s2_date",
+        "s2_mean_solar_azimuth",
+        "s2_mean_solar_zenith",
+        "naip_id",
+        "naip_date",
+        "proj:epsg",
+        "proj:geometry",
+        "proj:transform",
+        "QA1",
+        "QA2",
+        "d_sim_to_real"
+      ],
+      "nearest_v2_centroid_diagnostic": {
+        "distance_m": 17713.62159687091,
+        "id": "NA5120_E1368N0810__m_4411346_nw_12_060_20210917",
+        "mapping_authorized": false
+      },
+      "status": "complete",
+      "v2_exact_naip_suffix_matches": []
+    }
+  ],
+  "quality_values_used": false,
+  "range_receipts": [
+    {
+      "length": 22,
+      "offset": 2222325515,
+      "sha256": "67037df532f56f997cd052e11e27ac2a0c7481d3fe4a252abba06008e7463696",
+      "status": "complete"
+    },
+    {
+      "length": 1166146,
+      "offset": 2221159369,
+      "sha256": "531f036ddd56ebcb642f967c08f8f5ef286eb2ba94319054240f5180724f124c",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 917445830,
+      "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 917445860,
+      "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 298677602,
+      "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 298677632,
+      "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+      "status": "complete"
+    },
+    {
+      "length": 310,
+      "offset": 917445923,
+      "sha256": "eff80a068764dfe49b63dff0290470c611ae8957f0bc8037f993ed34cadb2c29",
+      "status": "complete"
+    },
+    {
+      "length": 30,
+      "offset": 76613313,
+      "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+      "status": "complete"
+    },
+    {
+      "length": 63,
+      "offset": 76613343,
+      "sha256": "deb9ed43b25f889a02e6d09a61fc6323d0733bfc4bee0628a856129afc29ca98",
+      "status": "complete"
+    },
+    {
+      "length": 310,
+      "offset": 76613406,
+      "sha256": "2261ca6634dd614d7a693159218f172c410b10762cf8560c091aa4b6334abf4c",
+      "status": "complete"
+    }
+  ],
+  "schema": "trustmask.upstream-provenance.v1",
+  "source_declared_sha256": "4fe9cc4f292320568fea7e39fc86d97fed13ea8cf8f0e37823aa73c4e54019d2",
+  "source_object": "cross-sensor/cross-sensor.zip",
+  "source_repository": "isp-uv-es/SEN2NAIP",
+  "source_revision": "79e93461ad93911ebcd5aa0f342376e4c41e8743",
+  "source_size": 2222325537,
+  "split_frozen": false,
+  "transport_attempts": {
+    "directory": [
+      {
+        "error_type": "URLError",
+        "length": 1166146,
+        "offset": 2221159369,
+        "status": "failed"
+      },
+      {
+        "length": 1166146,
+        "offset": 2221159369,
+        "sha256": "531f036ddd56ebcb642f967c08f8f5ef286eb2ba94319054240f5180724f124c",
+        "status": "complete"
+      }
+    ],
+    "members": [
+      {
+        "length": 30,
+        "offset": 917445830,
+        "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 917445860,
+        "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 310,
+        "offset": 917445923,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 310,
+        "offset": 917445923,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 298677602,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 298677632,
+        "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+        "status": "complete"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 30,
+        "offset": 76613313,
+        "status": "failed"
+      },
+      {
+        "error_type": "URLError",
+        "length": 30,
+        "offset": 76613313,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 917445830,
+        "sha256": "6b2ad8d9bf03df948022c11327a0d074337185e02e114b71b0252c6988f1cb16",
+        "status": "cache"
+      },
+      {
+        "length": 63,
+        "offset": 917445860,
+        "sha256": "0872235d59967453501f389b313d12f9f04f247141af8f958a4d586d11856d67",
+        "status": "cache"
+      },
+      {
+        "length": 310,
+        "offset": 917445923,
+        "sha256": "eff80a068764dfe49b63dff0290470c611ae8957f0bc8037f993ed34cadb2c29",
+        "status": "complete"
+      },
+      {
+        "length": 30,
+        "offset": 298677602,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "cache"
+      },
+      {
+        "length": 63,
+        "offset": 298677632,
+        "sha256": "6b273afd88421f5510ce04066220f79e90660450b4997dc5105741cde205251a",
+        "status": "cache"
+      },
+      {
+        "error_type": "URLError",
+        "length": 311,
+        "offset": 298677695,
+        "status": "failed"
+      },
+      {
+        "length": 30,
+        "offset": 76613313,
+        "sha256": "756a64520d85007724de268a1c1ce51a5c39f34007e953fd29480a49ff201dcc",
+        "status": "complete"
+      },
+      {
+        "length": 63,
+        "offset": 76613343,
+        "sha256": "deb9ed43b25f889a02e6d09a61fc6323d0733bfc4bee0628a856129afc29ca98",
+        "status": "complete"
+      },
+      {
+        "length": 310,
+        "offset": 76613406,
+        "sha256": "2261ca6634dd614d7a693159218f172c410b10762cf8560c091aa4b6334abf4c",
+        "status": "complete"
+      }
+    ],
+    "second_member_pass_query": "provenance_probe=2; same exact ranges; one attempt per missing range",
+    "tail_initial_error": "URLError; second attempt succeeded"
+  },
+  "unique_successful_source_bytes": 1167067,
+  "v1_v2_mapping_established": false,
+  "v2_member_projection_sha256": "30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6"
+}
