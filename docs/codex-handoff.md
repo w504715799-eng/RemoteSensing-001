@@ -2,6 +2,28 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — recover existing historical full manifest first
+
+2026-09-08. This checkpoint supersedes older next-step instructions. Git commits
+`a27e169` and `06e577e` record a full 8,000-member Phase 2B1-A manifest with actual
+LR/HR acquisition times, intentionally retained on cloud storage. Its pinned SHA
+is `7487b0af2ebef86910e918d5d6b2fb927a6f5e46bac7c2e30be7ffb2ce994482`.
+Prioritizing maintainer contact before checking this existing evidence was premature.
+The manifest does not contain S2 product IDs; source independence remains unresolved.
+
+Prepared stdlib-only export: `research/trustmask/recover_manifest.py`.
+Exact path, command and follow-up checks: `docs/reports/historical-manifest-recovery.md`.
+Local synthetic tests cover digest-before-parse, count rejection and exclusion of
+observations/assets. Actual recovery and semantic validation have not run.
+Next dependency is the server holding the persistent disk being online and its
+connection/storage location being available. User requested notification when needed.
+This operation needs CPU/disk access only, no GPU computation. Return only the
+allowlisted metadata export; never reopen old pixels or prediction caches. Continue
+on main, single writer. Phase 2B3-C remains terminal; no new experiment authorized
+by this recovery. The external request draft remains unsent.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — provenance probes complete, source manifest missing
 
 2026-09-08. This section supersedes all older next-step instructions. main single writer.
