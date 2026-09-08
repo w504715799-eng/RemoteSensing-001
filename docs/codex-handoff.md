@@ -2,6 +2,39 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — timestamp mechanism and bounded candidates investigated
+
+2026-09-08. This checkpoint supersedes older next-step instructions. No GPU/server
+needed. Full report: `docs/reports/timestamp-source-probe.md`; reproducible evidence:
+`research/evidence/crosssensor-timestamp-source-probe-v1.json`. Fixed historical
+projection and fixed three nested probes are SHA-bound by the new offline runner.
+
+All 8,000 LR and HR times are midnight in the Europe/Madrid hypothesis zone;
+all HR local dates equal the NAIP filename suffix. This does not identify the
+actual upstream timezone. Public Tortilla STAC writer code directly calls
+`.timestamp()` on datetime objects, consistent with local-time serialization of
+naive dates. Snapshot SHA is in report; actual dataset build version remains unknown.
+Do not rewrite old timestamps or treat them as verified sensing instants.
+
+Three predeclared 48-hour, small-bbox Earth Search L2A queries returned two
+candidates each, all on the inferred following date: first two members have
+adjacent-tile alternatives; third has same tile 10SEH, baselines 02.14/05.00.
+Successful response bytes total 14,485; attempts 1/1/2. No images/assets fetched.
+All responses report matched=returned=2 but include a next link, so evidence is
+explicitly first-page-only / enumeration not certified. No pagination followed.
+Ignored cache `artifacts/progressive-timestamp-source` supports offline replay;
+do not repeat these completed bounded probes or silently expand their budget.
+
+Next dependency: actual revision-applicable generation code/source manifest,
+including date serialization, tile/version choice and all composite contributors.
+The local unsent provenance-request draft now includes concrete examples; no
+external message authorized or sent. Broader catalog proximity queries cannot
+prove which products were used. If source records are unavailable, explicitly
+design a new source-traceable data route before independent grouping/split freeze.
+GPU experiments remain premature. Continue on main, single writer; old C terminal.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — historical metadata recovered and audited
 
 2026-09-08. This checkpoint supersedes older next-step instructions. The original

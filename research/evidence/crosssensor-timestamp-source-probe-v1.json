@@ -1,0 +1,403 @@
+{
+  "assets_opened": false,
+  "candidate_numeric_encoding": "numeric_tokens_preserved_as_strings",
+  "catalog_probes": [
+    {
+      "candidate_count": 2,
+      "candidate_hypothesis_date_count": 2,
+      "candidate_raw_utc_date_count": 0,
+      "candidates": [
+        {
+          "bbox": [
+            "-124.16761290616307",
+            "38.755202928221415",
+            "-122.88608605736994",
+            "39.7502030226425"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-124.16761290616307",
+                  "39.74438631043687"
+                ],
+                [
+                  "-122.88608605736994",
+                  "39.7502030226425"
+                ],
+                [
+                  "-122.88767593356906",
+                  "38.760819498079734"
+                ],
+                [
+                  "-124.15132112032015",
+                  "38.755202928221415"
+                ],
+                [
+                  "-124.16761290616307",
+                  "39.74438631043687"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2B_10SDJ_20220711_0_L2A",
+          "properties": {
+            "datetime": "2022-07-11T19:13:45.034000Z",
+            "mgrs:grid_square": "DJ",
+            "mgrs:latitude_band": "S",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2b",
+            "s2:granule_id": "S2B_OPER_MSI_L2A_TL_2BPS_20220711T214755_A027924_T10SDJ_N04.00",
+            "s2:processing_baseline": "04.00",
+            "s2:product_uri": "S2B_MSIL2A_20220711T185919_N0400_R013_T10SDJ_20220711T214755.SAFE"
+          }
+        },
+        {
+          "bbox": [
+            "-124.18316062292898",
+            "39.65576169772817",
+            "-122.88456877606484",
+            "40.650789813976196"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-124.18316062292898",
+                  "40.64478591807637"
+                ],
+                [
+                  "-122.88456877606484",
+                  "40.650789813976196"
+                ],
+                [
+                  "-122.88623172845638",
+                  "39.661560248682505"
+                ],
+                [
+                  "-124.1661201925584",
+                  "39.65576169772817"
+                ],
+                [
+                  "-124.18316062292898",
+                  "40.64478591807637"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2B_10TDK_20220711_0_L2A",
+          "properties": {
+            "datetime": "2022-07-11T19:13:30.716000Z",
+            "mgrs:grid_square": "DK",
+            "mgrs:latitude_band": "T",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2b",
+            "s2:granule_id": "S2B_OPER_MSI_L2A_TL_2BPS_20220711T214755_A027924_T10TDK_N04.00",
+            "s2:processing_baseline": "04.00",
+            "s2:product_uri": "S2B_MSIL2A_20220711T185919_N0400_R013_T10TDK_20220711T214755.SAFE"
+          }
+        }
+      ],
+      "catalog_number_matched": "2",
+      "member_id": "NA5120_E1183N0757__m_3912321_nw_10_060_20220710",
+      "next_link_present": true,
+      "receipt": {
+        "attempts": 1,
+        "query": {
+          "bbox": "-123.502558,39.676797,-123.462558,39.716797",
+          "collections": "sentinel-2-l2a",
+          "datetime": "2022-07-10T00:00:00Z/2022-07-11T23:59:59.999999Z",
+          "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+          "limit": "50"
+        },
+        "response_sha256": "1d0b0c2e38d4a58019a84510a32395524d6d054fc37227d9caa9cd35c2f55cea",
+        "retrieved_at": "2026-09-08T09:44:51.864294+00:00"
+      },
+      "request": {
+        "bbox": "-123.502558,39.676797,-123.462558,39.716797",
+        "collections": "sentinel-2-l2a",
+        "datetime": "2022-07-10T00:00:00Z/2022-07-11T23:59:59.999999Z",
+        "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+        "limit": "50"
+      },
+      "response_bytes": 4828,
+      "status": "first_page_only_enumeration_not_certified"
+    },
+    {
+      "candidate_count": 2,
+      "candidate_hypothesis_date_count": 2,
+      "candidate_raw_utc_date_count": 0,
+      "candidates": [
+        {
+          "bbox": [
+            "-125.24908219410383",
+            "40.54086263693481",
+            "-124.06542742823815",
+            "41.54674965091663"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-124.94242903217545",
+                  "41.53542752230996"
+                ],
+                [
+                  "-124.08150364516311",
+                  "41.54674965091663"
+                ],
+                [
+                  "-124.06542742823815",
+                  "40.557845997268224"
+                ],
+                [
+                  "-125.24908219410383",
+                  "40.54086263693481"
+                ],
+                [
+                  "-124.94242903217545",
+                  "41.53542752230996"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2B_10TCL_20220621_0_L2A",
+          "properties": {
+            "datetime": "2022-06-21T19:13:20.019000Z",
+            "mgrs:grid_square": "CL",
+            "mgrs:latitude_band": "T",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2b",
+            "s2:granule_id": "S2B_OPER_MSI_L2A_TL_2BPS_20220621T214805_A027638_T10TCL_N04.00",
+            "s2:processing_baseline": "04.00",
+            "s2:product_uri": "S2B_MSIL2A_20220621T185919_N0400_R013_T10TCL_20220621T214805.SAFE"
+          }
+        },
+        {
+          "bbox": [
+            "-124.19943694800678",
+            "40.556716039202904",
+            "-122.8829803727779",
+            "41.55177612128904"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-124.19943694800678",
+                  "41.545579887195935"
+                ],
+                [
+                  "-122.8829803727779",
+                  "41.55177612128904"
+                ],
+                [
+                  "-122.88472023265444",
+                  "40.56270140747389"
+                ],
+                [
+                  "-124.18160864147407",
+                  "40.556716039202904"
+                ],
+                [
+                  "-124.19943694800678",
+                  "41.545579887195935"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2B_10TDL_20220621_0_L2A",
+          "properties": {
+            "datetime": "2022-06-21T19:13:16.310000Z",
+            "mgrs:grid_square": "DL",
+            "mgrs:latitude_band": "T",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2b",
+            "s2:granule_id": "S2B_OPER_MSI_L2A_TL_2BPS_20220621T214805_A027638_T10TDL_N04.00",
+            "s2:processing_baseline": "04.00",
+            "s2:product_uri": "S2B_MSIL2A_20220621T185919_N0400_R013_T10TDL_20220621T214805.SAFE"
+          }
+        }
+      ],
+      "catalog_number_matched": "2",
+      "member_id": "NA5120_E1183N0791__m_4112455_se_10_060_20220620",
+      "next_link_present": true,
+      "receipt": {
+        "attempts": 1,
+        "query": {
+          "bbox": "-124.149773,41.131764,-124.109773,41.171764",
+          "collections": "sentinel-2-l2a",
+          "datetime": "2022-06-20T00:00:00Z/2022-06-21T23:59:59.999999Z",
+          "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+          "limit": "50"
+        },
+        "response_sha256": "335120bac2fc1d150296e6d586a0ab864d1388c7fc6d6ea0e748fc27c91cdd55",
+        "retrieved_at": "2026-09-08T09:46:35.846165+00:00"
+      },
+      "request": {
+        "bbox": "-124.149773,41.131764,-124.109773,41.171764",
+        "collections": "sentinel-2-l2a",
+        "datetime": "2022-06-20T00:00:00Z/2022-06-21T23:59:59.999999Z",
+        "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+        "limit": "50"
+      },
+      "response_bytes": 4828,
+      "status": "first_page_only_enumeration_not_certified"
+    },
+    {
+      "candidate_count": 2,
+      "candidate_hypothesis_date_count": 2,
+      "candidate_raw_utc_date_count": 0,
+      "candidates": [
+        {
+          "bbox": [
+            "-123.00021895577572",
+            "37.852838634285284",
+            "-121.73505156481204",
+            "38.84898947181679"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-123.00021895577572",
+                  "38.84898947181679"
+                ],
+                [
+                  "-121.73505156481204",
+                  "38.842139787815405"
+                ],
+                [
+                  "-121.75214580386294",
+                  "37.852838634285284"
+                ],
+                [
+                  "-123.00021599591253",
+                  "37.85945097203489"
+                ],
+                [
+                  "-123.00021895577572",
+                  "38.84898947181679"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2A_10SEH_20200603_0_L2A",
+          "properties": {
+            "datetime": "2020-06-03T19:04:01.207000Z",
+            "mgrs:grid_square": "EH",
+            "mgrs:latitude_band": "S",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2a",
+            "s2:granule_id": "S2A_OPER_MSI_L2A_TL_MPS__20200604T010246_A025850_T10SEH_N02.14",
+            "s2:processing_baseline": "02.14",
+            "s2:product_uri": "S2A_MSIL2A_20200603T184921_N0214_R113_T10SEH_20200604T010246.SAFE"
+          }
+        },
+        {
+          "bbox": [
+            "-123.00021895577572",
+            "37.852838634285284",
+            "-121.73505156481204",
+            "38.84898947181679"
+          ],
+          "collection": "sentinel-2-l2a",
+          "geometry": {
+            "coordinates": [
+              [
+                [
+                  "-123.00021895577572",
+                  "38.84898947181679"
+                ],
+                [
+                  "-123.00021599591253",
+                  "37.85945097203489"
+                ],
+                [
+                  "-121.75214580386294",
+                  "37.852838634285284"
+                ],
+                [
+                  "-121.73505156481204",
+                  "38.842139787815405"
+                ],
+                [
+                  "-123.00021895577572",
+                  "38.84898947181679"
+                ]
+              ]
+            ],
+            "type": "Polygon"
+          },
+          "id": "S2A_10SEH_20200603_1_L2A",
+          "properties": {
+            "datetime": "2020-06-03T19:04:01.208000Z",
+            "mgrs:grid_square": "EH",
+            "mgrs:latitude_band": "S",
+            "mgrs:utm_zone": "10",
+            "platform": "sentinel-2a",
+            "s2:granule_id": "S2A_OPER_MSI_L2A_TL_S2RP_20230327T005340_A025850_T10SEH_N05.00",
+            "s2:processing_baseline": "05.00",
+            "s2:product_uri": "S2A_MSIL2A_20200603T184921_N0500_R113_T10SEH_20230327T005340.SAFE"
+          }
+        }
+      ],
+      "catalog_number_matched": "2",
+      "member_id": "NA5120_E1185N0724__m_3812242_ne_10_060_20200602",
+      "next_link_present": true,
+      "receipt": {
+        "attempts": 2,
+        "query": {
+          "bbox": "-122.800786,38.28771,-122.760786,38.32771",
+          "collections": "sentinel-2-l2a",
+          "datetime": "2020-06-02T00:00:00Z/2020-06-03T23:59:59.999999Z",
+          "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+          "limit": "50"
+        },
+        "response_sha256": "293f8f49982b4315eee0a33bb53fc4703cbdf559cc2b7dde81f2a14d1b3b052d",
+        "retrieved_at": "2026-09-08T09:46:40.568130+00:00"
+      },
+      "request": {
+        "bbox": "-122.800786,38.28771,-122.760786,38.32771",
+        "collections": "sentinel-2-l2a",
+        "datetime": "2020-06-02T00:00:00Z/2020-06-03T23:59:59.999999Z",
+        "fields": "id,collection,geometry,bbox,properties.datetime,properties.platform,properties.s2:product_uri,properties.s2:granule_id,properties.s2:processing_baseline,properties.sat:relative_orbit,properties.mgrs:utm_zone,properties.mgrs:latitude_band,properties.mgrs:grid_square,-assets",
+        "limit": "50"
+      },
+      "response_bytes": 4829,
+      "status": "first_page_only_enumeration_not_certified"
+    }
+  ],
+  "endpoint": "https://earth-search.aws.element84.com/v1/search",
+  "gpu_used": false,
+  "probe_selection_sha256": "16e9abbb51239d71fd34d6fc861d4059d019e0c54f8d879630f7358850fbe863",
+  "projection_sha256": "8bf11a4851a97a1af26107f8f91c65946ca931b0156fa85cf8c436d7589bd08a",
+  "schema": "trustmask-timestamp-source-probe-v1",
+  "source_identity": "candidates_only_not_verified_mapping",
+  "source_independence": "not_certified",
+  "time_audit": {
+    "hr_filename_date_match_in_hypothesis_zone": 8000,
+    "hypothesis_zone": "Europe/Madrid",
+    "interpretation": "consistent_with_local_midnight_serialization_not_build_proof",
+    "local_midnight_counts": {
+      "hr_time_start": 8000,
+      "lr_time_start": 8000
+    },
+    "lr_local_date_minus_filename_date_counts": {
+      "-1": 1883,
+      "0": 3972,
+      "1": 2145
+    },
+    "member_count": 8000
+  }
+}
