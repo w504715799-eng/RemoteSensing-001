@@ -2,6 +2,18 @@
 
 Date: 2026-09-08 (Asia/Shanghai)
 
+## Latest user direction: one optimization goal and three dependent studies
+
+User now wants three genuinely progressive studies and final comparison with 2–3 methods.
+See [new research proposal](reports/first-paper-progressive-research-proposal.md): maximize
+retained coverage under a fixed ROI risk target, via evidence fusion → spatial adaptation →
+calibration/independent evaluation. This is a proposal, not a frozen method or completed result.
+Old experiments remain complete and unchanged, but the expanded objective requires new work;
+do not repeat the old 90–95% completion estimate as if it covers this new scope.
+Do not reopen A/B/C pixels/cache or use observed Spain as independent evidence for a new method.
+Next: mechanism/literature, fresh geographic split and sample-size feasibility, then protocol.
+No GPU is needed for the current design; notify user before GPU-dependent work.
+
 ## Latest writing refinement: connect the three contributions
 
 The manuscript now organizes the questions as score evaluation → spatial adaptation → limits
