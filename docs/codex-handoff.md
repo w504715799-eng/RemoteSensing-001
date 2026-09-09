@@ -2,6 +2,28 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — two-hour monitoring enabled; GPU job still continuous
+
+2026-09-09 user requests a check every two hours. Detached read-only server monitor
+/root/rivermind-fs/trustmask-runner-673810f/monitor.py (observed PID901) is running
+with7200-second interval. Latest snapshot monitor-latest.json; append-only history
+monitor-history.jsonl; process output monitor.log in that same directory. It checks
+coordinator process, GPU query, newest receipt digest/age/count/role, and final report
+digest/count when present. Attention states are recorded on failure/stall. It does
+not mutate/restart jobs, send chat messages, or provide a full independent final
+auditing proof. No scheduled chat notification tool exists here; user was told
+checks are saved server-side and can be read on request. Monitor exits on verified
+final-report envelope/count; GPU shutdown still requires actual completion review.
+
+First check2026-09-09 06:39:34UTC /14:39:34Asia-Shanghai:1289/7477ROIs,
+development_validation, latest receipt3.1s old, coordinator744, GPU88%,11353MiB,
+status running. Next check08:39:34UTC /16:39:34Asia-Shanghai. Detached process
+survives SSH disconnect, not server reboot; inspect/restart monitor if server restarts.
+Do not launch duplicate monitor (file lock guards it). Main parallel job continues
+without batch pauses under the execution amendment described below.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — two-process GPU acceleration RUNNING continuously
 
 2026-09-09. User requested parallel computation to use idle GPU capacity and
