@@ -6,6 +6,13 @@ Date: 2026-09-09 (Asia/Shanghai)
 
 User explicitly approved plan revision and necessary supplemental experiments.
 Read docs/superpowers/plans/2026-09-09-supplemental-baselines.md before new work.
+User additionally requested explicit deliverables and expected outcomes; that plan
+now includes per-experiment completion criteria, named comparator/claim boundaries,
+risk-qualified paired-gain gates, the5percentage-point engineering target, and
+negative/inconclusive outcome handling. Completion never requires a favorable result.
+Supplemental numerical targets are planning requirements to freeze in a new protocol,
+not amendments to E0. Secondary workload/noninferiority claims need prespecified
+inference before use; nonsignificance is not equivalence.
 It adds required E1 nearest-method/tuning comparison, E2 independent im2im-UQ
 baseline, E3 independent geography/sensor evidence, and E4 cost/mechanism evidence.
 Do not wait for E0 outcomes to choose these experiments. Current E0 stays frozen.
