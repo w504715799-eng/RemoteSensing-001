@@ -1,0 +1,359 @@
+{
+  "accepted": true,
+  "decision": "synthetic parity and speedup observed",
+  "device": "cuda:0",
+  "evidence_kind": "synthetic_operational_probe",
+  "exact_parity": true,
+  "input_dtype": "float32",
+  "input_shape": [
+    4,
+    128,
+    128
+  ],
+  "parallel": {
+    "ready": [
+      {
+        "pid": 631,
+        "provenance": {
+          "checkpoint_name": "opensr-ldsrs2_v1_0_0.ckpt",
+          "checkpoint_sha256": "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a",
+          "checkpoint_size": 1130715795,
+          "checkpoint_url": "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt",
+          "config_sha256": "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f",
+          "cuda_runtime": "13.0",
+          "device": "cuda",
+          "histogram_matching": true,
+          "implementation_schema_version": 1,
+          "name": "ldsr-s2-x4",
+          "opensr_model_version": "1.1.1",
+          "output_policy": "clip_to_[0,1]",
+          "sampling_eta": 0.95,
+          "sampling_steps": 100,
+          "sampling_temperature": 1.0,
+          "scale": 4,
+          "seed": 3407,
+          "torch_version": "2.12.1+cu130"
+        },
+        "status": "ready"
+      },
+      {
+        "pid": 649,
+        "provenance": {
+          "checkpoint_name": "opensr-ldsrs2_v1_0_0.ckpt",
+          "checkpoint_sha256": "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a",
+          "checkpoint_size": 1130715795,
+          "checkpoint_url": "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt",
+          "config_sha256": "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f",
+          "cuda_runtime": "13.0",
+          "device": "cuda",
+          "histogram_matching": true,
+          "implementation_schema_version": 1,
+          "name": "ldsr-s2-x4",
+          "opensr_model_version": "1.1.1",
+          "output_policy": "clip_to_[0,1]",
+          "sampling_eta": 0.95,
+          "sampling_steps": 100,
+          "sampling_temperature": 1.0,
+          "scale": 4,
+          "seed": 3407,
+          "torch_version": "2.12.1+cu130"
+        },
+        "status": "ready"
+      }
+    ],
+    "results": [
+      {
+        "inference_and_hash_seconds": 17.592313036322594,
+        "peak_allocated_bytes": 4133724672,
+        "rows": [
+          {
+            "input_index": 0,
+            "input_sha256": "ae14c477638e0191b408f4af10d1e6068468806a2c309f9607d65c9c98e34001",
+            "predictions": [
+              {
+                "dtype": "torch.float32",
+                "seed": 3407,
+                "sha256": "0873ba49edd2073600c6bd4e377b9ce51dc462c10fd99ddf5f8778d2581f838f",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3408,
+                "sha256": "d72bdf08a2f1b404c53616873fb9672661a5a269092c0ddf7ff2d41db3071414",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3409,
+                "sha256": "a65a2b9bf2d47c112478be26db0e281c75d731e20b48223d7d9b196e266797d2",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3410,
+                "sha256": "5dcdbcee83548a231b4443cb0072c6f77ec71157569eec7edae7e32b62264f21",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3411,
+                "sha256": "964a433b5b3b9da05929524519b6a379e759d7595804603cad99a1e5344af45f",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              }
+            ]
+          }
+        ],
+        "status": "done"
+      },
+      {
+        "inference_and_hash_seconds": 17.582517255097628,
+        "peak_allocated_bytes": 4133724672,
+        "rows": [
+          {
+            "input_index": 1,
+            "input_sha256": "ed43eb6c44fe6362548cf2c30be7c5258fb40e03079683bf42638ecc174abfea",
+            "predictions": [
+              {
+                "dtype": "torch.float32",
+                "seed": 3407,
+                "sha256": "791490f281dd20811c15ee9c00b3b3a87dfce6adfba50a245ae56a38f3bd7e90",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3408,
+                "sha256": "d1c4feadf2f84cf734323e445b2b7ddf6a99ed167b804e2868eaeb77fc34833a",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3409,
+                "sha256": "5ee921432f7b9b712b742df3ed4b57eb2793c465eec329c5665d7eef56d803df",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3410,
+                "sha256": "6bf197a3e7b26ca96e75d09cb986d78945b98cc50d2c0aaff7b4c6df34e45b79",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3411,
+                "sha256": "1dead6980c8bdf8dbc85ce5e793c27f2f39e122eef58e14e7d25ac7b01a423c0",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              }
+            ]
+          }
+        ],
+        "status": "done"
+      }
+    ],
+    "setup_and_warmup_seconds": 23.069132260978222,
+    "steady_wall_seconds": 17.59322410542518,
+    "workers": 2
+  },
+  "schema_version": 1,
+  "scientific_claim": false,
+  "seeds": [
+    3407,
+    3408,
+    3409,
+    3410,
+    3411
+  ],
+  "serial": {
+    "ready": [
+      {
+        "pid": 613,
+        "provenance": {
+          "checkpoint_name": "opensr-ldsrs2_v1_0_0.ckpt",
+          "checkpoint_sha256": "e2621e3912eb7c14867c3d20c9029607ba941be8e166dc09621860fcac27dc3a",
+          "checkpoint_size": 1130715795,
+          "checkpoint_url": "https://huggingface.co/simon-donike/RS-SR-LTDF/resolve/main/opensr-ldsrs2_v1_0_0.ckpt",
+          "config_sha256": "ac76685d354bfec32e3e0641aef574bedd7d650402c97dbd0ade86304e69ca6f",
+          "cuda_runtime": "13.0",
+          "device": "cuda",
+          "histogram_matching": true,
+          "implementation_schema_version": 1,
+          "name": "ldsr-s2-x4",
+          "opensr_model_version": "1.1.1",
+          "output_policy": "clip_to_[0,1]",
+          "sampling_eta": 0.95,
+          "sampling_steps": 100,
+          "sampling_temperature": 1.0,
+          "scale": 4,
+          "seed": 3407,
+          "torch_version": "2.12.1+cu130"
+        },
+        "status": "ready"
+      }
+    ],
+    "results": [
+      {
+        "inference_and_hash_seconds": 24.029486319050193,
+        "peak_allocated_bytes": 4133724672,
+        "rows": [
+          {
+            "input_index": 0,
+            "input_sha256": "ae14c477638e0191b408f4af10d1e6068468806a2c309f9607d65c9c98e34001",
+            "predictions": [
+              {
+                "dtype": "torch.float32",
+                "seed": 3407,
+                "sha256": "0873ba49edd2073600c6bd4e377b9ce51dc462c10fd99ddf5f8778d2581f838f",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3408,
+                "sha256": "d72bdf08a2f1b404c53616873fb9672661a5a269092c0ddf7ff2d41db3071414",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3409,
+                "sha256": "a65a2b9bf2d47c112478be26db0e281c75d731e20b48223d7d9b196e266797d2",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3410,
+                "sha256": "5dcdbcee83548a231b4443cb0072c6f77ec71157569eec7edae7e32b62264f21",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3411,
+                "sha256": "964a433b5b3b9da05929524519b6a379e759d7595804603cad99a1e5344af45f",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              }
+            ]
+          },
+          {
+            "input_index": 1,
+            "input_sha256": "ed43eb6c44fe6362548cf2c30be7c5258fb40e03079683bf42638ecc174abfea",
+            "predictions": [
+              {
+                "dtype": "torch.float32",
+                "seed": 3407,
+                "sha256": "791490f281dd20811c15ee9c00b3b3a87dfce6adfba50a245ae56a38f3bd7e90",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3408,
+                "sha256": "d1c4feadf2f84cf734323e445b2b7ddf6a99ed167b804e2868eaeb77fc34833a",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3409,
+                "sha256": "5ee921432f7b9b712b742df3ed4b57eb2793c465eec329c5665d7eef56d803df",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3410,
+                "sha256": "6bf197a3e7b26ca96e75d09cb986d78945b98cc50d2c0aaff7b4c6df34e45b79",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              },
+              {
+                "dtype": "torch.float32",
+                "seed": 3411,
+                "sha256": "1dead6980c8bdf8dbc85ce5e793c27f2f39e122eef58e14e7d25ac7b01a423c0",
+                "shape": [
+                  4,
+                  512,
+                  512
+                ]
+              }
+            ]
+          }
+        ],
+        "status": "done"
+      }
+    ],
+    "setup_and_warmup_seconds": 13.642529179342091,
+    "steady_wall_seconds": 24.030463070608675,
+    "workers": 1
+  },
+  "speedup": 1.3658930805751779,
+  "timing_scope": "post-warmup prediction, CPU transfer, hashing and result IPC; excludes model initialization"
+}

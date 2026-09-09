@@ -2,6 +2,40 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — two-process GPU acceleration RUNNING continuously
+
+2026-09-09. User requested parallel computation to use idle GPU capacity and
+shorten time; uninterrupted completion authorization remains active. Added
+research/operations/parallel_batches.py and gpu_parallel_probe.py; all frozen
+research/trustmask and src/trustsr files and original scientific protocol unchanged.
+Execution amendment explicitly records oneROI→two outstanding jobs memory policy,
+spawn RNG isolation, ordered single-writer commits and role-local prefetch barriers.
+
+Synthetic GPU serial/concurrent10prediction hashes matched exactly (1.3659x probe
+speedup while original study ran). Local28tests, Ruff, old/new frozen gates and
+independent review passed. Original writer470 intentionally terminated for immediate
+cutover at1055committedROIs; its old full-study measurement exit-15 is expected.
+All1055pre-cutover receipt hashes verified unchanged after switch.
+
+CURRENT supervisor: /root/rivermind-fs/trustmask-runner-673810f/parallel-full.py
+(observed PID743; recheck live). It runs two workers through all remaining stages,
+with automatic unchanged serial CLI fallback on nonzero parallel exit. A failed
+serial fallback requires investigation; no arbitrary failure recovery is claimed.
+CURRENT log: same directory/parallel-full.log
+Completion measurement: parallel-full-measurement.json; final study result still
+/root/rivermind-fs/trustmask-public-crosssensor-v1/result.json. Do NOT treat old
+full-study.log as live, or launch another writer. Keep GPU on until completion.
+
+Latest verified1084/7477ROIs, development_validation; parallel29committed. Mean
+6.941s/ROI after initial2 vs9.908s serial; throughput1.427x, ~30% time reduction.
+GPU100%,11353MiB sampled. Remaining~12.33h at observed rate (stage costs can vary).
+No terminal test access yet. Details: docs/reports/parallel-gpu-execution.md,
+research/evidence/trustmask-parallel-cutover-v1.json and synthetic probe evidence.
+NEXT: monitor continuous task, resolve faults, verify final report and advise GPU
+shutdown only when no further GPU work remains. Never stop at a batch boundary.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — continuous GPU study RUNNING; do not pause at batches
 
 2026-09-09 USER CORRECTION: once GPU is on, run continuously until GPU is no
