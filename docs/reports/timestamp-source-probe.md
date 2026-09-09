@@ -14,15 +14,17 @@
 只是本次检验采用的时区假设；共享同一历史偏移规则的其他时区也可能产生该模式。
 这不能定位上游机器时区，也不能证明真实获取时刻恰好在午夜。
 
-公开的 [Tortilla STAC 写入实现](https://github.com/tacofoundation/tortilla-python/blob/master/pytortilla/datamodel/main.py)
+公开的 [Tortilla STAC 写入实现](https://github.com/tacofoundation/tortilla-python/blob/ee570c3f8ef75178e5cd1b064904c9205355d9bc/pytortilla/datamodel/main.py)
 在 `check_times` 中直接对 datetime 对象调用 `.timestamp()`，该路径未先要求时区信息。
 [Python 官方文档](https://docs.python.org/3/library/datetime.html#datetime.datetime.timestamp)
 说明：不带时区的 datetime 会按本地时间处理。因此，若输入为不带时区的日期午夜，
 就有产生上述偏移的实现路径。检查的源码快照为 13,954 字节，SHA-256：
 `9947c5cf48ed30ac9233b8f2ea903932c21423f1278bc63816208231689aa30e`。
 
-该快照来自本次读取的 master，未取得对应 Git commit，也没有证据证明它就是固定数据集
-构建时使用的版本。它是机制线索，不是已查实的构建原因。原项目的 UTC 转换代码
+2026-09-09 补充：已将快照定位到提交 `ee570c3f8ef75178e5cd1b064904c9205355d9bc`
+（2024-12-29），其 Git blob `786b85cfae429077c6afd38564a68b2c1dac9919` 与本地缓存
+字节重新计算的 blob SHA-1 一致。证据见 `crosssensor-writer-source-pin-v1.json`。
+仍没有证据证明该版本就是固定数据集构建时使用的版本；它是机制线索，不是已查实的构建原因。原项目的 UTC 转换代码
 `src/trustsr/data/taco_v1_adapter.py` 使用显式 UTC；三个已留存的原始嵌套目录数值也
 与恢复值一致，故本轮没有修改冻结代码或历史时间字段。
 

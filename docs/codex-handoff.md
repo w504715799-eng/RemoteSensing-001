@@ -1,6 +1,32 @@
 # Codex handoff: first-paper research plan; Phase 2B3-C remains terminal
 
-Date: 2026-09-08 (Asia/Shanghai)
+Date: 2026-09-09 (Asia/Shanghai)
+
+## ACTIVE RESUME CHECKPOINT — writer pinned; upstream contact pending
+
+2026-09-09. This checkpoint supersedes older next-step instructions. The previously
+inspected writer snapshot is now pinned to commit ee570c3f8ef75178e5cd1b064904c9205355d9bc
+and blob 786b85cfae429077c6afd38564a68b2c1dac9919. Both the Git blob SHA-1 and
+SHA-256 match the original 13,954-byte cached source. This identifies the inspected
+code version, not the actual dataset build version or timezone.
+Evidence: `research/evidence/crosssensor-writer-source-pin-v1.json`.
+
+Read-only follow-up of the official discussion and indexed GitHub searches did
+not provide a revision-applicable generation mapping; this is not proof none exists.
+No prior STAC probe was repeated and no image/cache/GPU access occurred.
+
+Concrete external request remains `docs/drafts/sen2naipv2-provenance-request.md`.
+An async question asks whether the user authorizes publishing it to the official
+Hugging Face dataset discussion. No response has arrived at this checkpoint;
+no message has been sent. A boolean-only credential check found no HF token.
+Do not infer approval from elapsed time or repeat a credential value in output.
+If publishing is explicitly authorized, the user must first establish local HF
+login or publish the prepared draft themselves. Do not switch to another external
+channel without authorization. Meanwhile preserve all completed provenance evidence;
+source-aware split freeze and GPU experiments still require the actual source map,
+or an explicitly designed source-traceable replacement data route.
+
+---
 
 ## ACTIVE RESUME CHECKPOINT — timestamp mechanism and bounded candidates investigated
 

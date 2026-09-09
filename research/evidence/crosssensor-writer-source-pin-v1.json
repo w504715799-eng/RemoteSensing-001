@@ -1,0 +1,30 @@
+{
+  "schema": "trustmask-writer-source-pin-v1",
+  "checked_on": "2026-09-09",
+  "repository": "tacofoundation/tortilla-python",
+  "commit": "ee570c3f8ef75178e5cd1b064904c9205355d9bc",
+  "commit_date": "2024-12-29T09:43:25Z",
+  "tree": "e9ea5fa5667f4e650085e34a2d998970e3e50411",
+  "path": "pytortilla/datamodel/main.py",
+  "blob_sha1": "786b85cfae429077c6afd38564a68b2c1dac9919",
+  "source_bytes": 13954,
+  "source_sha256": "9947c5cf48ed30ac9233b8f2ea903932c21423f1278bc63816208231689aa30e",
+  "source_url": "https://github.com/tacofoundation/tortilla-python/blob/ee570c3f8ef75178e5cd1b064904c9205355d9bc/pytortilla/datamodel/main.py",
+  "tree_url": "https://api.github.com/repos/tacofoundation/tortilla-python/git/trees/e9ea5fa5667f4e650085e34a2d998970e3e50411?recursive=1",
+  "verification": "cached_source_sha256_and_git_blob_sha1_match_pinned_tree_entry",
+  "finding": "STAC.check_times calls datetime.timestamp without requiring timezone awareness",
+  "dataset_build_version": "not_established",
+  "actual_build_timezone": "not_established",
+  "member_source_mapping": "not_obtained",
+  "public_followup": {
+    "discussion_url": "https://huggingface.co/datasets/tacofoundation/SEN2NAIPv2/discussions/2",
+    "discussion_finding": "harmonization_model_question_without_source_mapping_in_viewed_page",
+    "github_search_query": "sen2naip",
+    "github_search_owners": ["ESAOpenSR", "csaybar", "tacofoundation"],
+    "finding": "returned_excerpts_reference_loaders_downloaders_and_models_not_revision_applicable_generation_mapping",
+    "scope": "indexed_default_branch_search_not_exhaustive"
+  },
+  "external_message_sent": false,
+  "gpu_used": false,
+  "assets_opened": false
+}
