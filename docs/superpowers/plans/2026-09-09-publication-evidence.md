@@ -1,5 +1,18 @@
 # Publication-standard evidence plan
 
+## 2026-09-09 implementation amendment: supplemental experiments authorized
+
+User approved revising this plan and running necessary supplemental experiments.
+The executable work packages are now in
+[supplemental baseline plan](2026-09-09-supplemental-baselines.md): E1 audited and
+tuned nearest-method comparisons, E2 an independent published learned baseline,
+E3 independent geographic/sensor validation, and E4 complete cost/mechanism evidence.
+These are required scope, not optional work deferred until a favorable E0 outcome.
+Source audits, metadata inventory and local implementation can proceed while E0
+runs; new GPU batches require their own frozen protocol and valid data roles.
+The sequencing below that waits for E0 before starting supplemental preparation is
+superseded by that plan. E0's frozen scientific decisions remain unchanged.
+
 User-authorized objective: develop a defensible, reproducible paper, not merely finish
 an expensive GPU run. No publication/acceptance guarantee. Current GPU job and
 7200-second monitoring continue; no method/family/threshold changes or early terminal

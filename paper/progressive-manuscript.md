@@ -87,6 +87,15 @@ weighting; pooled pixel/tile totals are explicitly separate operational summarie
 
 ## Results slots (pending complete authorized evaluation)
 
+Supplemental experiments are authorized in the
+[implementation plan](../docs/superpowers/plans/2026-09-09-supplemental-baselines.md).
+Pending additional evidence: tuned paper-formula and released-helper adaptations,
+an independent im2im-UQ learned comparator, independent geographic/sensor validation,
+and standalone compute/workload measurements. Separate native interval metrics from
+fixed-center mask adaptation; do not label the latter an exact official pipeline.
+These experiments are not implemented or completed merely by being listed here.
+They have separate data/protocol gates and do not change the eight-method E0 table.
+
 - Table1: all8methods, calibration threshold, test risk mean/upper bound, group coverage.
 - Table2: prespecified paired full-vs-w3 gain and risk/gain qualification decisions.
 - Table3: all8methods' whole-tile pass rate, workload and high-error acceptance.

@@ -2,6 +2,32 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — supplemental baseline experiments authorized
+
+User explicitly approved plan revision and necessary supplemental experiments.
+Read docs/superpowers/plans/2026-09-09-supplemental-baselines.md before new work.
+It adds required E1 nearest-method/tuning comparison, E2 independent im2im-UQ
+baseline, E3 independent geography/sensor evidence, and E4 cost/mechanism evidence.
+Do not wait for E0 outcomes to choose these experiments. Current E0 stays frozen.
+
+Completed in this amendment: work packages/dependencies/acceptance criteria,
+im2im-UQ read-only source inspection pinned at
+92124f5f5ac6954eb66f03e20735d8f12f47b797, and conservative sample-bound calculations.
+See docs/reports/progressive-im2im-feasibility.md. No supplemental training,
+inference, final protocol, data assignment or completed external result exists yet.
+Next: implement numerical baseline checks and audit public metadata for independent
+data, then finalize learned-baseline training configuration and supplemental protocol.
+All8000 current crosssensor members are already used/excluded; no fresh holdout can
+be invented from them. SPOT9 is descriptive only; old Spain remains closed.
+
+Latest operational-only SSH check:1906/7477ROIs, development_validation,
+latest receipt2.5s old, GPU81%,11353MiB; final report absent. Current continuous
+GPU supervisor and two-hour monitor unchanged. New GPU jobs must be ready and
+protocol-bound before queueing; do not stop at routine batch boundaries or restart
+the current study for new baselines. Never claim all paper GPU work is now finished.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — publication-standard evidence work started in parallel
 
 2026-09-09 USER OBJECTIVE: a defensible publishable paper, not only a completed
