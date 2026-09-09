@@ -1,0 +1,52 @@
+{
+  "assignments_sha256": "460eb73bea4cab104cbcd92f5ac8d6538da28dc62fabb0f3767365a90454354b",
+  "eligible_member_count": 7477,
+  "excluded_member_count": 523,
+  "gpu_used": false,
+  "group_counts": {
+    "calibration": 1500,
+    "development_calibration": 512,
+    "development_validation": 845,
+    "scale_fit": 256,
+    "test": 3045,
+    "unused": 0
+  },
+  "grouping": "shared_naip_id_or_centroid_distance_5km_connected_components",
+  "historical_member_count": 360,
+  "history": [
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3a/sen2naipv2-development-score-cache-audit-v1.json",
+      "sha256": "d61c36e2180a2dc3468d4d9aba083ac0925d163ac2bb910e0227138e9fa249f1"
+    },
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3b/sen2naipv2-calibration-conformal-cache-audit-v1.json",
+      "sha256": "40aff8aaccb27719d958d42026d68d8efc0c7f79479e3bd99777053ee1d6399f"
+    },
+    {
+      "members": 120,
+      "path": "artifacts/phase2b3c/sen2naipv2-internal-test-evaluation-cache-audit-v1.json",
+      "sha256": "4bf048b222d4993adb0fd70b0273f60a994ecb7b3539e58ed3b2d57dcf4f43ff"
+    }
+  ],
+  "independence_certified": false,
+  "inferential_basis": "conditional_on_group_independence_not_established_by_public_availability",
+  "member_counts": {
+    "calibration": 1814,
+    "development_calibration": 614,
+    "development_validation": 1041,
+    "scale_fit": 318,
+    "test": 3690
+  },
+  "member_projection_sha256": "30013c7285c0aa91b1f4de48fd1734db314a81b71a8da3809294d3ee919d9cd6",
+  "per_member_s2_mapping_required": false,
+  "pixel_access_authorized": false,
+  "ranking_domain": "trustmask-partition-preview-v1\n3407\n",
+  "schema": "trustmask-public-source-partition-preview-v1",
+  "source_basis": "official_public_release_accepted_by_user_2026-09-09",
+  "source_object": "sen2naipv2-crosssensor.taco",
+  "source_revision": "c370504201072fdb1dd388013ab8c0fc7d00a57e",
+  "source_url": "https://huggingface.co/datasets/tacofoundation/SEN2NAIPv2",
+  "split_frozen": false
+}

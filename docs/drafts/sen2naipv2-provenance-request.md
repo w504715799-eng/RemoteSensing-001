@@ -1,6 +1,8 @@
 # SEN2NAIPv2 crosssensor provenance request — unsent draft
 
-Status: local draft only; no discussion, issue, email or other message has been sent.
+Status: retired, not sent. On 2026-09-09 the user removed the per-member source-mapping
+requirement and accepted public-paper/open-release provenance. Do not publish this draft
+or request publishing credentials. Retained only as historical context.
 Suggested destination: the official SEN2NAIPv2 dataset discussion forum.
 
 **Title:** Per-member Sentinel-2 source metadata for SEN2NAIPv2 crosssensor

@@ -2,6 +2,37 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — public provenance accepted; proceed to integrated method
+
+2026-09-09 USER OVERRIDE: actual per-member source mapping is NOT required. A
+public paper or open release is sufficient. Official SEN2NAIPv2 release describes
+8,000 real crosssensor pairs and is accepted. Original SEN2NAIP paper describes v1;
+do not attribute v2's exact member manifest to that earlier paper. See current spec
+addendum and `docs/reports/public-source-partition.md` for sources and interpretation.
+
+Cancel the previous contact/login dependency and pending publishing question.
+The unsent provenance draft is retired. Do not ask again, contact upstream, repeat
+STAC probes or continue timestamp/source-ID investigations. Missing per-scene
+provenance is a disclosed limitation, not a blocker. Statistical guarantees remain
+conditional on explicitly stated geographic-group assumptions.
+
+Completed offline five-role preview: 6,158 groups / 7,477 members after excluding
+523 members in historically touched 5 km + shared-NAIP components. Groups by role:
+scale_fit 256; development_calibration 512; development_validation 845;
+calibration 1,500; test 3,045. No group/member crosses roles. Full assignment is
+ignored at `artifacts/progressive-partition-preview/assignments.json`; published
+summary `research/evidence/crosssensor-public-source-partition-preview-v1.json`
+binds assignment/member/history digests. This is a preview, not a frozen protocol.
+
+NEXT: implement CPU synthetic integrated scale fitting, development selection,
+group-risk calibration and paired evaluation in research/trustmask. Then freeze
+exact protocol/method family and prepare cloud extraction/inference commands.
+Notify user to start GPU only when those are ready. Public provenance acceptance
+now permits that path; no further source-map approval needed. Do not reopen old
+A/B/C pixels or caches; old C remains terminal. Main remains single writer.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — writer pinned; upstream contact pending
 
 2026-09-09. This checkpoint supersedes older next-step instructions. The previously
