@@ -72,3 +72,11 @@ establish actual benefit. This in-memory reference workflow is not the productio
 cloud runner: identity/support authentication, streaming memory management and a
 one-time terminal-test ledger remain required there. See
 [integration report](../../docs/reports/integrated-calibration.md).
+
+
+Real-data batch entrypoint is now available as
+`python -m research.trustmask.batch_cli {prepare,preflight,run}`. Use the checked-in
+frozen protocol and `run --max-rois N` for selected TACO access, verified five-seed
+inference, compact receipts and same-protocol continuation. See the
+[batch runbook](../../docs/reports/real-data-batches.md) for exact commands and
+limits. Real-data/GPU validation is the next step; no scientific result is claimed.

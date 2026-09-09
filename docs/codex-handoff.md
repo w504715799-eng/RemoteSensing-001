@@ -2,6 +2,36 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — real-data bounded runner ready for first GPU batch
+
+2026-09-09. User requested real-data batch integration. Added `batch.py`,
+`real_data.py`, `batch_cli.py`, scoped tests and frozen new protocol
+`research/protocols/trustmask-real-batches-v1.json`. Runbook and exact commands:
+`docs/reports/real-data-batches.md`; plan:
+`docs/superpowers/plans/2026-09-09-real-data-batches.md`.
+
+Exact 7477-member assignment is now bound for this new study (preview unchanged).
+Metadata-first local TACO access, selected assets only, nodata/geometry checks,
+fixed center128/512 support, v2 saturation, verified shared five-seed LDSR, R9.
+One ROI imagery resident; compact receipts, immutable resume binding, writer lock,
+all-development-before-calibration and frozen methods before terminal test ledger.
+Same-protocol interrupted ROI retries are allowed; completed ROIs never reinferred.
+Old A/B/C pixels/caches and old terminal ledger remain closed and unchanged.
+
+83 scoped tests passed; Ruff and old frozen gate passed; independent reviews
+completed. No real pixels, SSH or GPU used. Source full SHA remains declared,
+not rehashed; pinned top metadata and actual selected payload receipts are verified.
+Group independence remains an assumption. No real-data result or benefit claimed.
+
+NEXT: user may start GPU at known SSH endpoint root@fj01-ssh.gpuhome.cc port30370.
+Prepare a new persistent checkout/environment and study directory, locate the local
+TACO without opening old caches, transfer ignored assignment, run metadata preflight,
+then one scale-fit ROI with timing before choosing subsequent batch size. Keep
+protocol/source/environment stable across resumes. The first batch is part of the
+study, not extra terminal data exploration. Do not revive source mapping requests.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — integrated CPU method and calibration implemented
 
 2026-09-09. User requested direct method/calibration development. Implemented new
