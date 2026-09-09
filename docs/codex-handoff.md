@@ -2,6 +2,41 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — integrated CPU method and calibration implemented
+
+2026-09-09. User requested direct method/calibration development. Implemented new
+`research/trustmask/calibration.py`, `pipeline.py`, `integrated_demo.py`; no frozen
+source edits, images, models, old prediction caches, server or GPU access.
+Report: `docs/reports/integrated-calibration.md`; plan:
+`docs/superpowers/plans/2026-09-09-integrated-calibration.md`.
+
+Workflow: immutable precomputed feature/R9 inputs; five-role sample/group separation;
+64 fixed equal-ROI samples for scale medians; 36 candidate configurations across
+8 named methods. All development choices finish BEFORE any formal calibration
+loss access. All thresholds freeze BEFORE test evaluation. Formal calibration
+uses bounded monotone group CRC; deployment excludes reference inputs. No feasible
+development configuration or no feasible calibration threshold yields reject-all.
+Test output includes 8-method risk bounds, full-vs-w3 paired coverage lower bound,
+per-group observations and workload proxies. CRC is marginal expectation under
+exchangeability; test bounds separately require independent groups. Not unconditional
+certification. With preview n=3045 and M=8, test margins are 0.0307763 risk / 0.0492231 gain.
+
+Synthetic demo runs end-to-end and labels results synthetic_not_research_evidence;
+small test-group counts correctly do not certify a gain. Tests exercise numerical
+curves, weights, no-candidate fallback, stage access order and test/calibration-label
+isolation. Independent method and code reviews completed; final scoped gates run
+before commit. Full demo output stays under /tmp, not published as scientific data.
+
+NEXT: prepare real-data execution adapter/protocol: authenticated exact assignments,
+fixed common support, center/seed/model/R9 definitions, bounded batch extraction
+and inference, streamed feature/curve storage and one-time terminal-test ledger.
+Current core is an in-memory reference implementation, unsuitable for loading all
+520x520 maps at once without an explicit memory plan. Freeze protocol and commands
+before notifying user to start GPU. Public provenance is accepted; do not revive
+source-map/contact/login requirements. Old C remains terminal; main single writer.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — public provenance accepted; proceed to integrated method
 
 2026-09-09 USER OVERRIDE: actual per-member source mapping is NOT required. A

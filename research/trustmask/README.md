@@ -51,3 +51,24 @@ groups. `check_partition` validates five disjoint stage roles structurally, not 
 independence or provenance. See [audit report](../../docs/reports/progressive-data-audit.md) for
 persisted identity projection and the incomplete hardened-network replay status. Never interpret
 candidate group counts as a certified independent sample size.
+
+Integrated CPU workflow is now available in `pipeline.py` / `calibration.py`:
+
+```bash
+.venv/bin/python -m research.trustmask.integrated_demo --output /tmp/new-synthetic-report.json
+```
+
+`extract_features(lr, samples)` has no reference input; the first of five ordered
+predictions is the caller-declared center seed 3407. `run_study(partitions)` takes
+five disjoint roles of `Observation` records, fits fixed scales, selects eight
+method configurations using development only, calibrates thresholds, then reports
+held-out group risk/coverage and mask-review workload. `deploy_mask` accepts only
+features and frozen configuration/scales/threshold, never HR or R9. Per-group test
+observations and a frozen-method checksum are included for offline replay.
+
+CRC is marginal expected-risk control under exchangeability; independent-test
+Hoeffding bounds are separate conditional statements. The synthetic demo does not
+establish actual benefit. This in-memory reference workflow is not the production
+cloud runner: identity/support authentication, streaming memory management and a
+one-time terminal-test ledger remain required there. See
+[integration report](../../docs/reports/integrated-calibration.md).
