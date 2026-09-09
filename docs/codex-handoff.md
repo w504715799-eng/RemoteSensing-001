@@ -2,6 +2,33 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — first real cloud batches completed: 17 scale-fit ROIs
+
+2026-09-09. GPU connection succeeded (RTX4090); deployed unchanged implementation
+673810f to `/root/rivermind-fs/trustmask-runner-673810f`. New persistent study:
+`/root/rivermind-fs/trustmask-public-crosssensor-v1`. Protocol SHA remains a65df39f…;
+runtime binding c6910d88ca5b8e75aedfde2a7483bed6e0700dbd70b431924f9c4e5863b9307e.
+Exact source/model/environment and resume command:
+`docs/reports/real-data-first-cloud-batch.md`. Evidence:
+`research/evidence/trustmask-first-cloud-batches-v1.json`.
+
+Metadata preflight passed. First ROI23.7245s; resumed16ROIs159.4228s, all exit0.
+17/318scale-fitROIs committed;301remain. Independent audit checked every receipt
+hash, sequence/member/group/binding and model digest; original receipt unchanged.
+Peak process RSS~2.02GiB; sampled GPU memory5685MiB (not measured peak).
+No formalcal/test access, no frozen-method artifact or new test-start ledger yet.
+No old A/B/C pixels/prediction caches reopened. No unattended job remains; GPU idle.
+
+NEXT: resume same study with explicit bounded budget (e.g.16) to finish scale_fit,
+then development stages in frozen order. Remaining scale_fit roughly50minutes at
+observed rate. Do not recreate study or regenerate protocol. The cloud venv inherits
+unchanged `/opt/conda` packages with its own PyArrow19.0.1; thread settings4. Initial
+`/usr/bin/time` failed before ROI access; operational Python timing wrapper succeeded.
+Read old batch measurements rather than rerunning batch16.py to inspect them.
+All code/study paths are persistent; after GPU restart recheck source/runtime binding.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — real-data bounded runner ready for first GPU batch
 
 2026-09-09. User requested real-data batch integration. Added `batch.py`,

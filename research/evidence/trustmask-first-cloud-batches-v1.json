@@ -1,0 +1,45 @@
+{
+  "batch16_measurement": {
+    "child_max_rss_kib": 2113836,
+    "exit_code": 0,
+    "wall_seconds": 159.42281436920166
+  },
+  "binding_sha256": "c6910d88ca5b8e75aedfde2a7483bed6e0700dbd70b431924f9c4e5863b9307e",
+  "committed_rois": 17,
+  "first_measurement": {
+    "child_max_rss_kib": 2108988,
+    "exit_code": 0,
+    "wall_seconds": 23.72450876235962
+  },
+  "first_receipt_sha256": "eae64ff3ed1c5621add33916f83ffa90daccb9c124dea2d2b703d73adfa35c09",
+  "first_receipt_unchanged_on_resume": true,
+  "frozen_methods_present": false,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_peak_memory_measured": false,
+  "gpu_sampled_memory_mib": 5685,
+  "implementation_commit": "673810f",
+  "mean_batch_wall_seconds_per_roi": 9.963925898075104,
+  "protocol_sha256": "a65df39f8eb937e046e48c4dc24f740bf53cf1be1b8fe9bc53ec70f93ba411bd",
+  "receipts_verified": true,
+  "remaining_scale_fit_rois": 301,
+  "runtime": {
+    "numpy": "2.5.2",
+    "omegaconf": "2.3.1",
+    "opensr-model": "1.1.1",
+    "pyarrow": "19.0.1",
+    "rasterio": "1.5.1",
+    "torch": "2.12.1+cu130"
+  },
+  "schema": "trustmask-first-cloud-batches-v1",
+  "source_file": {
+    "ctime_ns": 1787900884079502064,
+    "device": 1048681,
+    "inode": 906087,
+    "mtime_ns": 1787900749664154819,
+    "size": 9717583850
+  },
+  "stage_counts": {
+    "scale_fit": 17
+  },
+  "terminal_test_started": false
+}
