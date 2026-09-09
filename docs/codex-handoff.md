@@ -2,6 +2,33 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — continuous GPU study RUNNING; do not pause at batches
+
+2026-09-09 USER CORRECTION: once GPU is on, run continuously until GPU is no
+longer needed. Do NOT stop at17ROIs, batch boundaries or role boundaries for another
+confirmation. The prior stop was an assistant scope error, not a protocol requirement.
+
+Resumed existing study from17committedROIs with unchanged protocol/runtime at
+/root/rivermind-fs/trustmask-runner-673810f. Detached operational wrapper full-study.py
+PID469 launches CLI PID470 with --max-rois7477, enough to finish all remaining7460.
+The existing engine still processes oneROI at a time with durable receipts and
+strict stage order; this budget does not load all images into memory. No stage
+pause/approval is required. Last verified18committedROIs, scale_fit; GPU67%,5685MiB.
+
+Logs: /root/rivermind-fs/trustmask-runner-673810f/full-study.log
+Completion: same directory/full-study-measurement.json (exit_code must be0), and
+/root/rivermind-fs/trustmask-public-crosssensor-v1/result.json must exist and verify.
+PID values are historical observations; recheck live process before acting.
+The detached job survives SSH disconnect. Do not launch a second writer, recreate
+study, overwrite measurement, alter protocol or close GPU during execution.
+
+NEXT: monitor continuous job through completion; resolve errors if encountered.
+When all7477ROIs and final report are verified, tell user GPU is no longer needed.
+No actual study completion is claimed at this checkpoint. User explicitly wants
+continuous execution, not another permission question at a batch boundary.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — first real cloud batches completed: 17 scale-fit ROIs
 
 2026-09-09. GPU connection succeeded (RTX4090); deployed unchanged implementation
