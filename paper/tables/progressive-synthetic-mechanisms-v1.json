@@ -1,0 +1,38 @@
+{
+  "conclusions": [
+    "Exact, identical samples can still have positive texture score.",
+    "Identical observables can have different errors; these features cannot tell.",
+    "Joint variance differs from average per-sample spatial variance."
+  ],
+  "evidence_kind": "synthetic_mechanism_diagnostic_not_research_benefit",
+  "faithful_texture": {
+    "mean_lr_residual": 0.0,
+    "mean_risk": 0.0,
+    "mean_texture_score": 0.06172839506172842,
+    "mean_uncertainty_score": 0.0,
+    "risk_max": 0.0
+  },
+  "figure_sha256": "cb9f37980e682bffca93331b05304e2b627441a61cb48e27a0d9b576753eeed3",
+  "gpu_used": false,
+  "invented_texture": {
+    "mean_lr_residual": 0.0,
+    "mean_risk": 0.25,
+    "mean_texture_score": 0.06172839506172842,
+    "mean_uncertainty_score": 0.0,
+    "risk_max": 0.25
+  },
+  "limitations": [
+    "No real-data frequency, accuracy, coverage gain, or prevalence is established.",
+    "Variance decomposition and non-identifiability are not claimed as new theorems.",
+    "Texture penalties can flag invented detail; removal is not always beneficial."
+  ],
+  "real_data_used": false,
+  "same_features": true,
+  "same_lr_and_predictions": true,
+  "schema": "trustmask-synthetic-publication-mechanisms-v1",
+  "spatially_constant_distinct_samples": {
+    "between_sample_variance": 0.03125,
+    "joint_score_mean": 0.03125000000000001,
+    "mean_per_sample_spatial_variance": 0.0
+  }
+}

@@ -2,6 +2,49 @@
 
 Date: 2026-09-09 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — publication-standard evidence work started in parallel
+
+2026-09-09 USER OBJECTIVE: a defensible publishable paper, not only a completed
+large experiment. Preserve continuous GPU job and two-hour server monitor below.
+No claim that current contribution/evidence already meets publication requirements.
+New plan: docs/superpowers/plans/2026-09-09-publication-evidence.md.
+
+Completed independent primary-source novelty and official-code audits:
+docs/reports/progressive-novelty-audit.md and progressive-official-baseline-audit.md.
+Pinned official repository HEAD819086a9e21077010bdcee233373a25c8d32bdd0. Important:
+localw3 matches paper joint seed/spatial-moment structure, while released helper
+averages within-sample spatial variance. Also Lab/RGBN, loss, kernels and threshold
+paths differ. Label w3 paper-formula RGBN adaptation, never exact official pipeline.
+Do not infer published results are wrong from incomplete released artifact paths.
+
+New paper/progressive-manuscript.md is a pending-results scaffold; old manuscript.md
+and historical findings unchanged. Current contributions are candidate application/
+empirical improvements; variance decomposition, CRC and confidence masks inherited.
+An independent external study of this new full method is still missing; old Spain
+results are context, not proof of new method transfer. Additional GPU requirements
+must follow scientific gaps; prior statement of no further big experiments was only
+about the old execution plan, not evidence sufficient for publication.
+
+CPU synthetic mechanism diagnostics implemented/tested via
+paper/tools/progressive_mechanism_demo.py, with JSON/figure and report
+progressive-mechanism-diagnostics.md. Identical LR/samples can yield referenceR9=0
+or.25, samefeaturetexture.061728; joint variance vs mean per-sample spatial variance
+also differ (.03125 vs0). These are counterexamples, not real-data benefit/novelty.
+39scoped tests passed, figure inspected; independent final review found no blockers.
+No new scientific results/pixels, model inference or protocol changes used for this work.
+Operational status check:1722/7477ROIs committed, development_validation, latest
+receipt5.6s old; existing GPU job continues.
+
+NEXT: GPU continues unchanged. Finish read-only final-report validation/publication
+postprocessing, preserving all8methods and prespecified comparisons. Assess final
+effect/risk evidence honestly; test risk margin~.03078 means empiricalmean≤.01922
+needed for the.05 upper-bound criterion. No posthoc loosening if inconclusive.
+Specify any supplemental official-helper/external study separately before new
+outcome access; compact receipts do not retain full spatial maps, so new analyses
+are not automatically GPU-free. No arbitrary new experiments/author contact started.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — two-hour monitoring enabled; GPU job still continuous
 
 2026-09-09 user requests a check every two hours. Detached read-only server monitor
