@@ -1,6 +1,36 @@
 # Codex handoff: first-paper research plan; Phase 2B3-C remains terminal
 
-Date: 2026-09-09 (Asia/Shanghai)
+Date: 2026-09-10 (Asia/Shanghai)
+
+## ACTIVE RESUME CHECKPOINT — quota failure recovered; E0 NOT complete
+
+2026-09-10 user reported remote completion; operational inspection instead found
+7244/7477 receipts, no result.json, no parallel-full-measurement.json, idle GPU.
+Both parallel and serial fallback failed writing receipts/00007244.tmp with
+OSError122 Disk quota exceeded; supervisor also failed writing its measurement.
+Shared filesystem df showed183GB available, so df capacity alone is insufficient.
+Exact backend quota type was not established. No terminal metric values inspected.
+
+Recovered storage without altering scientific files, data, weights or receipts:
+copied runner/.venv to /root/rivermind-data/trustmask-runtime-673810f-20260910,
+verified809 file/symlink entries by SHA256/link target, then replaced original .venv
+with a symlink to that verified copy. Shared filesystem write probe succeeded.
+Full relocation manifest: /root/rivermind-data/trustmask-runtime-relocation-20260910.json.
+
+Restarted unchanged parallel-full.py detached (observed supervisor521, coordinator522).
+CURRENT recovery log: runner/recovery-20260910.log; old parallel-full.log preserves
+failure evidence. New execution amendment00007244-0449ac73f28ff462.json validates
+the7244 contiguous existing receipt prefix before resuming. No scientific rerun/reset.
+Restarted existing two-hour monitor (observed623), latest snapshot01:13:28UTC,
+2026-09-10 /09:13:28China, status running. Monitor remains server-side only.
+
+Verified progress after recovery:7250/7477,227remaining, newest receipt1.3s old,
+GPU100%,11354MiB; result still absent. Continue without batch pauses. Next inspect
+recovery log/measurement and final report, verify complete provenance and all frozen
+results only once complete. Supplemental experiments still require their own readiness
+gates; do not tell user all GPU work is complete from E0 completion alone.
+
+---
 
 ## ACTIVE RESUME CHECKPOINT — supplemental baseline experiments authorized
 
