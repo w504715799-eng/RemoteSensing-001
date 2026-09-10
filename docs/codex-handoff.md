@@ -1,8 +1,69 @@
+# 项目交接：E0 已完成，进入论文补充实验阶段
+
+更新日期：2026-09-10（Asia/Shanghai）。**本节是唯一当前状态；下方历史检查点仅作追溯，不得据其“运行中”描述重启旧实验。**
+
+## 目标与当前判断
+
+目标是形成可发表标准的、可复查的遥感超分可信区域选择研究。当前已完成真实数据上的方法集成、校准和完整E0实验，但尚未证明预设的风险合格覆盖优势，也不具备投稿完成状态。研究重点是固定重建输出后的可信区域选择，不是宣称超分重建模型本身超过现有模型。
+
+## 已完成成果
+
+| 内容 | 已完成成果 | 证据/入口 |
+|---|---|---|
+| 真实数据流程 | 公共SEN2NAIPv2来源、地理分组、五角色隔离、分批校准、冻结及可恢复回执 | `research/protocols/trustmask-real-batches-v1.json`；`research/trustmask/` |
+| 方法集成 | full、w3、K5、LR和内部消融共8方法；开发选择与正式校准分离 | `research/trustmask/pipeline.py` |
+| E0正式计算 | 7477 ROI全部结束；测试3690 ROI / 3045组；全部回执与汇总复算一致 | [E0最终报告](reports/progressive-e0-final-results.md) |
+| GPU工程 | 双进程共享资源、顺序提交、断点恢复；处理7244处配额故障并完成余下计算 | `research/operations/parallel_batches.py`；下方执行历史 |
+| 基线核验 | 最近NeurIPS论文公式/公开helper差异审计；im2im-UQ源码固定与可行性初审 | [最近方法审计](reports/progressive-official-baseline-audit.md)、[im2im初审](reports/progressive-im2im-feasibility.md) |
+| 机制与论文材料 | CPU合成反例、机制图、创新边界审计及递进研究稿 | [机制报告](reports/progressive-mechanism-diagnostics.md)、`paper/progressive-manuscript.md` |
+| 后续研究设计 | E1–E4工作包、交付物、预期目标、统计门槛和失败处理 | [补充实施方案](superpowers/plans/2026-09-09-supplemental-baselines.md) |
+
+E0结果：full覆盖93.8312%，w3覆盖91.5015%，差值+2.3298个百分点；预设下界−2.5925个百分点。
+full风险均值/上界为0.049014/0.079790，w3为0.049731/0.080507。全部8方法未通过终局0.05风险上界资格；正增益及5个百分点工程目标均未达成。
+full比w3少119880个复核块，相对下降27.0762%，仅为描述性工作量代理，不是人工时间或已认证效率收益。
+**计算完成与科学目标达成必须分开记录；不显著不是等效，未认证不是已证明真实风险超标。**
+
+## 后续顺序与安排
+
+| 顺序 | 需要完成的工作 | 验收与交付 | GPU安排 |
+|---|---|---|---|
+| 1：现在 | 实现paper-moment与released-helper两条明确评分适配，完成数值一致性/反例测试；保留合理开发搜索预算 | 可测试源码、差异表、配置清单；不得改E0冻结目录 | CPU即可 |
+| 2：与1交错推进 | 核验未使用公开数据元数据、源版本及地理重叠；确定新增训练/开发/校准/测试组 | 独立清单、角色数量、证据精度评估；当前8000成员不能重新命名成新留出集 | 元数据阶段无需GPU |
+| 3：数据规模明确后 | 实现im2im-UQ原生区间及固定中心适配，确定训练结构、种子、早停和预算 | 独立训练协议、适配说明、CPU数值测试；不得用K5冒名替代 | 配置准备不需GPU |
+| 4：启动前 | 冻结E1/E2及E3补充协议，完成runner恢复/角色隔离测试、存储预算和开发小试 | 绑定代码/数据/权重/统计分配；缺必填项不可正式启动 | 就绪后通知用户开机，先8 ROI开发资源测量 |
+| 5：正式补充 | E1最近方法公平对照、E2独立学习基线、E3独立地域验证；共享生成样本 | 全方法结果、风险/覆盖/成本及负结果；不在测试集选择参数 | 就绪任务连续接续，正常批次不暂停 |
+| 6：复用计算 | E4完整成本、复核单元和机制分层；独立部署计时避免并发干扰 | 成本表、整块复核表、全层与失败案例 | 计时需GPU，其余摘要分析CPU |
+| 7：论文交付 | 完善全部图表、结论、复现材料并审查创新与证据，决定投稿范围 | 声明逐一对应预设检验；不保证录用 | 通常CPU；投稿另需明确授权 |
+
+详细实现文件、验收与目标见补充实施方案。当前E1–E4均未完成，不存在已训练补充权重或已冻结补充数据协议。
+执行顺序依赖数据和实现就绪，不预设无法核实的完成日期；GPU耗时须以新开发小试实测更新。
+E0终局已经知晓，后续协议必须披露这一事实；不得倒签成结果揭晓前的预注册。
+
+## GPU、证据位置与恢复注意事项
+
+- SSH：`ssh root@fj01-ssh.gpuhome.cc -p 30370`。E0已完成且GPU空闲；目前没有就绪的补充GPU任务，可以关闭节省费用，未代用户执行关机。
+- 远程E0目录：`/root/rivermind-fs/trustmask-public-crosssensor-v1`，含`result.json`、`receipts/`、`journal.json`、`frozen_methods.json`和终局账本。
+- 运行目录：`/root/rivermind-fs/trustmask-runner-673810f`；结束测量`parallel-full-measurement.json`退出码0；`recovery-20260910.log`为恢复日志，旧日志保留配额故障。
+- `.venv`已迁移到`/root/rivermind-data/trustmask-runtime-673810f-20260910`，原路径为符号链接；809项逐文件/链接校验记录在数据盘`trustmask-runtime-relocation-20260910.json`。新开机先检查挂载及链接；`df`显示有余量不能排除配额限制。
+- 本地备份：`artifacts/progressive-final-20260910/study-receipts.tar.gz`，7477份回执与远程哈希一致；同目录有`result.json`、`audit.py`、`remote-audit.json`。这些受控文件不上传GitHub，GitHub保存代码、方案与汇总报告。
+- 当前报告不依赖继续开GPU读取。新会话不要重启`parallel-full.py`来“检查完成”，先只读结束报告和回执。
+- 两小时监控是服务器端记录，不会主动发聊天消息；重启不自动恢复。E0已完成，不应为旧任务无故重启监控/推理。
+
+## 持续约束与同步
+
+- 用户认可公开论文或开源发布来源，不再索取逐成员实际源映射；空间重叠核查用于防泄漏。
+- E0、旧A/B/C和已消费Spain终局保持关闭，不改阈值、置信界或样本划分重跑到阳性。旧Spain结果不能充当新full的独立验证。
+- 新代码放`research/supplemental/`等冻结范围之外；勿修改`research/trustmask/`和`src/trustsr/`破坏冻结绑定。
+- 用户已授权必要补充实验和本次GitHub同步；无须为正常可逆开发反复确认。不向外联系作者或提交论文。
+- GitHub远程：`https://github.com/w504715799-eng/RemoteSensing-001`，当前分支`main`。同步成功与提交号以本次实际push及远端核验为准。
+
+## 历史交接记录（以下全部为过去状态）
+
 # Codex handoff: first-paper research plan; Phase 2B3-C remains terminal
 
 Date: 2026-09-10 (Asia/Shanghai)
 
-## ACTIVE RESUME CHECKPOINT — E0 COMPLETE, primary objectives NOT achieved
+## HISTORICAL CHECKPOINT — E0 COMPLETE, primary objectives NOT achieved
 
 All7477 receipts and final report verified; recovery supervisor exited0. Read
 docs/reports/progressive-e0-final-results.md for all8methods and exact interpretation.
@@ -27,7 +88,7 @@ are ready. No server shutdown action was taken by this audit.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — quota failure recovered; E0 NOT complete
+## HISTORICAL CHECKPOINT — quota failure recovered; E0 NOT complete
 
 2026-09-10 user reported remote completion; operational inspection instead found
 7244/7477 receipts, no result.json, no parallel-full-measurement.json, idle GPU.
@@ -57,7 +118,7 @@ gates; do not tell user all GPU work is complete from E0 completion alone.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — supplemental baseline experiments authorized
+## HISTORICAL CHECKPOINT — supplemental baseline experiments authorized
 
 User explicitly approved plan revision and necessary supplemental experiments.
 Read docs/superpowers/plans/2026-09-09-supplemental-baselines.md before new work.
@@ -90,7 +151,7 @@ the current study for new baselines. Never claim all paper GPU work is now finis
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — publication-standard evidence work started in parallel
+## HISTORICAL CHECKPOINT — publication-standard evidence work started in parallel
 
 2026-09-09 USER OBJECTIVE: a defensible publishable paper, not only a completed
 large experiment. Preserve continuous GPU job and two-hour server monitor below.
@@ -133,7 +194,7 @@ are not automatically GPU-free. No arbitrary new experiments/author contact star
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — two-hour monitoring enabled; GPU job still continuous
+## HISTORICAL CHECKPOINT — two-hour monitoring enabled; GPU job still continuous
 
 2026-09-09 user requests a check every two hours. Detached read-only server monitor
 /root/rivermind-fs/trustmask-runner-673810f/monitor.py (observed PID901) is running
@@ -155,7 +216,7 @@ without batch pauses under the execution amendment described below.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — two-process GPU acceleration RUNNING continuously
+## HISTORICAL CHECKPOINT — two-process GPU acceleration RUNNING continuously
 
 2026-09-09. User requested parallel computation to use idle GPU capacity and
 shorten time; uninterrupted completion authorization remains active. Added
@@ -189,7 +250,7 @@ shutdown only when no further GPU work remains. Never stop at a batch boundary.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — continuous GPU study RUNNING; do not pause at batches
+## HISTORICAL CHECKPOINT — continuous GPU study RUNNING; do not pause at batches
 
 2026-09-09 USER CORRECTION: once GPU is on, run continuously until GPU is no
 longer needed. Do NOT stop at17ROIs, batch boundaries or role boundaries for another
@@ -216,7 +277,7 @@ continuous execution, not another permission question at a batch boundary.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — first real cloud batches completed: 17 scale-fit ROIs
+## HISTORICAL CHECKPOINT — first real cloud batches completed: 17 scale-fit ROIs
 
 2026-09-09. GPU connection succeeded (RTX4090); deployed unchanged implementation
 673810f to `/root/rivermind-fs/trustmask-runner-673810f`. New persistent study:
@@ -243,7 +304,7 @@ All code/study paths are persistent; after GPU restart recheck source/runtime bi
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — real-data bounded runner ready for first GPU batch
+## HISTORICAL CHECKPOINT — real-data bounded runner ready for first GPU batch
 
 2026-09-09. User requested real-data batch integration. Added `batch.py`,
 `real_data.py`, `batch_cli.py`, scoped tests and frozen new protocol
@@ -273,7 +334,7 @@ study, not extra terminal data exploration. Do not revive source mapping request
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — integrated CPU method and calibration implemented
+## HISTORICAL CHECKPOINT — integrated CPU method and calibration implemented
 
 2026-09-09. User requested direct method/calibration development. Implemented new
 `research/trustmask/calibration.py`, `pipeline.py`, `integrated_demo.py`; no frozen
@@ -308,7 +369,7 @@ source-map/contact/login requirements. Old C remains terminal; main single write
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — public provenance accepted; proceed to integrated method
+## HISTORICAL CHECKPOINT — public provenance accepted; proceed to integrated method
 
 2026-09-09 USER OVERRIDE: actual per-member source mapping is NOT required. A
 public paper or open release is sufficient. Official SEN2NAIPv2 release describes
@@ -339,7 +400,7 @@ A/B/C pixels or caches; old C remains terminal. Main remains single writer.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — writer pinned; upstream contact pending
+## HISTORICAL CHECKPOINT — writer pinned; upstream contact pending
 
 2026-09-09. This checkpoint supersedes older next-step instructions. The previously
 inspected writer snapshot is now pinned to commit ee570c3f8ef75178e5cd1b064904c9205355d9bc
@@ -365,7 +426,7 @@ or an explicitly designed source-traceable replacement data route.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — timestamp mechanism and bounded candidates investigated
+## HISTORICAL CHECKPOINT — timestamp mechanism and bounded candidates investigated
 
 2026-09-08. This checkpoint supersedes older next-step instructions. No GPU/server
 needed. Full report: `docs/reports/timestamp-source-probe.md`; reproducible evidence:
@@ -398,7 +459,7 @@ GPU experiments remain premature. Continue on main, single writer; old C termina
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — historical metadata recovered and audited
+## HISTORICAL CHECKPOINT — historical metadata recovered and audited
 
 2026-09-08. This checkpoint supersedes older next-step instructions. The original
 Phase 2B1-A full manifest was found on the existing cloud persistent disk. Its exact
@@ -427,7 +488,7 @@ Prior external request draft remains unsent; no contact authorization. Old C ter
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — recover existing historical full manifest first
+## HISTORICAL CHECKPOINT — recover existing historical full manifest first
 
 2026-09-08. This checkpoint supersedes older next-step instructions. Git commits
 `a27e169` and `06e577e` record a full 8,000-member Phase 2B1-A manifest with actual
@@ -449,7 +510,7 @@ by this recovery. The external request draft remains unsent.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — provenance probes complete, source manifest missing
+## HISTORICAL CHECKPOINT — provenance probes complete, source manifest missing
 
 2026-09-08. This section supersedes all older next-step instructions. main single writer.
 New evidence research/evidence/crosssensor-upstream-provenance-v2.json binds preservedv1.
@@ -486,7 +547,7 @@ No full suite or old pixels/caches needed.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — upstream provenance attempt, 2026-09-08
+## HISTORICAL CHECKPOINT — upstream provenance attempt, 2026-09-08
 
 This newest section supersedes all older next-step instructions. Continue on main, single writer.
 New bounded ZIP reader: research/trustmask/zip_metadata.py. Plan:
@@ -528,7 +589,7 @@ Independent evidence review and final staged data-policy/diff gates passed.
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — source/footprint audit delivery, 2026-09-08
+## HISTORICAL CHECKPOINT — source/footprint audit delivery, 2026-09-08
 
 This section supersedes the older terminal checkpoint below. Continue on main, single writer.
 Completed the bounded source-footprints plan and preserved old evidence receipts.
@@ -560,7 +621,7 @@ below preserves cache identities and historical details; its1-of-3 probe status 
 
 ---
 
-## ACTIVE RESUME CHECKPOINT — terminal handoff, 2026-09-08
+## HISTORICAL CHECKPOINT — terminal handoff, 2026-09-08
 
 **Read this section first. It supersedes older “next” instructions below.** User requested
 only saving the handoff before opening another terminal. No new experiments or network requests
