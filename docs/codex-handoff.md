@@ -2,6 +2,31 @@
 
 Date: 2026-09-10 (Asia/Shanghai)
 
+## ACTIVE RESUME CHECKPOINT — E0 COMPLETE, primary objectives NOT achieved
+
+All7477 receipts and final report verified; recovery supervisor exited0. Read
+docs/reports/progressive-e0-final-results.md for all8methods and exact interpretation.
+Remote receipts, identities/bindings, frozen methods/terminal ledger, role counts,
+execution-amendment prefix hashes and receipt-derived evaluation/workloads matched.
+Local byte-verified backup: artifacts/progressive-final-20260910/study-receipts.tar.gz;
+result.json, audit.py and remote-audit.json accompany it. No inference was rerun.
+
+Test3690ROIs/3045groups: full coverage93.8312%,w3 91.5015%; difference+2.3298pp,
+prespecified lower bound−2.5925pp. Full risk mean.049014, upper.079790; w3 mean
+.049731, upper.080507. All8risk qualifications fail; positive/five-point goals false.
+This is insufficient independent-test certification, not proof true risk exceeds.05.
+Full selectedweight.25,beta0, identical tobeta0; not independent corroboration.
+Review tiles322871 vs442751, descriptive27.0762% relative reduction, not human time.
+
+E0 terminal is now consumed and closed. Do not loosen its bounds or rerun until
+positive. E1–E4 remain preparatory; any further supplemental design must disclose
+E0 outcomes are now known, not pretend final protocols were frozen before access.
+E0 needs no more GPU; no supplemental GPU task currently ready. GPU can be shut
+down to save cost; request startup when supplementary implementation/data/protocol
+are ready. No server shutdown action was taken by this audit.
+
+---
+
 ## ACTIVE RESUME CHECKPOINT — quota failure recovered; E0 NOT complete
 
 2026-09-10 user reported remote completion; operational inspection instead found

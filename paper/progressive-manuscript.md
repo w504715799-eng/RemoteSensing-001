@@ -1,10 +1,10 @@
 # Risk-Controlled Trusted Coverage for Sentinel-2 Super-Resolution: Disentangling Sampling Variation and Spatial Texture
 
-Working research manuscript scaffold, 2026-09-09. The title is provisional and
+Working research manuscript, updated 2026-09-10. The title is provisional and
 states the question, not a demonstrated improvement. This document concerns the
-new progressive study; `manuscript.md` records historical experiments. No new
-terminal results have been inspected to write this scaffold. No acceptance or
-publication-readiness claim is made.
+progressive study; `manuscript.md` records historical experiments. E0 is complete
+and its terminal results have now been inspected and audited. The prespecified
+primary objectives were not achieved. No publication-readiness claim is made.
 
 ## Research question and contribution boundary
 
@@ -85,7 +85,19 @@ high-error acceptance and all-rejected cases. These count automated output and
 remaining processing workload, not human hours saved. Main coverage uses group
 weighting; pooled pixel/tile totals are explicitly separate operational summaries.
 
-## Results slots (pending complete authorized evaluation)
+## Audited E0 results and remaining reporting work
+
+All7477receipts were verified, including3690testROIs in3045groups. Full coverage
+was93.8312%, compared with91.5015% forw3: +2.3298percentage points, with the
+prespecified lower confidence bound−2.5925points. Full risk mean/upper bound were
+.049014/.079790; w3 .049731/.080507. All8methods failed the independent-test
+risk qualification gate. Neither qualified positive gain nor the five-point target
+was established. This does not prove that the true risk exceeds.05.
+
+Full selectedweight=.25,beta=0, hence coincides withbeta0. Pooled review tiles
+were322871 forfull versus442751 forw3, of944640total: a descriptive27.0762%
+relative reduction, not measured human time or a risk-qualified efficiency claim.
+See [all-method results and integrity audit](../docs/reports/progressive-e0-final-results.md).
 
 Supplemental experiments are authorized in the
 [implementation plan](../docs/superpowers/plans/2026-09-09-supplemental-baselines.md).
@@ -104,8 +116,10 @@ They have separate data/protocol gates and do not change the eight-method E0 tab
 - Supplement: full candidate/selection audit, source/membership/execution manifests,
   unfavorable comparisons and failure accounting.
 
-No primary result values are filled in before the frozen run completes. Do not
-select only favorable configurations or relabel exploratory analyses confirmatory.
+E0 values above were read after completion. Remaining figure/table production must
+include all methods. Do not select only favorable configurations or relabel
+exploratory analyses confirmatory. Supplemental protocols remain unfinished and
+must disclose that E0 results are already known at their finalization.
 
 ## Compute and limitations
 
